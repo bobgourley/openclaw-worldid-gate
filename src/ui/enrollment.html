@@ -127,13 +127,13 @@
     </button>
     
     <div class="info">
-      <strong>Privacy:</strong> Your World ID proof never leaves your device. Only a zero-knowledge proof is verified.
+      <strong>Privacy:</strong> Only a zero-knowledge proof is verified. No biometric data is collected or shared.
     </div>
   </div>
 
   <script type="module">
     // NO SECRETS IN CLIENT CODE
-    // Configuration injected via meta tags or URL params
+    // Configuration injected via URL params and Telegram WebApp context
     
     const urlParams = new URLSearchParams(window.location.search);
     const sessionId = urlParams.get('session');
@@ -141,11 +141,24 @@
     const statusEl = document.getElementById('status');
     const buttonEl = document.getElementById('verifyButton');
     
+    // Check for Telegram Mini App context (required for authentication)
+    const telegramWebApp = window.Telegram?.WebApp;
+    const initData = telegramWebApp?.initData;
+    
     function showStatus(message, type = 'loading') {
       statusEl.className = type;
-      statusEl.innerHTML = type === 'loading' 
-        ? `<div class="spinner"></div>${message}`
-        : message;
+      
+      // SECURITY: Use textContent to prevent XSS, not innerHTML
+      statusEl.textContent = '';
+      
+      if (type === 'loading') {
+        const spinner = document.createElement('div');
+        spinner.className = 'spinner';
+        statusEl.appendChild(spinner);
+      }
+      
+      const text = document.createTextNode(message);
+      statusEl.appendChild(text);
     }
     
     function showError(message) {
@@ -158,9 +171,20 @@
       buttonEl.classList.add('hidden');
     }
     
+    function showWarning(message) {
+      showStatus(message, 'warning');
+      buttonEl.classList.add('hidden');
+    }
+    
     async function initializeSession() {
       if (!sessionId) {
         showError('Invalid verification link. Please request a new one from the bot.');
+        return;
+      }
+      
+      // SECURITY: Require Telegram Mini App context (fail-closed)
+      if (!initData) {
+        showWarning('⚠️ This page must be opened from the Telegram bot. Verification is disabled in external browsers for security. Please open the link in Telegram.');
         return;
       }
       
@@ -211,25 +235,49 @@
         return;
       }
       
+      if (!initData) {
+        showError('Telegram authentication required. Please open from the bot.');
+        return;
+      }
+      
       buttonEl.disabled = true;
-      showStatus('Opening World App...', 'loading');
+      showStatus('Connecting to World App...', 'loading');
       
       try {
-        // Import IDKit dynamically (official SDK)
-        const { IDKitWidget, VerificationLevel } = await import('https://cdn.jsdelivr.net/npm/@worldcoin/idkit-core@4.6.0/+esm');
+        // Import official IDKit Core SDK (v4.6.0)
+        const { IDKit, proofOfHuman } = await import('https://cdn.jsdelivr.net/npm/@worldcoin/idkit-core@4.6.0/+esm');
         
-        // Create IDKit widget with session configuration
-        const widget = new IDKitWidget({
+        // Extract RP context from session (signed by backend)
+        const rp_context = {
+          rp_id: session.rpId || 'rp_test',
+          nonce: session.signedChallenge.nonce,
+          created_at: session.signedChallenge.createdAt || Math.floor(Date.now() / 1000),
+          expires_at: session.signedChallenge.expiresAt || Math.floor(Date.now() / 1000) + 300,
+          signature: session.signedChallenge.signature || '0x0000000000000000000000000000000000000000000000000000000000000000',
+        };
+        
+        // Create verification request using official IDKit API
+        const request = await IDKit.request({
           app_id: session.appId,
           action: session.signedChallenge.action,
-          signal: session.signal,
-          verification_level: VerificationLevel.Orb,
-          onSuccess: handleProofReceived,
-          onError: handleProofError,
+          rp_context: rp_context,
+          allow_legacy_proofs: true,
+        }).preset(proofOfHuman({ signal: session.signal }));
+        
+        // Display QR code connection URI
+        showStatus('Scan QR code with World App or open link on your phone', 'success');
+        
+        // Poll for completion
+        const result = await request.pollUntilCompletion({
+          pollInterval: 2000,
+          timeout: 300000, // 5 minutes
         });
         
-        // Open World App
-        await widget.open();
+        if (result.success) {
+          await handleProofReceived(result.result);
+        } else {
+          handleProofError(result.error);
+        }
         
       } catch (error) {
         console.error('Verification error:', error);
@@ -242,13 +290,14 @@
       showStatus('Submitting proof for verification...', 'loading');
       
       try {
+        // SECURITY: Send both initData and proof for same-requester binding
         const response = await fetch('/api/enrollment/complete', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            sessionId: sessionId,
+            initData: initData,
             idkitResult: result,
           }),
         });
@@ -258,7 +307,9 @@
         if (response.ok && data.success) {
           showSuccess(`✓ Verification successful! You can now return to Telegram. Your enrollment expires ${formatExpiry(data.expiresAt)}.`);
         } else {
-          showError(data.error || 'Verification failed. Please try again.');
+          // SECURITY: Use textContent for error messages to prevent XSS
+          const errorMsg = data.error || 'Verification failed. Please try again.';
+          showError(errorMsg);
           buttonEl.disabled = false;
         }
         
@@ -269,9 +320,24 @@
       }
     }
     
-    function handleProofError(error) {
-      console.error('World App error:', error);
-      showError('World App verification was cancelled or failed. Please try again.');
+    function handleProofError(errorCode) {
+      console.error('World App error:', errorCode);
+      let message = 'World App verification failed. Please try again.';
+      
+      // Map specific error codes to user-friendly messages
+      if (errorCode === 'user_rejected') {
+        message = 'Verification was cancelled. Please try again when ready.';
+      } else if (errorCode === 'verification_rejected') {
+        message = 'Verification was rejected by World App. Please try again.';
+      } else if (errorCode === 'credential_unavailable') {
+        message = 'Required World ID credential is not available. Please verify your account in World App.';
+      } else if (errorCode === 'connection_failed') {
+        message = 'Connection to World App failed. Please check your connection and try again.';
+      } else if (errorCode === 'timeout') {
+        message = 'Verification timed out. Please try again.';
+      }
+      
+      showError(message);
       buttonEl.disabled = false;
     }
     

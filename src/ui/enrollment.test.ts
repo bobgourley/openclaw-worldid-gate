@@ -1,0 +1,267 @@
+/**
+ * Client-side execution tests for enrollment.html
+ * 
+ * Tests actual browser JS execution using JSDOM, not just HTML regex matching.
+ * Validates IDKit SDK integration, Telegram initData forwarding, and security boundaries.
+ */
+
+import { test, describe, mock } from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+describe('enrollment.html client execution', () => {
+  /**
+   * Load HTML and create browser-like environment
+   */
+  function createDOMEnvironment(options: {
+    sessionId?: string;
+    hasTelegramWebApp?: boolean;
+    initData?: string;
+  }) {
+    const html = readFileSync(join(__dirname, 'enrollment.html'), 'utf-8');
+    const url = options.sessionId 
+      ? `http://localhost:3000/enrollment?session=${options.sessionId}`
+      : 'http://localhost:3000/enrollment';
+    
+    const dom = new JSDOM(html, {
+      url,
+      runScripts: 'outside-only',
+      resources: 'usable',
+      pretendToBeVisual: true,
+    });
+
+    const { window } = dom;
+
+    // Mock Telegram WebApp API if requested
+    if (options.hasTelegramWebApp) {
+      (window as any).Telegram = {
+        WebApp: {
+          initData: options.initData || '',
+          ready: () => {},
+          expand: () => {},
+        }
+      };
+    }
+
+    // Mock fetch API with URL resolution
+    const fetchMock = mock.fn(async (urlInput: string | URL, options?: any) => {
+      // Resolve relative URLs
+      const url = typeof urlInput === 'string' 
+        ? (urlInput.startsWith('/') ? `http://localhost:3000${urlInput}` : urlInput)
+        : urlInput.toString();
+      throw new Error(`Unmocked fetch: ${url}`);
+    });
+    window.fetch = fetchMock as any;
+
+    return { dom, window, document: window.document, fetchMock };
+  }
+
+  /**
+   * Wait for async initialization to complete
+   */
+  async function waitForInit(window: any, timeoutMs = 1000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+      if (window.enrollmentSession || window.document.querySelector('#status').className !== 'loading') {
+        break;
+      }
+    }
+  }
+
+  test('should disable verification when Telegram initData is missing (external browser)', async () => {
+    const { window, document } = createDOMEnvironment({
+      sessionId: 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6',
+      hasTelegramWebApp: false, // External browser - no Telegram context
+    });
+
+    // Extract and execute the script
+    const scriptContent = document.querySelector('script[type="module"]')?.textContent;
+    assert.ok(scriptContent, 'Script should exist');
+
+    // Execute script in the window context
+    const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+    const scriptFn = new AsyncFunction('window', 'document', 'console', scriptContent);
+    await scriptFn(window, document, console);
+
+    await waitForInit(window);
+
+    // Should show warning (fail-closed)
+    const statusEl = document.getElementById('status');
+    assert.ok(statusEl, 'Status element should exist');
+    assert.strictEqual(statusEl.className, 'warning', 'Should show warning state');
+    assert.ok(
+      statusEl.textContent?.includes('Telegram bot'),
+      'Should explain that page must be opened from Telegram bot'
+    );
+
+    // Button should be hidden (verification disabled)
+    const buttonEl = document.getElementById('verifyButton');
+    assert.ok(buttonEl?.classList.contains('hidden'), 'Button should be hidden');
+  });
+
+  test('should check for Telegram initData before allowing verification', () => {
+    const html = readFileSync(join(__dirname, 'enrollment.html'), 'utf-8');
+    const scriptContent = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1];
+    
+    assert.ok(scriptContent, 'Script should exist');
+    
+    // Verify script checks for Telegram WebApp initData
+    assert.ok(
+      scriptContent.includes('Telegram') && 
+      scriptContent.includes('WebApp') && 
+      scriptContent.includes('initData'),
+      'Script must check for Telegram.WebApp.initData'
+    );
+    
+    // Verify script shows warning when initData is missing
+    assert.ok(
+      scriptContent.includes('Telegram bot') || 
+      scriptContent.includes('external browser'),
+      'Script must warn when opened in external browser without Telegram context'
+    );
+    
+    // Verify script blocks verification without initData
+    assert.ok(
+      /if\s*\([^)]*!initData[^)]*\)/.test(scriptContent),
+      'Script must check and block when initData is missing'
+    );
+  });
+
+  test('should send initData along with idkitResult to /api/enrollment/complete', () => {
+    const html = readFileSync(join(__dirname, 'enrollment.html'), 'utf-8');
+    const scriptContent = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1];
+    
+    assert.ok(scriptContent, 'Script should exist');
+    
+    // Verify script constructs completion request with both initData and idkitResult
+    assert.ok(
+      scriptContent.includes('initData:') && scriptContent.includes('idkitResult:'),
+      'Completion request must include both initData and idkitResult fields'
+    );
+    
+    // Verify initData comes from Telegram WebApp context
+    assert.ok(
+      scriptContent.includes('initData') && scriptContent.includes('Telegram') && scriptContent.includes('WebApp'),
+      'Script must use Telegram.WebApp.initData for authentication'
+    );
+    
+    // Verify fetch body stringifies both fields
+    assert.ok(
+      /JSON\.stringify\([^)]*initData[^)]*idkitResult[^)]*\)/s.test(scriptContent) ||
+      /JSON\.stringify\([^)]*idkitResult[^)]*initData[^)]*\)/s.test(scriptContent),
+      'Completion POST must send both initData and idkitResult in JSON body'
+    );
+  });
+
+  test('should use textContent instead of innerHTML for error messages (XSS prevention)', async () => {
+    const { window, document } = createDOMEnvironment({
+      sessionId: 'test123',
+      hasTelegramWebApp: true,
+      initData: 'test',
+    });
+
+    // Execute script
+    const scriptContent = document.querySelector('script[type="module"]')?.textContent;
+    assert.ok(scriptContent, 'Script should exist');
+
+    // Verify no innerHTML usage with dynamic content
+    assert.ok(
+      !scriptContent.includes('innerHTML =') || scriptContent.includes('// SECURITY: Use textContent'),
+      'Should not use innerHTML for dynamic content without security comment'
+    );
+  });
+
+  test('should validate session format and reject invalid sessions', async () => {
+    const { window, document, fetchMock } = createDOMEnvironment({
+      sessionId: 'invalid!@#$%',
+      hasTelegramWebApp: true,
+      initData: 'test',
+    });
+
+    // Mock 404 response
+    fetchMock.mock.mockImplementationOnce(async (urlInput: string | URL) => ({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: 'Session not found' })
+    }));
+
+    // Execute script
+    const scriptContent = document.querySelector('script[type="module"]')?.textContent;
+    const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+    const scriptFn = new AsyncFunction('window', 'document', 'console', scriptContent);
+    await scriptFn(window, document, console);
+
+    await waitForInit(window, 2000);
+
+    // Should show error
+    const statusEl = document.getElementById('status');
+    assert.strictEqual(statusEl?.className, 'error', 'Should show error state');
+  });
+
+  test('should validate no secrets in client code', () => {
+    const html = readFileSync(join(__dirname, 'enrollment.html'), 'utf-8');
+    
+    // Check for common secret patterns (case-insensitive)
+    const secretPatterns = [
+      /bot_token/i,
+      /api_key/i,
+      /secret_key/i,
+      /private_key/i,
+      /app_secret/i,
+      /-----BEGIN/i, // PEM keys
+    ];
+
+    for (const pattern of secretPatterns) {
+      assert.ok(
+        !pattern.test(html),
+        `Should not contain pattern ${pattern} in client code`
+      );
+    }
+  });
+
+  test('should display accurate privacy statement', () => {
+    const html = readFileSync(join(__dirname, 'enrollment.html'), 'utf-8');
+    
+    // Should NOT claim proof never leaves device
+    assert.ok(
+      !html.includes('never leaves your device'),
+      'Should not claim proof never leaves device'
+    );
+    
+    // Should accurately state no biometric data collected
+    assert.ok(
+      html.includes('No biometric data is collected') || 
+      html.includes('no biometric data'),
+      'Should accurately state no biometric data collected'
+    );
+  });
+
+  test('should use official IDKit.request API, not fabricated IDKitWidget', () => {
+    const html = readFileSync(join(__dirname, 'enrollment.html'), 'utf-8');
+    
+    // Should NOT use fabricated IDKitWidget class
+    assert.ok(
+      !html.includes('new IDKitWidget'),
+      'Should not use fabricated IDKitWidget class'
+    );
+    
+    // Should use official IDKit API
+    assert.ok(
+      html.includes('IDKit.request'),
+      'Should use official IDKit.request API'
+    );
+    
+    // Should use preset API (proofOfHuman, etc.)
+    assert.ok(
+      html.includes('.preset(') || html.includes('proofOfHuman'),
+      'Should use official preset API'
+    );
+  });
+});

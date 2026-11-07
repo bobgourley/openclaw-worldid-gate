@@ -200,7 +200,7 @@ export class TelegramBotHandler {
       '/verify - Start World ID verification\n' +
       '/status - Check your verification status\n' +
       '/help - Show this help message\n\n' +
-      '*Privacy:* Your World ID proof never leaves your device. Only a zero-knowledge proof is verified.';
+      '*Privacy:* Only a zero-knowledge proof is verified. No biometric data is collected or shared.';
 
     await this.transport.sendMessage(userId, helpText, { parse_mode: 'Markdown' })
       .catch(err => console.error('Failed to send help:', err));
@@ -260,10 +260,16 @@ export class TelegramBotHandler {
         await this.transport.sendMessage(
           userId,
           '🌍 *World ID Verification*\n\n' +
-          'Click the button below to verify with World App:\n\n' +
-          `${enrollmentUrl}\n\n` +
-          '⏱️ This link expires in 5 minutes.',
-          { parse_mode: 'Markdown' }
+          'Click the button below to verify with World App.\n\n' +
+          '⏱️ Session expires in 5 minutes.',
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '🌍 Verify with World ID', web_app: { url: enrollmentUrl } }
+              ]]
+            }
+          }
         );
         return;
       }
@@ -279,17 +285,23 @@ export class TelegramBotHandler {
         }
       }
 
-      // Generate enrollment UI link
+      // Generate enrollment UI link with Telegram Mini App button
       const enrollmentUrl = `${this.enrollmentBaseUrl}/enrollment?session=${sessionId}`;
 
       await this.transport.sendMessage(
         userId,
         '🌍 *World ID Verification*\n\n' +
-        'Click the link below to verify with World App:\n\n' +
-        `${enrollmentUrl}\n\n` +
-        '⏱️ This link expires in 5 minutes.\n\n' +
-        '📱 Make sure you have World App installed on your device.',
-        { parse_mode: 'Markdown' }
+        'Click the button below to verify with World App.\n\n' +
+        '⏱️ Session expires in 5 minutes.\n' +
+        '📱 Make sure you have World App installed.',
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🌍 Verify with World ID', web_app: { url: enrollmentUrl } }
+            ]]
+          }
+        }
       );
 
     } catch (error: any) {
