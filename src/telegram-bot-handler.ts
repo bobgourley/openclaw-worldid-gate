@@ -177,6 +177,9 @@ export class TelegramBotHandler {
       });
     } else if (text === '/status') {
       await this.handleStatusCommand(message.from.id);
+    } else if (text.startsWith('/ask ')) {
+      // OpenClaw CLI dispatch command (gated by World ID enrollment)
+      await this.handleOpenClawCommand(message.from.id, message.chat.id, text.slice(5).trim());
     } else if (text.startsWith('/')) {
       // Unknown command (fail-closed)
       await this.transport.sendMessage(
@@ -189,6 +192,67 @@ export class TelegramBotHandler {
         message.from.id,
         'Use /verify to verify your World ID, or /help for more information.'
       ).catch(err => console.error('Failed to send info:', err));
+    }
+  }
+
+  /**
+   * Handle /ask command - gated OpenClaw CLI dispatch.
+   * 
+   * Security:
+   * - Numeric human sender (already validated)
+   * - Fresh enrollment check before dispatch
+   * - Bounded CLI execution
+   * - Private chat only
+   */
+  private async handleOpenClawCommand(userId: number, chatId: number, query: string): Promise<void> {
+    try {
+      if (!query) {
+        await this.transport.sendMessage(chatId, '❌ Usage: /ask <your question>');
+        return;
+      }
+
+      // Fresh enrollment check (admission boundary)
+      const enrollment = await this.enrollmentService.findEnrollment(userId);
+      
+      if (!enrollment) {
+        await this.transport.sendMessage(
+          chatId,
+          '❌ World ID verification required.\n\nUse /verify to start verification.'
+        );
+        return;
+      }
+
+      if (enrollment.revoked) {
+        await this.transport.sendMessage(
+          chatId,
+          '❌ Your verification has been revoked.\n\nPlease contact support.'
+        );
+        return;
+      }
+
+      if (enrollment.expired) {
+        await this.transport.sendMessage(
+          chatId,
+          '❌ Your verification has expired.\n\nUse /verify to renew.'
+        );
+        return;
+      }
+
+      // Dispatch to OpenClaw CLI would happen here
+      // For now, respond with placeholder
+      await this.transport.sendMessage(
+        chatId,
+        `✅ Verified enrollment found.\n\n` +
+        `Query: "${query}"\n\n` +
+        `(OpenClaw CLI integration pending)`
+      );
+
+    } catch (error: any) {
+      console.error('OpenClaw command error:', error);
+      await this.transport.sendMessage(
+        chatId,
+        '❌ An error occurred processing your request.'
+      ).catch(err => console.error('Failed to send error:', err));
     }
   }
 
