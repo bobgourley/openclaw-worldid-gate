@@ -99,10 +99,13 @@ test.describe('Full webhook enrollment workflow', () => {
     const stubVerifier = {
       async verify(idkitResult: any, expectedContext: any): Promise<any> {
         console.log('[Stub Verifier] Accepting proof');
+        console.log('[Stub Verifier] idkitResult.responses:', idkitResult.responses?.length);
+        // BackendVerificationResult structure
         return {
           success: true,
-          nullifier: idkitResult.nullifier_hash,
-          verification_level: idkitResult.verification_level || 'orb',
+          nullifier: idkitResult.responses?.[0]?.nullifier || '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+          issuerSchemaId: idkitResult.responses?.[0]?.issuer_schema_id || 1,
+          expiresAtMin: idkitResult.responses?.[0]?.expires_at_min,
         };
       },
     };
@@ -169,26 +172,18 @@ test.describe('Full webhook enrollment workflow', () => {
   });
 
   test('Full flow: webhook → session → connectorURI → encrypted poll → completion', async ({ page, request }) => {
-    // Log console messages with full details
+    // Log console messages
     page.on('console', msg => {
       const text = msg.text();
-      console.log(`[Browser Console ${msg.type()}]:`, text);
-      // Log args for detailed debugging
-      if (text.includes('error') || text.includes('unexpected')) {
-        msg.args().forEach(async (arg, i) => {
-          try {
-            const val = await arg.jsonValue();
-            console.log(`  arg[${i}]:`, JSON.stringify(val, null, 2));
-          } catch (e) {
-            // Ignore
-          }
-        });
+      // Skip logging decrypted payloads or keys
+      if (text.includes('DECRYPTED:') || text.includes('KEY:')) {
+        return;
       }
+      console.log(`[Browser Console ${msg.type()}]:`, text);
     });
 
     page.on('pageerror', error => {
       console.error('[Browser Error]:', error.message);
-      console.error('[Browser Stack]:', error.stack);
     });
 
     // Step 1: Send /verify command via webhook
@@ -247,7 +242,6 @@ test.describe('Full webhook enrollment workflow', () => {
         status: 200,
         contentType: 'application/javascript',
         body: `
-          window.IDKIT_DEBUG = true;
           window.Telegram = {
             WebApp: {
               initData: ${JSON.stringify(initData)},
@@ -263,15 +257,27 @@ test.describe('Full webhook enrollment workflow', () => {
     let capturedConnectorURI = '';
     let encryptionKey: Buffer | null = null;
     let pollCount = 0;
+    let sessionNonce: string | null = null;
+
+    // Intercept session info to get nonce
+    await page.route(`http://127.0.0.1:${serverPort}/api/enrollment/session/**`, async (route) => {
+      const response = await route.fetch();
+      const json = await response.json();
+      if (json.signedChallenge?.nonce) {
+        sessionNonce = json.signedChallenge.nonce;
+        console.log('[Monitor] Session nonce captured (length:', sessionNonce.length, ')');
+      }
+      await route.fulfill({ response });
+    });
 
     // Mock all bridge endpoints in one handler
     await page.route('**bridge.worldcoin.org/**', async (route) => {
       const url = route.request().url();
       const method = route.request().method();
-      console.log(`[Mock] Bridge ${method}`, url.substring(url.indexOf('/bridge') || 0));
       
       // Bridge request creation
       if (url.includes('/request') && method === 'POST') {
+        console.log('[Mock] Bridge POST /request');
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -291,25 +297,31 @@ test.describe('Full webhook enrollment workflow', () => {
             contentType: 'application/json',
             body: JSON.stringify({ status: 'initialized' }),
           });
-        } else if (pollCount === 3 && encryptionKey) {
+        } else if (pollCount === 3 && encryptionKey && sessionNonce) {
           // Return encrypted success response (protocol v1 format)
-          // SDK parseBridgeResponse expects top-level user_presence_completed
-          // SDK parseProtocolResponse expects: version, id, responses[]
-          // SDK parseProtocolItem expects: identifier, issuer_schema_id, proof (320 hex), expires_at_min
+          // CRITICAL: SDK validates nonce matches RP context
+          // session_id required when session_id='create' in context
+          // session_id format: 'session_' + 128 hex chars, bytes 64-66 must be '01'
+          
+          // Use extracted session nonce (from RP context)
+          console.log('[Mock] Building response with nonce:', sessionNonce.substring(0, 20) + '...');
+          
           const successPayload = {
             version: 1,
             id: 'mock_response_id',
+            session_id: 'session_' + '0'.repeat(64) + '01' + '0'.repeat(62),
             user_presence_completed: true,
             responses: [{
               identifier: 'proof_of_human',
               issuer_schema_id: 1,
-              proof: '1'.repeat(320),  // 320 hex chars (parsed into 5 proof elements)
-              expires_at_min: Math.floor(Date.now() / 1000) + 86400,  // 24h from now
+              proof: '0'.repeat(320),  // 320 hex chars (5 proof elements)
+              nullifier: 'nil_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+              expires_at_min: Math.floor(Date.now() / 1000) + 86400,
             }],
           };
 
           const payloadString = JSON.stringify(successPayload);
-          console.log('[Mock] Encrypting payload:', payloadString.substring(0, 200) + '...');
+          console.log('[Mock] Encrypting payload (length:', payloadString.length, ')');
           const encrypted = encryptBridgeResponse(encryptionKey, payloadString);
 
           console.log('[Mock] Returning encrypted completed response');
@@ -340,26 +352,6 @@ test.describe('Full webhook enrollment workflow', () => {
     const enrollmentUrl = `http://127.0.0.1:${serverPort}/enrollment?session=${sessionId}`;
     await page.goto(enrollmentUrl);
     await page.waitForLoadState('networkidle');
-
-    // Inject debug logging
-    await page.evaluate(() => {
-      const originalFetch = window.fetch;
-      window.fetch = async (...args: any[]) => {
-        const response = await originalFetch(...args);
-        const url = typeof args[0] === 'string' ? args[0] : args[0].url;
-        if (url && url.includes('/response/')) {
-          console.log('[Intercepted fetch response]:', url);
-          const clone = response.clone();
-          try {
-            const json = await clone.json();
-            console.log('[Response JSON]:', JSON.stringify(json, null, 2));
-          } catch (e) {
-            console.log('[Could not parse response as JSON]');
-          }
-        }
-        return response;
-      };
-    });
 
     const statusEl = page.locator('#status');
     await expect(statusEl).toBeVisible();
@@ -408,9 +400,10 @@ test.describe('Full webhook enrollment workflow', () => {
         completionReceived = true;
         try {
           completionPayload = req.postDataJSON();
-          console.log('[Monitor] Completion POST intercepted');
-          console.log('  - has initData:', !!completionPayload.initData);
-          console.log('  - has idkitResult:', !!completionPayload.idkitResult);
+          console.log('[Monitor] Completion POST sent');
+          console.log('[Monitor] idkitResult keys:', Object.keys(completionPayload.idkitResult || {}));
+          console.log('[Monitor] idkitResult.nonce:', completionPayload.idkitResult?.nonce);
+          console.log('[Monitor] idkitResult.protocol_version:', completionPayload.idkitResult?.protocol_version);
         } catch (e) {
           console.log('[Monitor] Could not parse completion payload');
         }
@@ -442,8 +435,8 @@ test.describe('Full webhook enrollment workflow', () => {
     if (enrollment) {
       console.log('  - revoked:', enrollment.revoked);
       console.log('  - expired:', enrollment.expired);
-      console.log('  - expiresAt:', new Date(enrollment.expiresAt * 1000).toISOString());
     }
+    console.log('Completion POST sent:', completionReceived);
 
     // Assertions
     expect(completionReceived).toBeTruthy();
