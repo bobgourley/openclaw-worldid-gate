@@ -286,7 +286,7 @@ When ready for production:
 
 **DO NOT collect or configure secrets in this synthetic dry-run phase.**
 
-### Step 2: Register Verification Bot with @BotFather
+### Step 2: Telegram Bot Handler (Already Implemented)
 
 **Verification bot handler ALREADY IMPLEMENTED** (tested at commit 040e904).
 
@@ -295,21 +295,12 @@ When ready for production:
 - ✅ Challenge session management with requester binding
 - ✅ Local HTTP service for enrollment API
 
+**Existing Bot**: @OpenClawWorldIDBot already registered (bot token NOT collected in documentation).
+
 **NOT Tested** (require live integration):
 - Real Telegram webhook/polling with authentic update signatures
 - Real World App proof generation on device
 - Public HTTPS hosting with valid TLS certificate
-
-**Live Bot Registration Steps** (when ready):
-1. Message @BotFather on Telegram
-2. Send `/newbot`
-3. Choose name: "MyApp Verification Bot"
-4. Choose username: "myapp_verify_bot"
-5. Copy bot token
-6. Configure `TELEGRAM_BOT_TOKEN` environment variable
-7. **Bot Privacy and Group Messages**:
-   - `/setprivacy` → **Enable** (default): Bot sees only messages addressed to it
-   - Reference: https://core.telegram.org/bots/features#privacy-mode
 
 ### Step 3: Deploy Enrollment Mini App
 
@@ -343,11 +334,7 @@ When ready for production:
 **NOT Tested** (require live integration):
 - Live World ID Developer Portal API calls with registered app credentials
 
-**Live Configuration Steps**:
-1. Register World ID application at https://developer.worldcoin.org/
-2. Obtain production `app_id` and `action`
-3. Configure `WORLDID_APP_ID` and `WORLDID_ACTION` environment variables
-4. Select verification level (device / orb)
+**Existing World ID Application**: App and RP already registered (app/RP public IDs and signing secrets NOT collected in documentation). Refer to official World ID v4/RP proofOfHuman contract and configuration documentation.
 
 ### Step 5: Configure Durable Enrollment Store
 
@@ -360,18 +347,7 @@ When ready for production:
 - ✅ Single atomic transaction: challenge consume + enrollment create
 - ✅ 354 unit tests passing
 
-**Production Configuration**:
-
-```typescript
-// Current implementation (SQLite)
-import { SQLiteEnrollmentStore } from './src/enrollment-store.js';
-
-const store = new SQLiteEnrollmentStore({
-  // Configuration TBD
-});
-```
-
-**Proposed database schema** (illustrative, NOT policy-approved):
+**Database schema** (illustrative, NOT policy-approved):
 
 ```sql
 CREATE TABLE enrollments (
@@ -426,13 +402,13 @@ When all components are implemented and deployed:
 ### UNAPPROVED Integration Requirements
 
 **UNRESOLVED Technical Scope**:
-- OpenClaw middleware injection mechanism (no public plugin API exists)
+- OpenClaw middleware injection mechanism (supported integration mechanism not established by this investigation)
 - Human actor extraction utility (not yet implemented)
 - Protected group scope configuration (format NOT DEFINED)
 - Fresh recheck for queued/debounced updates (seam locations NOT TRACED)
 
 **Known Limitations**:
-- Poll registry reads content BEFORE any proposed gate (line 212)
+- Poll registry schema contains content fields (`question`, `options`), not just routing metadata
 - Content-free poll classification policy NOT YET ESTABLISHED
 - Callback/native command separate authorization paths NOT YET UNIFIED
 - Fail-closed guarantees depend on recheck frequency (NOT YET DEFINED)
@@ -465,7 +441,7 @@ Critical test cases required BEFORE production:
 4. Protected group + channel actor (sender_chat) → zero history/model/tools
 5. Protected group + missing actor → zero history/model/tools
 6. Out-of-scope group + any actor → pass-through (existing behavior)
-7. Registry timeout → fail-closed behavior (policy NOT YET DEFINED)
+7. Registry timeout/unavailable/corrupt response MUST deny admission (REQUIRED: fail-closed, unimplemented; retries MUST NOT permit content/history/model/tools while authorization uncertain)
 8. Unknown poll in protected group → policy NOT YET ESTABLISHED
 
 **UNPROVEN Test Coverage**:
@@ -549,7 +525,7 @@ cp enrollments-backup.db enrollments.db
 2. **Poll Registry Content Read Policy**
    - Option A: Content-free index (metadata-only routing)
    - Option B: Deny unknown polls in protected groups
-   - Current: Registry reads poll question/options BEFORE any proposed gate (line 212)
+   - Current: Poll registry schema contains content fields (`question`, `options`), not just routing metadata
 
 3. **Retention Policy**
    - How long to retain expired/revoked enrollments?
@@ -582,6 +558,7 @@ cp enrollments-backup.db enrollments.db
 
 **Unresolved Prerequisites** (awaiting Bob approval):
 - [ ] Bob approved upstream OpenClaw modifications
+- [ ] Supported integration mechanism established
 - [ ] Poll registry content read policy selected (Option A vs B)
 - [ ] Fresh recheck seam locations identified and verified
 - [ ] HTTPS provider selected and provisioned (Cloudflare Tunnel / ngrok / custom)

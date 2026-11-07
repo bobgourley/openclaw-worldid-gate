@@ -922,15 +922,14 @@ This section documents UNRESOLVED integration requirements for World ID verifica
 **UNAPPROVED Candidate Injection Point**: After line 117 (`bot.api.config.use(accountThrottler.transformer)`)
 
 **Known Limitations of Proposed Placement**:
-- Poll preparation middleware at line 212 runs AFTER line 117
-- Poll registry read occurs at line 212 (BEFORE proposed gate at line ~120 is impossible)
+- Poll preparation middleware at line 212 runs AFTER proposed gate at line ~120
 - Poll registry schema contains content fields (`question`, `options`) not just routing metadata
 - Content-free poll classification policy NOT YET ESTABLISHED
 
 ### Unresolved Technical Requirements
 
 **UNAPPROVED upstream modifications required** (Bob has NOT approved):
-1. OpenClaw middleware injection mechanism (no public plugin API exists)
+1. OpenClaw middleware injection mechanism (supported integration mechanism not established by this investigation)
 2. Human actor extraction across all update types
 3. Protected group scope configuration interface
 4. Fresh authorization recheck for queued/debounced updates
@@ -986,7 +985,7 @@ This section documents UNRESOLVED integration requirements for World ID verifica
 
 ### Poll Registry Content Read Issue
 
-**Problem**: Poll preparation middleware (line 212) reads poll registry BEFORE proposed gate.
+**Problem**: Poll registry schema contains content fields (`question`, `options`), not just routing metadata. Content-free poll classification policy NOT YET ESTABLISHED.
 
 **Poll Registry Schema** ([poll-registry.ts:20-27](https://github.com/openclaw/openclaw/blob/fc23bc864e4553c2d215e479eeec47b67a0bf943/extensions/telegram/src/poll-registry.ts#L20-L27)):
 ```typescript
@@ -1110,10 +1109,10 @@ export type TelegramPollRegistryEntry = {
 - In-flight admitted work CANNOT be retroactively cancelled
 - Queued updates may complete with stale authorization if no fresh recheck
 
-**Outage Handling** (policy NOT YET ESTABLISHED):
-- Registry timeout behavior (deny vs retry vs fallback) NOT DEFINED
-- Registry unavailable duration threshold NOT DEFINED
-- Invalid/corrupt registry response handling NOT DEFINED
+**Outage Handling** (REQUIRED: fail-closed, unimplemented):
+- Registry timeout → MUST deny admission (retries MUST NOT permit content/history/model/tools while authorization uncertain)
+- Registry unavailable → MUST deny admission
+- Invalid/corrupt registry response → MUST deny admission
 
 **No Stale Positive Grants** (NOT YET PROVEN):
 - Requires fresh registry query at EVERY decision point
@@ -1123,7 +1122,7 @@ export type TelegramPollRegistryEntry = {
 ### Unresolved Deployment Requirements
 
 **Configuration Mechanism** (NOT YET ESTABLISHED):
-- OpenClaw plugin/middleware registration API does not exist
+- OpenClaw plugin/middleware registration mechanism (supported integration mechanism not established by this investigation)
 - Protected group numeric chat ID configuration format NOT DEFINED
 - Registry connection interface NOT DEFINED
 - Fresh recheck trigger points NOT TRACED

@@ -26,15 +26,7 @@ This document lists the exact prerequisites and integration steps required befor
 
 ### 2. Telegram Bot Token
 
-**Status**: Not collected, user must provide.
-
-**Required actions** (Bob must complete via @BotFather):
-1. Create verification bot via @BotFather `/newbot` command
-2. Record bot token (e.g., `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`)
-3. Store token as environment variable or secret (never commit)
-4. Configure bot username (e.g., `@YourVerificationBot`)
-
-**Security warning**: Bot token is equivalent to account password. Never expose in code, logs, or version control.
+**Status**: Existing bot @OpenClawWorldIDBot already registered. Bot token NOT collected in documentation.
 
 ### 3. Public HTTPS Endpoint
 
@@ -154,13 +146,13 @@ GET /health
 #### Unresolved Technical Scope
 
 **OpenClaw Modification** (Bob has NOT approved):
-- Middleware injection mechanism (no public plugin API exists)
+- Middleware injection mechanism (supported integration mechanism not established by this investigation)
 - Human actor extraction utility (not yet implemented)
 - Protected group scope configuration (format NOT DEFINED)
 - Fresh recheck for queued/debounced updates (seam locations NOT TRACED)
 
 **Known Limitations**:
-- Poll registry reads content BEFORE any proposed gate (line 212 vs proposed ~120)
+- Poll registry schema contains content fields (`question`, `options`), not just routing metadata
 - Content-free poll classification policy NOT YET ESTABLISHED
 - Callback/native command separate authorization paths NOT YET UNIFIED
 - Missing chat ID extraction (e.g., poll_answer) NOT RESOLVED
@@ -177,7 +169,7 @@ GET /health
 
 1. **OpenClaw Version Compatibility**
    - Locate OpenClaw installation version/commit
-   - Verify NO PUBLIC middleware injection API exists
+   - Supported integration mechanism not established by this investigation
    - Determine upstream modification approval process
 
 2. **Protected Group Configuration**
@@ -190,8 +182,10 @@ GET /health
    - Query latency acceptable (<100ms typical, <500ms timeout recommended)
    - Registry service monitoring and alerting configured
 
-4. **Fail-Closed Testing Requirements** (NOT YET PROVEN):
-   - Verify registry timeout behavior (denial / retry / fallback NOT DEFINED)
+4. **Fail-Closed Testing Requirements** (REQUIRED, unimplemented):
+   - Registry timeout MUST deny admission (retries MUST NOT permit content/history/model/tools while authorization uncertain)
+   - Registry unavailable MUST deny admission
+   - Invalid/corrupt registry response MUST deny admission
    - Test revocation timing (depends on recheck frequency NOT YET ESTABLISHED)
    - Confirm expiry enforcement at exact boundary (requires clock consistency)
    - Validate non-human actors rejected in protected groups
@@ -374,26 +368,21 @@ npm start
 
 **Live Integration Steps**:
 
-1. **Complete World Developer Portal registration**:
-   - Create application at https://developer.world.org
-   - Record `app_id` and `action`
-   - Choose production or staging environment
+1. **World ID application and Telegram bot already registered**:
+   - Existing World ID app and RP registration known (app/RP public IDs and signing secrets NOT collected in documentation)
+   - Existing bot @OpenClawWorldIDBot already registered
+   - Refer to official World ID v4/RP proofOfHuman contract and configuration documentation
 
-2. **Register Telegram verification bot**:
-   - Use @BotFather `/newbot` to create new bot
-   - Record bot token
-   - Store token securely (never commit)
-
-3. **Choose and provision public HTTPS solution** (NOT YET SELECTED):
+2. **Choose and provision public HTTPS solution** (NOT YET SELECTED):
    - Options: Cloudflare Tunnel / ngrok / custom domain
    - Set up tunnel/domain to deployment host
    - Record public HTTPS URL
 
-4. **Configure environment**:
-   - Set `WORLDID_APP_ID`, `WORLDID_ACTION`, `TELEGRAM_BOT_TOKEN`
+3. **Configure environment**:
+   - Configure existing app/RP credentials and bot token via secure channel (NOT collected in documentation)
    - Confirm environment choice (production vs staging)
 
-5. **OpenClaw Integration** (AFTER Bob approval):
+4. **OpenClaw Integration** (AFTER Bob approval):
    - Implement ingress gate (UNAPPROVED DESIGN)
    - Test end-to-end enrollment flow
 
