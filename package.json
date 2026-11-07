@@ -18,11 +18,13 @@
     "proof-of-humanity"
   ],
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "@types/express": "^4.17.25",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^22.0.0",
     "esbuild": "^0.28.2",
     "jsdom": "^31.0.0",
+    "playwright": "^1.65.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   },

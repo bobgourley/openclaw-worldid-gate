@@ -396,6 +396,7 @@ export class HttpService {
     res.json({
       signedChallenge: sessionInfo.signedChallenge,
       appId: sessionInfo.appId,
+      rpId: (sessionInfo as any).rpId, // Include rpId if present
       signal: sessionInfo.signal,
     });
   }
