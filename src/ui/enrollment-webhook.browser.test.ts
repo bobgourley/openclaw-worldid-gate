@@ -95,14 +95,17 @@ test.describe('Full webhook enrollment workflow', () => {
       environment: 'staging',
     });
 
-    // Create stub verification client
-    const { WorldIdHttpVerifier } = await import('../../dist/worldid-verifier-http.js');
-    const stubVerifier = new WorldIdHttpVerifier({
-      appId: TEST_APP_ID,
-      rpId: TEST_RP_ID,
-      environment: 'staging',
-      baseUrlOverride: 'http://localhost:9999',
-    });
+    // Create stub verification client that always returns success
+    const stubVerifier = {
+      async verify(idkitResult: any, expectedContext: any): Promise<any> {
+        console.log('[Stub Verifier] Accepting proof');
+        return {
+          success: true,
+          nullifier: idkitResult.nullifier_hash,
+          verification_level: idkitResult.verification_level || 'orb',
+        };
+      },
+    };
 
     // Create enrollment service
     const { EnrollmentService } = await import('../../dist/enrollment-service-production.js');
@@ -154,8 +157,9 @@ test.describe('Full webhook enrollment workflow', () => {
     
     console.log(`Test server started on port ${serverPort}`);
     
-    // Store stubTransport for test access
+    // Store stubTransport and enrollmentService for test access
     (service as any).stubTransport = stubTransport;
+    (service as any).enrollmentService = enrollmentService;
   });
 
   test.afterAll(async () => {
@@ -165,13 +169,26 @@ test.describe('Full webhook enrollment workflow', () => {
   });
 
   test('Full flow: webhook → session → connectorURI → encrypted poll → completion', async ({ page, request }) => {
-    // Log console messages
+    // Log console messages with full details
     page.on('console', msg => {
-      console.log(`[Browser Console ${msg.type()}]:`, msg.text());
+      const text = msg.text();
+      console.log(`[Browser Console ${msg.type()}]:`, text);
+      // Log args for detailed debugging
+      if (text.includes('error') || text.includes('unexpected')) {
+        msg.args().forEach(async (arg, i) => {
+          try {
+            const val = await arg.jsonValue();
+            console.log(`  arg[${i}]:`, JSON.stringify(val, null, 2));
+          } catch (e) {
+            // Ignore
+          }
+        });
+      }
     });
 
     page.on('pageerror', error => {
       console.error('[Browser Error]:', error.message);
+      console.error('[Browser Stack]:', error.stack);
     });
 
     // Step 1: Send /verify command via webhook
@@ -230,6 +247,7 @@ test.describe('Full webhook enrollment workflow', () => {
         status: 200,
         contentType: 'application/javascript',
         body: `
+          window.IDKIT_DEBUG = true;
           window.Telegram = {
             WebApp: {
               initData: ${JSON.stringify(initData)},
@@ -275,20 +293,24 @@ test.describe('Full webhook enrollment workflow', () => {
           });
         } else if (pollCount === 3 && encryptionKey) {
           // Return encrypted success response (protocol v1 format)
+          // SDK parseBridgeResponse expects top-level user_presence_completed
+          // SDK parseProtocolResponse expects: version, id, responses[]
+          // SDK parseProtocolItem expects: identifier, issuer_schema_id, proof (320 hex), expires_at_min
           const successPayload = {
             version: 1,
-            id: 'response_123',
+            id: 'mock_response_id',
+            user_presence_completed: true,
             responses: [{
-              credential_type: {
-                type: 'proof_of_human',
-              },
-              proof: ['1', '2', '3', '4', '5', '6', '7', '8'],
-              nullifier_hash: '0x' + '1'.repeat(64),
-              merkle_root: '0x' + '2'.repeat(64),
+              identifier: 'proof_of_human',
+              issuer_schema_id: 1,
+              proof: '1'.repeat(320),  // 320 hex chars (parsed into 5 proof elements)
+              expires_at_min: Math.floor(Date.now() / 1000) + 86400,  // 24h from now
             }],
           };
 
-          const encrypted = encryptBridgeResponse(encryptionKey, JSON.stringify(successPayload));
+          const payloadString = JSON.stringify(successPayload);
+          console.log('[Mock] Encrypting payload:', payloadString.substring(0, 200) + '...');
+          const encrypted = encryptBridgeResponse(encryptionKey, payloadString);
 
           console.log('[Mock] Returning encrypted completed response');
           await route.fulfill({
@@ -318,6 +340,26 @@ test.describe('Full webhook enrollment workflow', () => {
     const enrollmentUrl = `http://127.0.0.1:${serverPort}/enrollment?session=${sessionId}`;
     await page.goto(enrollmentUrl);
     await page.waitForLoadState('networkidle');
+
+    // Inject debug logging
+    await page.evaluate(() => {
+      const originalFetch = window.fetch;
+      window.fetch = async (...args: any[]) => {
+        const response = await originalFetch(...args);
+        const url = typeof args[0] === 'string' ? args[0] : args[0].url;
+        if (url && url.includes('/response/')) {
+          console.log('[Intercepted fetch response]:', url);
+          const clone = response.clone();
+          try {
+            const json = await clone.json();
+            console.log('[Response JSON]:', JSON.stringify(json, null, 2));
+          } catch (e) {
+            console.log('[Could not parse response as JSON]');
+          }
+        }
+        return response;
+      };
+    });
 
     const statusEl = page.locator('#status');
     await expect(statusEl).toBeVisible();
@@ -357,23 +399,22 @@ test.describe('Full webhook enrollment workflow', () => {
     // Step 4: Wait for SDK to start polling (already mocked in bridge handler)
     console.log('\n=== Step 4: Waiting for encrypted bridge poll ===');
 
-    // Mock completion endpoint
+    // Monitor completion POST (but let it go to real server)
     let completionReceived = false;
     let completionPayload: any = null;
 
-    await page.route(`http://127.0.0.1:${serverPort}/api/enrollment/complete`, async (route) => {
-      const postData = route.request().postDataJSON();
-      completionPayload = postData;
-      completionReceived = true;
-      console.log('[Mock] Completion POST received');
-      console.log('  - has initData:', !!postData.initData);
-      console.log('  - has idkitResult:', !!postData.idkitResult);
-
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true, expiresAt: Date.now() / 1000 + 2592000 }),
-      });
+    page.on('request', req => {
+      if (req.url().includes('/api/enrollment/complete') && req.method() === 'POST') {
+        completionReceived = true;
+        try {
+          completionPayload = req.postDataJSON();
+          console.log('[Monitor] Completion POST intercepted');
+          console.log('  - has initData:', !!completionPayload.initData);
+          console.log('  - has idkitResult:', !!completionPayload.idkitResult);
+        } catch (e) {
+          console.log('[Monitor] Could not parse completion payload');
+        }
+      }
     });
 
     // Wait for polling to complete
@@ -385,17 +426,32 @@ test.describe('Full webhook enrollment workflow', () => {
     const finalStatus = await statusEl.textContent();
     console.log('Final status:', finalStatus);
 
-    // Take final screenshot
+    // Take screenshot of final state
     await page.screenshot({ 
-      path: '/opt/cursor/artifacts/enrollment-webhook-flow-complete.png',
+      path: '/opt/cursor/artifacts/enrollment-webhook-final.png',
       fullPage: true 
     });
+
+    // Step 6: Verify enrollment in database
+    console.log('\n=== Step 6: Verifying enrollment in database ===');
+    
+    const enrollmentService = (service as any).enrollmentService;
+    const enrollment = await enrollmentService.findEnrollment(TEST_USER_ID);
+    
+    console.log('Enrollment found:', !!enrollment);
+    if (enrollment) {
+      console.log('  - revoked:', enrollment.revoked);
+      console.log('  - expired:', enrollment.expired);
+      console.log('  - expiresAt:', new Date(enrollment.expiresAt * 1000).toISOString());
+    }
 
     // Assertions
     expect(completionReceived).toBeTruthy();
     expect(completionPayload).toBeTruthy();
     expect(completionPayload.initData).toBeTruthy();
     expect(completionPayload.idkitResult).toBeTruthy();
+    expect(enrollment).toBeTruthy();
+    expect(enrollment.revoked).toBe(false);
 
     console.log('\n=== Test Results ===');
     console.log('✓ Webhook /verify created session via production path');
@@ -404,5 +460,6 @@ test.describe('Full webhook enrollment workflow', () => {
     console.log('✓ Valid AES-GCM encrypted response constructed');
     console.log('✓ SDK decrypted response successfully');
     console.log('✓ Completion POST sent with initData + idkitResult');
+    console.log('✓ Enrollment saved to database');
   });
 });
