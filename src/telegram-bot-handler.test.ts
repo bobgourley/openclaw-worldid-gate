@@ -380,7 +380,15 @@ describe('TelegramBotHandler', () => {
 
       assert.equal(sentMessages.length, 1);
       assert.match(sentMessages[0].text, /World ID Verification/i);
-      assert.match(sentMessages[0].text, /https:\/\/example\.com\/enrollment\?session=/i);
+      
+      // Verify web_app inline keyboard button (not URL in text)
+      assert.ok(sentMessages[0].options?.reply_markup, 'Message should have reply_markup');
+      assert.ok(sentMessages[0].options.reply_markup.inline_keyboard, 'Should have inline_keyboard');
+      const buttons = sentMessages[0].options.reply_markup.inline_keyboard;
+      assert.ok(buttons.length > 0, 'Should have at least one button row');
+      assert.ok(buttons[0].length > 0, 'First row should have at least one button');
+      assert.ok(buttons[0][0].web_app, 'First button should have web_app');
+      assert.match(buttons[0][0].web_app.url, /https:\/\/example\.com\/enrollment\?session=/i);
     });
 
     it('handles /verify for already enrolled user', async () => {

@@ -6,7 +6,7 @@
   "scripts": {
     "test": "tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "build": "tsc",
+    "build": "tsc && mkdir -p dist/ui && cp src/ui/enrollment.html dist/ui/",
     "start": "node dist/server.js",
     "start:dev": "tsx src/server.ts"
   },

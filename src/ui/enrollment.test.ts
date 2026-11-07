@@ -106,11 +106,19 @@ describe('enrollment.html client execution', () => {
     assert.ok(buttonEl?.classList.contains('hidden'), 'Button should be hidden');
   });
 
-  test('should check for Telegram initData before allowing verification', () => {
+  test('should check for Telegram SDK before accessing window.Telegram', () => {
     const html = readFileSync(join(__dirname, 'enrollment.html'), 'utf-8');
     const scriptContent = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1];
     
     assert.ok(scriptContent, 'Script should exist');
+    
+    // Verify script uses optional chaining (?.) or typeof checks before accessing window.Telegram
+    assert.ok(
+      /window\.Telegram\?\./.test(scriptContent) || 
+      /typeof\s+window\.Telegram/.test(scriptContent) ||
+      /window\.Telegram\s*&&/.test(scriptContent),
+      'Script must safely check for window.Telegram existence before access'
+    );
     
     // Verify script checks for Telegram WebApp initData
     assert.ok(
@@ -235,11 +243,10 @@ describe('enrollment.html client execution', () => {
       'Should not claim proof never leaves device'
     );
     
-    // Should accurately state no biometric data collected
+    // Should accurately state our service receives no raw biometric data
     assert.ok(
-      html.includes('No biometric data is collected') || 
-      html.includes('no biometric data'),
-      'Should accurately state no biometric data collected'
+      html.includes('Our service') && html.includes('no raw biometric data'),
+      'Should accurately state our service receives no raw biometric data'
     );
   });
 

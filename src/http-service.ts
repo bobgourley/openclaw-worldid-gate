@@ -74,13 +74,7 @@ export class HttpService {
 
     this.app = express();
 
-    // Strict JSON parsing with size limit
-    this.app.use(express.json({
-      limit: bodyLimit,
-      strict: true,
-    }));
-
-    // Request timeout
+    // Request timeout (applied before body parsing)
     this.app.use((req: Request, res: Response, next: NextFunction) => {
       req.setTimeout(requestTimeout);
       res.setTimeout(requestTimeout);
@@ -117,8 +111,11 @@ export class HttpService {
       res.json({ status: 'ready' });
     });
 
+    // JSON body parser for API routes (not webhook)
+    const jsonParser = express.json({ limit: bodyLimit, strict: true });
+
     // Challenge creation endpoint (requires authenticated Telegram initData)
-    this.app.post('/api/challenge/create', async (req: Request, res: Response) => {
+    this.app.post('/api/challenge/create', jsonParser, async (req: Request, res: Response) => {
       try {
         await this.handleCreateChallenge(req, res);
       } catch (error) {
@@ -128,7 +125,7 @@ export class HttpService {
     });
 
     // Enrollment completion endpoint
-    this.app.post('/api/enrollment/complete', async (req: Request, res: Response) => {
+    this.app.post('/api/enrollment/complete', jsonParser, async (req: Request, res: Response) => {
       try {
         await this.handleCompleteEnrollment(req, res);
       } catch (error) {
@@ -138,7 +135,7 @@ export class HttpService {
     });
 
     // Enrollment query endpoint (requires authenticated Telegram initData)
-    this.app.post('/api/enrollment/query', async (req: Request, res: Response) => {
+    this.app.post('/api/enrollment/query', jsonParser, async (req: Request, res: Response) => {
       try {
         await this.handleQueryEnrollment(req, res);
       } catch (error) {

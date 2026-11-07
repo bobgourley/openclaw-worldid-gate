@@ -10,6 +10,7 @@ import { EnrollmentService } from './enrollment-service-production.js';
 import { WorldIdChallengeAdapter } from './worldid-challenge-adapter.js';
 import { WorldIdHttpVerifier } from './worldid-verifier-http.js';
 import { HttpService } from './http-service.js';
+import { TelegramBotHandler, TelegramHttpTransport } from './telegram-bot-handler.js';
 
 // Configuration from environment (with unconfigured defaults for local testing)
 const config = {
@@ -21,6 +22,8 @@ const config = {
   
   // Telegram configuration (REQUIRED in production)
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || 'unconfigured_test_token',
+  telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || 'unconfigured_test_webhook_secret',
+  enrollmentBaseUrl: process.env.ENROLLMENT_BASE_URL || 'http://127.0.0.1:3000',
   
   // Service configuration
   action: process.env.WORLDID_ACTION || 'unconfigured-test-action',
@@ -49,6 +52,10 @@ function checkProductionReadiness(): { ready: boolean; issues: string[] } {
 
   if (config.telegramBotToken === 'unconfigured_test_token') {
     issues.push('TELEGRAM_BOT_TOKEN not configured');
+  }
+
+  if (config.telegramWebhookSecret === 'unconfigured_test_webhook_secret') {
+    issues.push('TELEGRAM_WEBHOOK_SECRET not configured (REQUIRED for webhook security)');
   }
 
   if (config.action === 'unconfigured-test-action') {
@@ -87,7 +94,8 @@ async function main(): Promise<void> {
     console.error('');
     console.error('Set environment variables:');
     console.error('  WORLDID_APP_ID, WORLDID_RP_ID, WORLDID_SIGNING_KEY_HEX,');
-    console.error('  TELEGRAM_BOT_TOKEN, WORLDID_ACTION');
+    console.error('  TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET,');
+    console.error('  WORLDID_ACTION, ENROLLMENT_BASE_URL');
     console.error('');
     console.error('This service CANNOT grant enrollment without proper World ID configuration.');
     console.error('Refusing to start in unsafe configuration.');
@@ -128,9 +136,20 @@ async function main(): Promise<void> {
     enrollmentTtlSeconds: 2592000, // 30 days
   });
 
-  // Create HTTP service
+  // Create Telegram bot handler
+  const telegramTransport = new TelegramHttpTransport(config.telegramBotToken);
+  const telegramBotHandler = new TelegramBotHandler({
+    botToken: config.telegramBotToken,
+    enrollmentService,
+    transport: telegramTransport,
+    enrollmentBaseUrl: config.enrollmentBaseUrl,
+    webhookSecret: config.telegramWebhookSecret,
+  });
+
+  // Create HTTP service with bot handler
   const httpService = new HttpService({
     enrollmentService,
+    telegramBotHandler,
     port: config.httpPort,
     host: config.httpHost,
     bodyLimit: '1mb',
