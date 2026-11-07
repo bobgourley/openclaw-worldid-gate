@@ -331,8 +331,8 @@ When sync fails (registry unavailable, OpenClaw config write error, etc.):
    - Production MUST use `WorldIdVerifierProduction` with real HTTPS calls to World ID API
    - Endpoint: `POST https://developer.world.org/api/v4/verify/{rp_id}`
    - Staging endpoint: `POST https://staging-developer.worldcoin.org/api/v4/verify/{rp_id}`
-     - Evidence: Listed in OpenAPI servers at https://docs.world.org/api-reference/developer-portal/verify (accessed 2026-11-07)
-     - Endpoints remain synthetic/unwired in this starter
+   - Official source (retrieved 2026-11-06): OpenAPI servers at https://docs.world.org/api-reference/developer-portal/verify list Primary, Legacy domain, and Staging domain
+   - Endpoints remain synthetic/unwired in this starter
 
 3. **Enrollment Binding** (TEST-ONLY in starter, INSUFFICIENT for production)
    - Starter `enroll()` method accepts caller-supplied Telegram user ID
