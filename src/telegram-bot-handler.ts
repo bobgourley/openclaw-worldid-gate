@@ -171,7 +171,10 @@ export class TelegramBotHandler {
     if (text === '/start' || text === '/help') {
       await this.handleHelpCommand(message.from.id);
     } else if (text === '/verify') {
-      await this.handleVerifyCommand(message.from.id);
+      await this.handleVerifyCommand(message.from.id, {
+        first_name: message.from.first_name,
+        username: message.from.username,
+      });
     } else if (text === '/status') {
       await this.handleStatusCommand(message.from.id);
     } else if (text.startsWith('/')) {
@@ -211,7 +214,7 @@ export class TelegramBotHandler {
    * 
    * Security: Requester-bound single-use session, short-lived.
    */
-  private async handleVerifyCommand(userId: number): Promise<void> {
+  private async handleVerifyCommand(userId: number, userInfo?: { first_name: string; username?: string }): Promise<void> {
     try {
       // Check existing enrollment
       const existing = await this.enrollmentService.findEnrollment(userId);
@@ -233,7 +236,14 @@ export class TelegramBotHandler {
       // Note: In production, this would come from Telegram Mini App context
       // For now, we create authenticated context for private message
       const authDate = Math.floor(Date.now() / 1000);
-      const user = JSON.stringify({ id: userId });
+      const userObj: any = { id: userId };
+      if (userInfo?.first_name) {
+        userObj.first_name = userInfo.first_name;
+      }
+      if (userInfo?.username) {
+        userObj.username = userInfo.username;
+      }
+      const user = JSON.stringify(userObj);
       const dataCheckString = `auth_date=${authDate}\nuser=${user}`;
       const secretKey = createHmac('sha256', 'WebAppData').update(this.botToken).digest();
       const hash = createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
@@ -277,6 +287,14 @@ export class TelegramBotHandler {
       // Create new session ID (bound to challenge nonce)
       const sessionId = challengeResult.signedChallenge.nonce.slice(2, 34); // 32 hex chars
       this.activeSessions.set(userId, { sessionId, createdAt: Date.now() });
+
+      // Store complete challenge data for session (includes rpId from signed challenge)
+      this.storeChallengeForSession(sessionId, userId, {
+        signedChallenge: challengeResult.signedChallenge,
+        appId: challengeResult.signedChallenge.appId,
+        rpId: challengeResult.signedChallenge.rpId,
+        signal: `telegram:${userId}`,
+      });
 
       // Clean up old sessions (older than 10 minutes)
       for (const [uid, session] of this.activeSessions.entries()) {
