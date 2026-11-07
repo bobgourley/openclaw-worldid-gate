@@ -6,7 +6,9 @@
   "scripts": {
     "test": "tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "build": "tsc"
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "start:dev": "tsx src/server.ts"
   },
   "keywords": [
     "world-id",

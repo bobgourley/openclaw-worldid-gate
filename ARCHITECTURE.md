@@ -208,6 +208,48 @@ TELEGRAM_BOT_TOKEN=<bot token from BotFather>
 - Response does NOT contain credential details (those are in request)
 - Backend extracts nullifier from original IDKitResult, not API response
 
+## Production Service Status (Current)
+
+**Runnable**: Yes (local HTTP service, localhost-bound, ephemeral DB, throwaway keys)
+**Production Ready**: No (blocked by policy decisions and configuration)
+
+### Implemented (Canonical)
+- `EnrollmentService` (`src/enrollment-service-production.ts`): Clock injection, TTL bounds (60-3600s/1-365d), revocation lifecycle
+- `WorldIdHttpVerifier` (`src/worldid-verifier-http.ts`): Forwards IDKitResult intact to Developer Portal API
+- `HttpService` (`src/http-service.ts`): Localhost binding (127.0.0.1:3000), body limits (max 2mb), generic errors
+
+### Material Defects Fixed
+1. Clock injection for deterministic testing
+2. TTL bounds enforced in constructor (not stored unused)
+3. Revocation: UPDATE not DELETE, blocks in-flight + future enrollment
+4. Fail-closed validation: malformed requests return errors without throwing
+5. Schema migrations: version tracking prevents CREATE TABLE conflicts
+
+### Test Coverage
+- **260 tests, 259 passing, 0 failures, 1 skipped**
+- NEW tests (33 added):
+  * EnrollmentService Production: 26 tests (TTL bounds, initData auth, expiry with fake clock, revocation lifecycle, cross-connection races, schema migrations)
+  * WorldIdHttpVerifier: 9 tests (SDK structure validation, boundary checks)
+- Old implementations removed: enrollment-service.ts, enrollment-service-v2.ts (obsolete SHA-256 path retired)
+
+### Blocking Policy Decisions
+1. Multiple account enrollment: Same human (nullifier), different Telegram accounts?
+2. Re-enrollment after revoke: Explicit restoration workflow?
+3. Session proofs for renewal: When to implement vs re-enrollment?
+4. Retention policy: How long to retain expired/revoked records?
+
+### Configuration Required
+- Runtime secrets (app ID, RP ID, signing key, bot token) from secure storage
+- Database path (persistent vs ephemeral)
+- HTTP binding (localhost vs network)
+- TLS termination (reverse proxy)
+
+### Remaining Implementation Gaps
+- Enrollment query endpoint (returns 501, needs auth refactor)
+- Administrative restore API (requires separate authenticated channel)
+- Session proofs (pending policy decision)
+- Telegram Mini App frontend
+
 ## Deployment Architecture Decision
 
 **Hosting**: Mac mini backend for verification service, separate from live OpenClaw workspace.
@@ -733,25 +775,102 @@ See `src/config.ts` for the central user-editable configuration module.
 - Existing enrollments keep their original `expiresAt` timestamp
 - Config changes do NOT retroactively extend or shorten existing enrollments
 
+## Service Scope and Identity Boundaries
+
+**Action-Scoped Uniqueness**:
+- World ID nullifiers are scoped to relying party + action
+- One enrollment per Telegram user per action
+- Different actions can enroll the same World ID with different nullifiers
+- **NO cross-action uniqueness**: Same nullifier from different actions are DISTINCT identities
+- Service does not and cannot enforce global uniqueness across actions
+
+**Identity Binding**:
+- Challenge creation authenticates Telegram `initData` (HMAC-SHA256 with bot token)
+- Enrollment binds World ID nullifier to authenticated Telegram user ID
+- Requester cannot forge another user's enrollment (challenge scoped to requester)
+
+**Data Retention**:
+- Challenge sessions: Short-lived (5 minutes default), auto-expire
+- Enrollments: Configurable TTL (30 days default), soft-expire (no auto-delete)
+- Revocations: Persisted indefinitely to block replay and future re-enrollment
+- Replay prevention: Nullifier records retained to enforce one-time proof semantics
+
+**Revocation Semantics**:
+- Sets `revoked = 1` flag on enrollment record (no destructive deletion)
+- Blocks in-flight completions (transaction-level recheck)
+- Blocks future enrollments until administrative restoration
+- Revoked enrollments remain queryable for audit
+
 ## Testing Strategy
 
-**Unit Tests** (46 tests):
-- Fail-closed admission checks (unknown, revoked, expired users)
-- Configuration validation (bounds, required fields)
-- Action-model gap validation (proof action mismatch)
-- Enrollment lifecycle (creation, expiry, revocation)
-- Trust boundary checks (malformed inputs, zero user ID)
+**Test Coverage** (245 tests, 0 skipped):
+- **Unit Tests** (226 tests):
+  * Fail-closed admission checks (unknown, revoked, expired users)
+  * Configuration validation (bounds, required fields)
+  * Action-model gap validation (proof action mismatch)
+  * Enrollment lifecycle (creation, expiry, revocation)
+  * Trust boundary checks (malformed inputs, zero user ID)
+  * Deterministic expiry with clock injection (no timeouts)
+  * HTTP verifier strict contract validation
+  * Cross-connection race conditions
 
-**Integration Tests** (20 tests):
-- End-to-end admission + processing flow
-- Store error handling
-- Orchestrator-level message routing
-- Negative control matrix (revoked, expired, malformed, store errors)
+- **Integration Tests** (19 tests):
+  * HTTP service startup/shutdown on ephemeral localhost
+  * Challenge creation with Telegram auth
+  * Enrollment completion with mocked World API
+  * Malformed input rejection (JSON, missing fields, invalid auth)
+  * Generic error responses (no identity leaks)
 
 **Clock Abstraction**:
 - `FakeClock` for deterministic time-based testing
 - Instant time advance (no `setTimeout` delays)
 - Exact-boundary expiry tests (admission at TTL-1, rejection at TTL+1)
+
+## Runnable Service
+
+**Production Entrypoint**: `src/server.ts`
+- Localhost HTTP service on `127.0.0.1:3000` (configurable)
+- SQLite enrollment database (WAL mode)
+- SDK-based challenge adapter with ECDSA signing
+- HTTP verification client for World ID Developer Portal
+- Graceful shutdown on SIGINT/SIGTERM
+
+**Start Commands**:
+```bash
+# Development (with tsx)
+npm run start:dev
+
+# Production (requires build first)
+npm run build
+npm start
+```
+
+**Configuration** (environment variables):
+- `WORLDID_APP_ID`: World ID application identifier (required)
+- `WORLDID_RP_ID`: Relying party identifier (required)
+- `WORLDID_SIGNING_KEY_HEX`: ECDSA private key for challenge signing (required)
+- `TELEGRAM_BOT_TOKEN`: Telegram bot token for initData validation (required)
+- `WORLDID_ACTION`: Action string (default: `unconfigured-test-action`)
+- `WORLDID_ENVIRONMENT`: `production` or `staging` (default: `staging`)
+- `DATABASE_PATH`: SQLite database path (default: `/tmp/enrollment.db`)
+- `HTTP_HOST`: Bind address (default: `127.0.0.1`)
+- `HTTP_PORT`: Bind port (default: `3000`)
+
+**Readiness Check**:
+```bash
+curl http://127.0.0.1:3000/health
+```
+
+**Production Readiness Status**:
+- ✅ Runnable HTTP service with ephemeral localhost testing
+- ✅ SDK-aligned challenge adapter (Keccak256 field reduction, ECDSA EIP-191 signatures)
+- ✅ Strict verification client (server-trusted context, single response item)
+- ✅ Durable SQLite schema with migrations, WAL mode, revocation
+- ✅ Deterministic expiry testing with clock injection
+- ✅ Body limits (1MB), timeouts (30s), generic error responses
+- ✅ Constructor-level config validation with bounds checks
+- ⚠️  NOT verified: renewal flow, mobile SDK integration, live World API contract
+- ⚠️  NOT verified: production hosting, HTTPS, rate limiting, monitoring
 
 ## Next Steps for Production
 

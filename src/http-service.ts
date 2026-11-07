@@ -23,7 +23,7 @@ export interface HttpServiceConfig {
   /** Host to bind (default: "127.0.0.1" - localhost only) */
   host?: string;
 
-  /** Request body size limit (default: "1mb", max: "10mb") */
+  /** Request body size limit (default: "1mb", max: "2mb") */
   bodyLimit?: string;
 
   /** Request timeout in milliseconds (default: 30000) */
@@ -55,8 +55,8 @@ export class HttpService {
     }
     const limitNum = parseInt(limitMatch[1], 10);
     const limitUnit = limitMatch[2].toLowerCase();
-    if (limitUnit === 'mb' && limitNum > 10) {
-      throw new Error('Invalid bodyLimit: max 10mb');
+    if (limitUnit === 'mb' && limitNum > 2) {
+      throw new Error('Invalid bodyLimit: max 2mb (World ID proofs are ~10-50KB)');
     }
 
     this.app = express();
