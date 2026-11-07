@@ -140,20 +140,124 @@ GET /health
   Response: { status: "ok", version: string }
 ```
 
-### 7. OpenClaw Integration
+### 7. OpenClaw Integration (DESIGN APPROVED PENDING)
 
-**Status**: OpenClaw v2026.9.8 ingress enforcement pattern verified but not integrated.
+**Status**: Integration design completed and documented in `ARCHITECTURE.md`. **Requires Bob's approval before implementation.**
 
-**Required integration** (pending official compatibility verification):
-- Implement OpenClaw channel plugin or external allowlist sync
-- Configure `channels.telegram.groupAllowFrom` with enrolled numeric user IDs
-- Periodic or per-request sync from enrollment registry to OpenClaw allowlist
-- Fail-closed semantics: stale/expired enrollments must be removed from allowlist
+**Verified OpenClaw Source**:
+- Repository: https://github.com/openclaw/openclaw
+- Commit: `fc23bc864e4553c2d215e479eeec47b67a0bf943`
+- Verified: Commit SHA confirmed in local clone
 
-**Evidence needed**:
-- Confirmation that OpenClaw v2026.9.8 ingress enforcement runs before history/LLM/tools
-- Verification that numeric Telegram user ID allowlist is checked pre-history
-- Test that expired enrollments are rejected even if manually added to config
+**Proposed Integration Approach**:
+
+#### A. Pre-History Ingress Gate (RECOMMENDED)
+
+**Modification Required**: OpenClaw upstream source  
+**Approval Status**: DESIGN ONLY - awaiting Bob's approval
+
+**Modified Files**:
+1. `extensions/telegram/src/bot-core.ts` - Add middleware injection point (~line 120)
+2. `extensions/telegram/src/bot.types.ts` - Add `preAuthorizationGate` option
+3. NEW: `extensions/telegram/src/bot-human-actor.ts` - Human actor extraction utility
+
+**Key Design Properties**:
+- Gate runs BEFORE all history writes, cache reads, model calls, and tool execution
+- Queries World ID registry on EVERY admission request (no stale grants)
+- Enforces human actor requirement (rejects bots, channels, anonymous, missing actors)
+- Fail-closed on timeout/outage
+- Out-of-scope groups pass through unchanged
+
+**Integration Steps** (AFTER Bob approves design):
+1. Submit pull request to OpenClaw with proposed changes
+2. Obtain OpenClaw maintainer review and approval
+3. Merge upstream changes
+4. Update OpenClaw installation to include ingress gate
+5. Configure gate with World ID registry connection
+6. Test admission enforcement in protected groups
+
+**Configuration Example**:
+```typescript
+const bot = await createTelegramBot({
+  token: process.env.TELEGRAM_BOT_TOKEN,
+  
+  preAuthorizationGate: async (ctx, { extractHumanActor }) => {
+    const chatId = extractChatId(ctx.update);
+    
+    // Protected groups only
+    if (!protectedGroupIds.has(chatId)) {
+      return { allowed: true };
+    }
+    
+    // Enforce human actor + World ID verification
+    const actor = extractHumanActor();
+    if (actor.actorType !== "human") {
+      return { allowed: false, reason: `non-human:${actor.actorType}` };
+    }
+    
+    const verified = await worldIdRegistry.checkEnrollment(
+      String(actor.actorId),
+      Date.now()
+    );
+    
+    return {
+      allowed: verified.valid && !verified.expired && !verified.revoked,
+      senderId: String(actor.actorId),
+      reason: verified.reason,
+    };
+  },
+});
+```
+
+#### B. Periodic Allowlist Sync (NOT RECOMMENDED - Insufficient for Exact Expiry)
+
+**Status**: INSUFFICIENT for required exact expiry/revocation guarantees.
+
+**Problem**: Static allowlist has NO mechanism to stop stale authorized senders between sync intervals.
+
+**If Required Despite Limitations**:
+- Implement OpenClaw config writer to update `channels.telegram.groupAllowFrom`
+- Sync every 1-5 minutes (shorter interval reduces but never eliminates staleness)
+- **MUST add independent per-request lease/deadline check** to bound stale authorization
+- Monitor sync failures with fail-closed fallback (disable channel or deny all)
+
+**Limitations**:
+- Staleness window: Up to sync interval duration
+- Not real-time: Expiry enforcement delayed
+- Cannot prove exact expiry without additional enforcement
+
+**Recommended**: Use Option A (Pre-History Ingress Gate) instead.
+
+### 8. OpenClaw Deployment Prerequisites
+
+**Operator Must Verify BEFORE Integration**:
+
+1. **OpenClaw Version Compatibility**
+   - Locate OpenClaw installation version/commit
+   - Verify middleware injection compatibility
+   - Test external gate hook registration
+
+2. **Protected Group Configuration**
+   - Identify numeric chat IDs for protected groups (e.g., `-1001234567890`)
+   - Document out-of-scope groups (pass-through, no enforcement)
+   - Define DM policy (enforce verification or allow)
+
+3. **World ID Registry Connection**
+   - Registry database path accessible from OpenClaw process
+   - Query latency acceptable (<100ms typical, <500ms timeout)
+   - Registry service monitoring and alerting configured
+
+4. **Fail-Closed Testing**
+   - Verify registry timeout triggers denial
+   - Test revocation effective immediately
+   - Confirm expired enrollments rejected at boundary
+   - Validate non-human actors rejected in protected groups
+
+5. **Operator Supervision Plan**
+   - Monitoring: admission denial rate, registry query latency
+   - Alerting: high denial rate, registry unavailable, timeout spikes
+   - Rollback: Safe database restore procedure documented
+   - Recovery: Post-outage verification re-check process defined
 
 ## Portable macOS Deployment Guidance
 

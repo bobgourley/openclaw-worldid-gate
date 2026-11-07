@@ -402,55 +402,315 @@ When all components are implemented and deployed:
 
 ## OpenClaw Integration
 
-### Current Status: Manual Allowlist Management
+### Integration Design Status
 
-The current starter does NOT automatically sync enrollments to OpenClaw config. Operators must manually update `openclaw.config.json5`.
+**Current Status**: Integration design completed and documented in `ARCHITECTURE.md`.  
+**Approval Required**: Bob must approve OpenClaw upstream modifications before implementation.  
+**Verified Source**: OpenClaw commit `fc23bc864e4553c2d215e479eeec47b67a0bf943`
 
-### Manual Allowlist Update (Current Workaround)
+### Pre-History Ingress Gate (DESIGN SPECIFICATION)
 
-**Note**: `InMemoryEnrollmentStore` has no `listValid()` method. Manual inspection required.
+**Proposed Approach**: Inject World ID verification gate as OpenClaw middleware BEFORE all history/cache/model/tool effects.
 
-**PLANNED PSEUDOCODE (NOT RUNNABLE)**:
+**Modified OpenClaw Files** (pending approval):
+1. `extensions/telegram/src/bot-core.ts` - Add middleware at line ~120
+2. `extensions/telegram/src/bot.types.ts` - Add `preAuthorizationGate` option
+3. NEW: `extensions/telegram/src/bot-human-actor.ts` - Actor extraction utility
 
-1. Future durable store might provide query methods:
-   ```typescript
-   // PSEUDOCODE - method does not exist on InMemoryEnrollmentStore
-   const enrollments = await store.listValid();
-   const userIds = enrollments.map(e => e.telegramUserId);
-   ```
+**Key Properties**:
+- ✅ Runs BEFORE history writes (verified at line 223: `recordMessageForReplyChain`)
+- ✅ Queries registry on EVERY admission (no stale grants)
+- ✅ Enforces human actor requirement (rejects bots/channels/anonymous/missing)
+- ✅ Fail-closed on registry timeout/outage
+- ✅ Preserves out-of-scope groups (pass-through unchanged)
 
-2. Edit OpenClaw configuration file (filename and location depend on your OpenClaw setup):
-   ```json5
-   {
-     channels: {
-       telegram: {
-         enabled: true,
-         dmPolicy: "allowlist",
-         allowFrom: [YOUR_OPERATOR_ID],
-         groupPolicy: "allowlist",
-         groups: {
-           "-1001234567890": {
-             requireMention: true,
-             groupAllowFrom: [123456789, 987654321] // Add enrolled IDs
-           }
-         }
-       }
-     }
-   }
-   ```
+### Operator Configuration (AFTER Approval)
 
-3. Reload OpenClaw configuration (command depends on your OpenClaw installation and deployment method)
+**Step 1: Identify Protected Groups**
 
-**Current limitation**: No automatic sync implemented. Operator must manually maintain consistency between enrollment registry and OpenClaw allowlist.
+Get numeric chat IDs for protected groups:
 
-### Future Automatic Sync
+```bash
+# In protected Telegram group:
+# 1. Add bot as admin temporarily
+# 2. Send any message
+# 3. Bot receives update with chat.id
 
-See `ARCHITECTURE.md` for proposed registry-to-allowlist sync lifecycle (PLANNED but NOT IMPLEMENTED).
+# Example chat IDs (negative for groups/supergroups):
+PROTECTED_GROUP_1=-1001234567890
+PROTECTED_GROUP_2=-1009876543210
+```
 
-Implementation options:
-- **Per-request ingress enforcement**: Check enrollment validity at every admission
-- **Periodic sync**: Update allowlist every N minutes (bounded staleness)
-- **Hybrid**: Periodic sync + real-time expiry checks
+**Step 2: Configure Gate Hook**
+
+Create `openclaw-gate-config.ts`:
+
+```typescript
+import { createTelegramBot } from "openclaw/telegram";
+import { WorldIdRegistry } from "./worldid-registry.js";
+
+const protectedGroupIds = new Set([
+  -1001234567890,  // Main discussion group
+  -1009876543210,  // Secondary support group
+]);
+
+const worldIdRegistry = new WorldIdRegistry({
+  databasePath: "/var/lib/worldid-gate/enrollments.db",
+  queryTimeout: 500, // 500ms timeout, fail-closed on exceed
+});
+
+function extractChatId(update: Update): number | null {
+  if (update.message?.chat.id) return update.message.chat.id;
+  if (update.callback_query?.message?.chat.id) return update.callback_query.message.chat.id;
+  if (update.message_reaction?.chat.id) return update.message_reaction.chat.id;
+  return null;
+}
+
+export const bot = await createTelegramBot({
+  token: process.env.TELEGRAM_BOT_TOKEN,
+  accountId: "main",
+  
+  preAuthorizationGate: async (ctx, { extractHumanActor }) => {
+    const chatId = extractChatId(ctx.update);
+    
+    // Out-of-scope: allow all senders
+    if (!chatId || !protectedGroupIds.has(chatId)) {
+      return { allowed: true };
+    }
+    
+    // Protected group: enforce verification
+    const actor = extractHumanActor();
+    
+    // Reject non-human actors
+    if (actor.actorType !== "human") {
+      return {
+        allowed: false,
+        reason: `non-human-actor:${actor.actorType}`,
+      };
+    }
+    
+    // Query World ID registry
+    try {
+      const enrollment = await worldIdRegistry.checkEnrollment(
+        String(actor.actorId),
+        Date.now()
+      );
+      
+      if (!enrollment) {
+        return {
+          allowed: false,
+          senderId: String(actor.actorId),
+          reason: "not-enrolled",
+        };
+      }
+      
+      if (enrollment.expired) {
+        return {
+          allowed: false,
+          senderId: String(actor.actorId),
+          reason: "expired",
+        };
+      }
+      
+      if (enrollment.revoked) {
+        return {
+          allowed: false,
+          senderId: String(actor.actorId),
+          reason: "revoked",
+        };
+      }
+      
+      return {
+        allowed: true,
+        senderId: String(actor.actorId),
+      };
+      
+    } catch (error) {
+      // Fail-closed on registry error
+      console.error("World ID registry query failed:", error);
+      return {
+        allowed: false,
+        senderId: String(actor.actorId),
+        reason: "registry-error",
+      };
+    }
+  },
+  
+  // ... rest of OpenClaw config
+});
+```
+
+**Step 3: Test Gate Enforcement**
+
+Run these checks BEFORE production deployment:
+
+```bash
+# Test Matrix (8 critical cases):
+
+# 1. Protected group + verified human → ALLOW
+# Expected: Message processed, history written, model called
+
+# 2. Protected group + expired enrollment → DENY
+# Expected: Zero history/model/tools, silent rejection
+
+# 3. Protected group + revoked enrollment → DENY
+# Expected: Zero history/model/tools, silent rejection
+
+# 4. Protected group + channel actor (sender_chat) → DENY
+# Expected: Zero history/model/tools, silent rejection
+
+# 5. Protected group + missing actor → DENY
+# Expected: Zero history/model/tools, silent rejection
+
+# 6. Out-of-scope group + any actor → ALLOW (pass-through)
+# Expected: Existing behavior unchanged
+
+# 7. Registry timeout → DENY (fail-closed)
+# Expected: All admissions denied until registry recovers
+
+# 8. Unknown poll in protected group → DENY
+# Expected: Poll answer rejected if poll not in registry
+```
+
+**Step 4: Monitor Admission Metrics**
+
+Set up monitoring for:
+
+```typescript
+// Prometheus metrics (example)
+admission_attempts_total{group, result} // result: allowed|denied|error
+admission_denials_by_reason{reason} // reason: not-enrolled|expired|revoked|non-human|...
+registry_query_duration_seconds{quantile}
+registry_query_errors_total{error_type}
+```
+
+**Alert Conditions**:
+- Denial rate > 10% (indicates enrollment issues or attack)
+- Registry query P99 > 500ms (performance degradation)
+- Registry errors > 0 (availability issue)
+- All admissions denied for >1 minute (outage)
+
+### Rollback and Recovery
+
+**UNSAFE Rollback Practice** (documented for awareness):
+
+❌ **DO NOT restore old database backup without verification**
+- Old backup resurrects revoked enrollments
+- Post-backup revocations are LOST
+- Separate revocation table in SAME restored DB is NOT independent protection
+
+**SAFE Rollback Options**:
+
+#### Option A: Deny-All During Uncertain Restore
+
+```bash
+# 1. Disable gate or set deny-all mode
+export WORLDID_GATE_MODE=deny-all
+
+# 2. Restore database backup
+cp enrollments-backup.db enrollments.db
+
+# 3. Manually verify current state
+# - Check revocation log separately
+# - Re-query World ID API for verification states
+# - Validate enrollment expirations
+
+# 4. Re-enable gate after verification
+export WORLDID_GATE_MODE=normal
+```
+
+#### Option B: Immutable Revocation Log (NOT YET IMPLEMENTED)
+
+**Future enhancement**:
+- Separate append-only revocation log outside main DB
+- Query revocations independently after DB restore
+- Requires implementation of separate log storage
+
+#### Option C: Re-Verify All Enrollments
+
+```bash
+# Query World ID API for current verification state
+# Expensive but cryptographically authoritative
+
+# Pseudo-code:
+for userId in enrollments:
+  currentState = await worldIdAPI.verify(userId)
+  if currentState != enrollmentRecord:
+    updateEnrollment(userId, currentState)
+```
+
+**Recommended**: Use Option A (deny-all during restore) until Option B (immutable log) is implemented.
+
+### Unresolved Decisions (Awaiting Bob's Approval)
+
+1. **OpenClaw Ingress Gate Design**
+   - Approve middleware injection at line ~120
+   - Approve modified files (bot-core.ts, bot.types.ts, bot-human-actor.ts)
+   - Approve human actor extraction logic
+
+2. **Poll Registry Content Read Policy**
+   - Option A: Content-free index (metadata-only routing)
+   - Option B: Deny unknown polls in protected groups
+   - Current: Registry reads poll question/options BEFORE gate
+
+3. **Retention Policy**
+   - How long to retain expired/revoked enrollments?
+   - Auto-delete vs manual cleanup vs indefinite retention?
+
+4. **Multiple Accounts Per Nullifier**
+   - Should same verified human enroll multiple Telegram accounts?
+   - Current: Allowed by design
+
+5. **Post-Revocation Restoration**
+   - Revoked accounts: require admin approval or automatic restoration?
+   - Current: Automatic via fresh verification
+
+### Operator Pre-Deployment Checklist
+
+- [ ] Bob approved OpenClaw ingress gate design
+- [ ] OpenClaw source modifications merged upstream
+- [ ] Protected group numeric chat IDs documented
+- [ ] World ID registry database path configured
+- [ ] Registry query timeout set (recommended: 500ms)
+- [ ] Monitoring and alerting configured
+- [ ] Rollback procedure documented and tested
+- [ ] Test matrix executed (8+ critical test cases)
+- [ ] Fail-closed behavior verified (timeout → deny)
+- [ ] Out-of-scope groups tested (pass-through unchanged)
+
+### Alternative: Periodic Allowlist Sync (NOT RECOMMENDED)
+
+**Status**: INSUFFICIENT for exact expiry/revocation guarantees.
+
+**Problem**: Static allowlist has NO mechanism to stop stale authorized senders between syncs.
+
+**If Required Despite Limitations**:
+- Sync OpenClaw `groupAllowFrom` config every 1-5 minutes
+- **MUST add independent per-request lease check** to bound staleness
+- Monitor sync failures with fail-closed fallback
+- Accept staleness window (up to sync interval)
+
+**Recommended**: Use pre-history ingress gate instead.
+
+### Operator Troubleshooting
+
+**High Denial Rate**:
+1. Check World ID registry availability
+2. Verify protected group IDs configured correctly
+3. Review denial reasons distribution (not-enrolled vs expired vs revoked)
+4. Check for enrollment service outage
+
+**Registry Query Timeouts**:
+1. Check database connection pool exhaustion
+2. Verify database file not corrupted
+3. Check disk I/O performance
+4. Review query optimization (indexes on telegram_user_id)
+
+**All Admissions Denied**:
+1. Check registry service health
+2. Verify fail-closed mode not accidentally enabled
+3. Check database connection string
+4. Review recent configuration changes
 
 ## Monitoring and Maintenance
 
