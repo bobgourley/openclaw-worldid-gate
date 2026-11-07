@@ -127,6 +127,12 @@ export class WorldIdVerificationClient {
     if (config.environment !== "production" && config.environment !== "staging") {
       throw new Error("Invalid environment: must be 'production' or 'staging'");
     }
+    // Bound timeoutMs to prevent timer leaks and resource exhaustion
+    if (config.timeoutMs !== undefined) {
+      if (!Number.isFinite(config.timeoutMs) || config.timeoutMs < 100 || config.timeoutMs > 60000) {
+        throw new Error("Invalid timeoutMs: must be finite number between 100 and 60000");
+      }
+    }
   }
 
   /**
@@ -153,6 +159,43 @@ export class WorldIdVerificationClient {
     request: WorldIdV4VerifyRequest,
     expectedContext: ExpectedVerificationContext,
   ): Promise<WorldIdVerificationResult> {
+    // Runtime validate unknown request input structure
+    if (!request || typeof request !== "object") {
+      return {
+        success: false,
+        error: "Invalid request: must be object",
+      };
+    }
+
+    if (!Array.isArray(request.responses)) {
+      return {
+        success: false,
+        error: "Invalid request: responses must be array",
+      };
+    }
+
+    // Runtime validate expectedContext structure
+    if (!expectedContext || typeof expectedContext !== "object") {
+      return {
+        success: false,
+        error: "Invalid expectedContext: must be object",
+      };
+    }
+
+    if (typeof expectedContext.action !== "string" || expectedContext.action.length === 0) {
+      return {
+        success: false,
+        error: "Invalid expectedContext: action must be non-empty string",
+      };
+    }
+
+    if (typeof expectedContext.nonce !== "string" || expectedContext.nonce.length === 0) {
+      return {
+        success: false,
+        error: "Invalid expectedContext: nonce must be non-empty string",
+      };
+    }
+
     // Pre-verification checks per official guidance
     if (request.environment !== this.config.environment) {
       return {
@@ -221,6 +264,7 @@ export class WorldIdVerificationClient {
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "Unknown error");
+        clearTimeout(timeoutId);
         return {
           success: false,
           error: `Developer Portal returned ${response.status}: ${errorText}`,
@@ -231,14 +275,15 @@ export class WorldIdVerificationClient {
       try {
         verification = (await response.json()) as WorldIdVerifyResponse;
       } catch (err) {
+        clearTimeout(timeoutId);
         return {
           success: false,
           error: `Invalid JSON in verification response: ${err instanceof Error ? err.message : "parse error"}`,
         };
-      } finally {
-        // Clear timeout only after complete body consumption
-        clearTimeout(timeoutId);
       }
+
+      // Clear timeout after complete body consumption
+      clearTimeout(timeoutId);
 
       // Require exact boolean true (reject truthy non-boolean like 1 or "true")
       if (verification.success !== true) {
@@ -298,8 +343,18 @@ export class WorldIdVerificationClient {
         }
       }
 
-      // Validate signal_hash against expected value if provided
+      // Signal hash validation
+      // NOTE: Comparing top-level nonce/action strings alone does not establish
+      // cryptographic coverage. Signal binding provides additional context-specific
+      // protection, but full protocol-level evidence of cryptographic binding
+      // requires understanding World ID's zk-SNARK proof structure (out of scope).
       if (expectedContext.signalHash !== undefined) {
+        if (typeof expectedContext.signalHash !== "string" || expectedContext.signalHash.length === 0) {
+          return {
+            success: false,
+            error: "Invalid expectedContext: signalHash must be non-empty string when provided",
+          };
+        }
         if (firstResponse.signal_hash !== expectedContext.signalHash) {
           return {
             success: false,
@@ -317,6 +372,8 @@ export class WorldIdVerificationClient {
         environment: verification.environment,
       };
     } catch (error) {
+      // Clear timeout on any error path
+      clearTimeout(timeoutId);
 
       if ((error as any)?.name === "AbortError") {
         return {

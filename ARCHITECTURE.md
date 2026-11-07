@@ -5,23 +5,38 @@ This document describes the INITIAL small-group architecture for World ID-based 
 
 ## Implementation Status
 
-**IMPLEMENTED Production Components** (commit 554a982):
+**IMPLEMENTED Production Components** (commit 5852627+):
 - ✅ Production Telegram Mini App `initData` backend validator (`src/telegram-initdata.ts`)
   - HMAC-SHA256 validation per official Telegram algorithm
-  - Freshness check (auth_date within configurable window)
+  - Duplicate query key rejection (prevents parameter pollution)
+  - Freshness check (auth_date within configurable window, exact boundary validation)
+  - Clock injection for deterministic testing
   - Secure user extraction from validated initData
-  - 11 comprehensive unit tests
+  - 15 comprehensive unit tests
 - ✅ Production World ID v4.0 proof verification client (`src/worldid-client.ts`)
   - Server-side proof verification against Developer Portal API
+  - Server-trusted expected context validation (action/nonce/signal)
+  - Strict credential enforcement (proof_of_human with issuer_schema_id: 1)
+  - Unambiguous single credential policy (rejects multi-response batches)
+  - Bounded timeout through complete body consumption
+  - Runtime validation of unknown input structures
+  - Exact boolean success check (rejects truthy non-boolean)
   - Environment validation (production/staging)
-  - HTTPS-only endpoint enforcement
-  - Timeout and error handling
-  - 8 comprehensive unit tests
+  - 20 comprehensive unit tests
 - ✅ Production enrollment store abstraction (`src/enrollment-store.ts`)
   - Challenge session interface for single-use nonce binding
   - Enrollment interface with transactional semantics
   - In-memory implementation for development (NOT for production)
   - 25 comprehensive unit tests
+- ✅ SQLite challenge and enrollment stores (`src/enrollment-store-sqlite.ts`)
+  - Durable transactional persistence with atomic operations
+  - Requester-bound challenge completion (copied challenge cannot change account)
+  - Enrollment uniqueness constraints (nullifier + user+action pairs)
+  - Automatic cleanup of expired sessions/enrollments
+  - Restart persistence (survives process restart)
+  - WAL mode for better concurrency
+  - Portable to Mac Node24
+  - 24 comprehensive behavioral tests (rollback/fault, concurrent replay, no stale grants)
 - ✅ Fail-closed admission gate with enrollment registry (`src/admission-gate.ts`)
   - Zero LLM/history/tool calls for rejected senders
   - Deterministic clock injection for testing
@@ -36,7 +51,6 @@ This document describes the INITIAL small-group architecture for World ID-based 
 - ❌ Member tag management via `setChatMemberTag`
 - ❌ OpenClaw group allowlist integration
 - ❌ Registry-to-allowlist sync lifecycle
-- ❌ Durable production store (PostgreSQL/SQLite replacing in-memory)
 - ❌ Mac mini deployment supervision/monitoring
 
 ## Deployment Architecture Decision
@@ -395,6 +409,71 @@ When sync fails (registry unavailable, OpenClaw config write error, etc.):
    - Authorization: sensitive operations (tool execution, shell access, approvals)
    - Admission does NOT confer authorization
    - Least privilege: grant minimum necessary permissions per operation
+
+## World ID Protocol Requirements
+
+### Onboarding Prerequisites
+
+**Configuration Pending** (Bob must complete):
+- Create one external World ID Developer app/RP from https://developer.world.org/
+- Register production action identifier (e.g., "openclaw-admission")
+- Obtain RP ID (format: `rp_*****`) for verification API calls
+
+**End User Requirements**:
+- Members only use World App (personal wallet app)
+- NO developer account required for each member
+- World App verification flow uses existing personal credentials
+
+### Protocol Constraints
+
+**v4 Uniqueness Proofs**:
+- World ID v4 proofs are one-time per action
+- Each proof can only be verified once for a given action
+- Repeated verification for same user requires new proof generation
+
+**Recurring Verification (Unresolved)**:
+- v4 session-based recurring verification mechanism not yet integrated
+- IDKit 4.4 session builder API for repeated checks pending protocol research
+- Current implementation supports single-verification enrollment with configurable expiry
+- Automatic 30-day renewal NOT implemented (requires session-proof integration)
+
+**Mobile UX Considerations**:
+- World App verification flow behavior in Telegram WebView not device-tested
+- External browser flow is supported fallback (not categorically required)
+- Deep link/bridge polling mechanism per World ID docs pending device verification
+- Challenge session must support resumable flow (user may return later)
+
+### Contract-Level Evidence Gaps
+
+**Current Implementation**:
+- ✅ Validates action/nonce/signal strings match expected server context
+- ✅ Enforces proof_of_human credential requirement (issuer_schema_id: 1)
+- ✅ Rejects ambiguous multi-response batches
+- ✅ Strict boolean success check
+
+**Unverified Cryptographic Assumptions**:
+- Comparing top-level action/nonce strings alone does not establish full cryptographic binding
+- Full protocol-level evidence requires understanding World ID's zk-SNARK proof structure
+- Signal binding provides additional context-specific protection
+- Cryptographic coverage analysis is out of scope for this implementation
+
+**No "Complete Security" Claim**:
+- Runtime validation at application layer is hardened
+- Protocol-level cryptographic guarantees depend on World ID's proof verification
+- Integration gaps remain (session renewal, mobile UX, RP onboarding)
+
+### Signal Binding Strategy (Unresolved)
+
+**Required for Production**:
+- Define signal content (Telegram user ID? Session token? Community ID?)
+- Document signal generation and validation logic
+- Bind signal to specific requester context
+- Prevent signal reuse across different contexts
+
+**Current Implementation**:
+- `expectedContext.signalHash` parameter available for validation
+- Signal comparison enforced when provided
+- Actual signal binding strategy awaiting production design
 
 ## Reject-Path Behavior
 

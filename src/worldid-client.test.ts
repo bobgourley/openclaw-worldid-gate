@@ -34,6 +34,27 @@ describe("WorldIdVerificationClient", () => {
     );
   });
 
+  it("rejects invalid timeoutMs (too small)", () => {
+    assert.throws(
+      () => new WorldIdVerificationClient({ ...productionConfig, timeoutMs: 50 }),
+      /Invalid timeoutMs: must be finite number between 100 and 60000/,
+    );
+  });
+
+  it("rejects invalid timeoutMs (too large)", () => {
+    assert.throws(
+      () => new WorldIdVerificationClient({ ...productionConfig, timeoutMs: 100000 }),
+      /Invalid timeoutMs: must be finite number between 100 and 60000/,
+    );
+  });
+
+  it("rejects invalid timeoutMs (not finite)", () => {
+    assert.throws(
+      () => new WorldIdVerificationClient({ ...productionConfig, timeoutMs: Infinity }),
+      /Invalid timeoutMs: must be finite number between 100 and 60000/,
+    );
+  });
+
   it("constructs production client with valid config", () => {
     const client = new WorldIdVerificationClient(productionConfig);
     assert.ok(client);
@@ -628,6 +649,181 @@ describe("WorldIdVerificationClient", () => {
 
         assert.ok(!result.success);
         assert.ok(result.error?.includes("Signal hash mismatch"));
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("rejects malformed request (null)", async () => {
+      const client = new WorldIdVerificationClient(productionConfig);
+
+      const expectedContext = {
+        action: "test",
+        nonce: "0xtest",
+      };
+
+      const result = await client.verify(null as any, expectedContext);
+
+      assert.ok(!result.success);
+      assert.ok(result.error?.includes("Invalid request"));
+    });
+
+    it("rejects malformed request (responses not array)", async () => {
+      const client = new WorldIdVerificationClient(productionConfig);
+
+      const request = {
+        protocol_version: "4.0",
+        nonce: "0xtest",
+        action: "test",
+        environment: "production",
+        responses: "not-an-array" as any,
+      };
+
+      const expectedContext = {
+        action: "test",
+        nonce: "0xtest",
+      };
+
+      const result = await client.verify(request as any, expectedContext);
+
+      assert.ok(!result.success);
+      assert.ok(result.error?.includes("responses must be array"));
+    });
+
+    it("rejects malformed expectedContext (null)", async () => {
+      const client = new WorldIdVerificationClient(productionConfig);
+
+      const request: WorldIdV4VerifyRequest = {
+        protocol_version: "4.0",
+        nonce: "0xtest",
+        action: "test",
+        environment: "production",
+        responses: [
+          {
+            identifier: "proof_of_human",
+            issuer_schema_id: 1,
+            nullifier: "0xtest",
+            expires_at_min: 1756166400,
+            proof: ["0x111"],
+            signal_hash: "0x0",
+          },
+        ],
+      };
+
+      const result = await client.verify(request, null as any);
+
+      assert.ok(!result.success);
+      assert.ok(result.error?.includes("Invalid expectedContext"));
+    });
+
+    it("rejects expectedContext with empty action", async () => {
+      const client = new WorldIdVerificationClient(productionConfig);
+
+      const request: WorldIdV4VerifyRequest = {
+        protocol_version: "4.0",
+        nonce: "0xtest",
+        action: "test",
+        environment: "production",
+        responses: [
+          {
+            identifier: "proof_of_human",
+            issuer_schema_id: 1,
+            nullifier: "0xtest",
+            expires_at_min: 1756166400,
+            proof: ["0x111"],
+            signal_hash: "0x0",
+          },
+        ],
+      };
+
+      const expectedContext = {
+        action: "",
+        nonce: "0xtest",
+      };
+
+      const result = await client.verify(request, expectedContext);
+
+      assert.ok(!result.success);
+      assert.ok(result.error?.includes("action must be non-empty string"));
+    });
+
+    it("rejects expectedContext with empty nonce", async () => {
+      const client = new WorldIdVerificationClient(productionConfig);
+
+      const request: WorldIdV4VerifyRequest = {
+        protocol_version: "4.0",
+        nonce: "0xtest",
+        action: "test",
+        environment: "production",
+        responses: [
+          {
+            identifier: "proof_of_human",
+            issuer_schema_id: 1,
+            nullifier: "0xtest",
+            expires_at_min: 1756166400,
+            proof: ["0x111"],
+            signal_hash: "0x0",
+          },
+        ],
+      };
+
+      const expectedContext = {
+        action: "test",
+        nonce: "",
+      };
+
+      const result = await client.verify(request, expectedContext);
+
+      assert.ok(!result.success);
+      assert.ok(result.error?.includes("nonce must be non-empty string"));
+    });
+
+    it("rejects expectedContext with empty signalHash when provided", async () => {
+      const client = new WorldIdVerificationClient(productionConfig);
+
+      const mockResponse: WorldIdVerifyResponse = {
+        success: true,
+        environment: "production",
+      };
+
+      const fetchMock = mock.fn<typeof globalThis.fetch>(async () => {
+        return new Response(JSON.stringify(mockResponse), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+
+      const originalFetch = globalThis.fetch;
+      try {
+        (globalThis as any).fetch = fetchMock;
+
+        const request: WorldIdV4VerifyRequest = {
+          protocol_version: "4.0",
+          nonce: "0xtest",
+          action: "test",
+          environment: "production",
+          responses: [
+            {
+              identifier: "proof_of_human",
+              issuer_schema_id: 1,
+              nullifier: "0xtest",
+              expires_at_min: 1756166400,
+              proof: ["0x111"],
+              signal_hash: "0x0",
+            },
+          ],
+        };
+
+        const expectedContext = {
+          action: "test",
+          nonce: "0xtest",
+          signalHash: "",
+        };
+
+        const result = await client.verify(request, expectedContext);
+
+        assert.ok(!result.success);
+        assert.ok(result.error?.includes("signalHash must be non-empty string"));
       } finally {
         globalThis.fetch = originalFetch;
       }

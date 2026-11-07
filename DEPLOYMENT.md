@@ -6,18 +6,22 @@ This document lists the exact prerequisites and integration steps required befor
 
 ### 1. World Developer Portal Configuration
 
-**Status**: Not configured, user must complete.
+**Status**: Configuration pending, Bob must complete.
 
 **Required actions** (Bob must complete via World Developer Portal):
 1. Create World ID application at https://developer.world.org
 2. Record `app_id` (e.g., `app_xxxxx`)
-3. Record `rp_id` (e.g., `rp_xxxxx`)
-4. Record `signing_key` (store as secret, never commit)
-5. Create action identifier (e.g., `verify-openclaw-2026`)
-6. Choose environment: `production` (requires World ID Orb) or `staging` (simulator)
+3. Record `rp_id` (e.g., `rp_xxxxx`) - Required for verification API calls
+4. Create production action identifier (e.g., "openclaw-admission")
+5. Choose environment: `production` (requires World ID Orb) or `staging` (simulator)
+
+**End User Requirements**:
+- Members only use World App (personal wallet app)
+- NO developer account required for each member
+- World App verification uses existing personal credentials
 
 **Evidence required before integration**:
-- Screenshot or copy of World Developer Portal app settings showing `app_id`, `rp_id`, and action
+- Screenshot or copy of World Developer Portal showing `rp_id` and action
 - Confirmation of environment choice (production vs staging)
 
 ### 2. Telegram Bot Token
@@ -53,28 +57,44 @@ This document lists the exact prerequisites and integration steps required befor
 
 ### 4. Durable Production Store Implementation
 
-**Status**: In-memory implementation only, user must implement durable store.
+**Status**: ✅ SQLite implementation complete and tested (recommended default for Mac mini).
 
-**Current status**:
-- `InMemoryChallengeSessionStore` in `src/enrollment-store.ts` (NOT production-safe)
-- `InMemoryEnrollmentStore` in `src/enrollment-store.ts` (NOT production-safe)
+**Implemented**:
+- ✅ `SqliteChallengeSessionStore` in `src/enrollment-store-sqlite.ts` (production-ready)
+- ✅ `SqliteEnrollmentStore` in `src/enrollment-store-sqlite.ts` (production-ready)
+- ✅ 24 comprehensive behavioral tests (atomic operations, restart persistence, concurrent replay)
+- ✅ Transactional requester-bound completion
+- ✅ Automatic cleanup of expired sessions/enrollments
+- ✅ WAL mode for better concurrency
+- ✅ Portable to Mac Node24
 
-**Required implementation** (choose one):
-- **Option A: SQLite** (simplest for Mac mini)
-  - Single-file database
-  - No separate server process
-  - Good for small-scale (hundreds of users)
-  - Library: `better-sqlite3` (Node.js)
-- **Option B: PostgreSQL** (more robust)
-  - Client-server architecture
-  - Better for scale and concurrent access
-  - Requires PostgreSQL installation on Mac mini
-  - Library: `pg` (Node.js)
+**SQLite Configuration** (recommended for small-scale deployment):
+- Single-file database (e.g., `/var/lib/worldid-gate/enrollments.db`)
+- No separate server process required
+- Good for hundreds to thousands of users
+- Automatic schema creation on first run
+- Safe for Mac mini deployment
 
-**Required files** (not created yet):
-- `src/enrollment-store-sqlite.ts` or `src/enrollment-store-postgres.ts`
-- SQL schema migration scripts
-- Database connection configuration
+**Alternative: PostgreSQL** (optional, for larger scale):
+- Client-server architecture
+- Better for thousands+ concurrent users
+- Requires PostgreSQL installation on Mac mini
+- Library: `pg` (Node.js)
+- Implementation: `src/enrollment-store-postgres.ts` (not yet created)
+
+**Integration Steps**:
+1. Choose database path (e.g., `/var/lib/worldid-gate/enrollments.db`)
+2. Ensure directory exists and has write permissions
+3. Configure stores in HTTP server startup:
+   ```typescript
+   const challengeStore = new SqliteChallengeSessionStore({
+     dbPath: "/var/lib/worldid-gate/enrollments.db",
+   });
+   const enrollmentStore = new SqliteEnrollmentStore({
+     dbPath: "/var/lib/worldid-gate/enrollments.db",
+   });
+   ```
+4. Close stores gracefully on shutdown to flush writes
 
 ### 5. Telegram Mini App Frontend
 
