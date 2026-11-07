@@ -64,6 +64,30 @@ describe('Config validation', () => {
     assert.ok(errors.some((e) => e.includes('verifyEndpoint')));
   });
 
+  it('should reject malformed URL verifyEndpoint', () => {
+    const config = { ...validConfig, verifyEndpoint: 'not-a-url' };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('not a valid URL')));
+  });
+
+  it('should reject verifyEndpoint with userinfo/credentials', () => {
+    const config = { ...validConfig, verifyEndpoint: 'https://user:pass@example.com/api' };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('userinfo') || e.includes('credentials')));
+  });
+
+  it('should accept valid HTTPS URL with path', () => {
+    const config = { ...validConfig, verifyEndpoint: 'https://developer.world.org/api/v4/verify' };
+    const errors = validateConfig(config);
+    assert.strictEqual(errors.length, 0);
+  });
+
+  it('should accept valid HTTPS URL with port', () => {
+    const config = { ...validConfig, verifyEndpoint: 'https://example.com:8443/api' };
+    const errors = validateConfig(config);
+    assert.strictEqual(errors.length, 0);
+  });
+
   it('should reject non-boolean requireProofOfHuman', () => {
     const config = { ...validConfig, requireProofOfHuman: 'yes' as any };
     const errors = validateConfig(config);

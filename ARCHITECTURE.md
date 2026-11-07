@@ -135,11 +135,17 @@ The preferred initial architecture is designed for small trusted groups with hum
 - Bot must have administrator right `can_manage_tags` in group/supergroup
 - Target must be regular member (not administrator, creator, or bot)
 - Tag text: 0-16 characters, no emoji
-- Proposed tag: "Human Verified" (14 characters)
+- Proposed tag: "Human Verified" (14 characters including space)
 
-**Official Reference**: https://core.telegram.org/bots/api/methods/setchatmembertag.md
+**Official Source** (retrieved 2026-11-06):
 
-**Evidence**: Verified in current Telegram Bot API documentation (accessed 2026-11-07)
+From https://core.telegram.org/bots/api/methods/setchatmembertag.md:
+> "Use this method to set a tag for a regular member in a group or a supergroup. The bot must be an administrator in the chat for this to work and must have the can_manage_tags administrator right. Returns True on success."
+> 
+> Parameter `tag`: "New tag for the member; 0-16 characters, emoji are not allowed"
+
+From https://core.telegram.org/bots/api/types/chatadministratorrights.md:
+> Field `can_manage_tags`: "Optional. True, if the administrator can edit the tags of regular members; for groups and supergroups only"
 
 **Limitations**:
 - Only works in groups and supergroups

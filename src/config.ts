@@ -88,11 +88,54 @@ export interface OpenClawIntegrationConfig {
   };
 
   /**
-   * PLANNED: OpenClaw group allowlist integration
+   * PLANNED: Selected Telegram groups/supergroups for gate enforcement
+   * 
+   * Specifies which groups the admission gate applies to. When registry-to-allowlist
+   * sync is implemented, these group IDs determine which OpenClaw group allowlists
+   * to update.
+   * 
+   * **Group ID Format**: Numeric Telegram group/supergroup chat IDs (negative values)
+   * - Groups: IDs like `-123456789`
+   * - Supergroups: IDs like `-1001234567890`
+   * 
+   * **Selection Lifecycle Considerations**:
+   * - Adding a group: Sync adds verified enrollments to that group's allowlist
+   * - Removing a group: Consider whether to clear gate-managed entries or leave unchanged
+   * - Group ID changes: Telegram may change chat IDs (e.g., group upgraded to supergroup)
+   * - Bot must be member and have appropriate permissions in each selected group
+   * 
+   * **NO FUNCTIONING GATE SETTING**: This is inert configuration. The gate does NOT
+   * currently filter by group ID. All admission checks apply uniformly regardless of
+   * this setting.
+   * 
+   * Reference: https://docs.openclaw.ai/channels/telegram/access-control
+   */
+  selectedGroupIds: {
+    enabled: boolean;
+    groups: {
+      [chatId: string]: {
+        /**
+         * Human-readable name for this group (documentation only, not used by gate)
+         */
+        name: string;
+        /**
+         * Numeric Telegram chat ID (negative for groups/supergroups)
+         */
+        chatId: number;
+        /**
+         * Whether to enforce admission gate in this group
+         */
+        enforceGate: boolean;
+      };
+    };
+  };
+
+  /**
+   * PLANNED: OpenClaw group allowlist sync integration
    */
   openclawSync: {
     enabled: boolean;
-    configPath: string; // Path to openclaw.config.json5
+    configPath: string; // Path to OpenClaw config file
     syncMode: 'periodic' | 'per-request';
     periodicSyncIntervalSeconds?: number; // For periodic mode
     failClosedOnSyncError: boolean; // Reject admissions if sync fails
@@ -116,12 +159,18 @@ export const openclawIntegrationConfig: OpenClawIntegrationConfig = {
   },
   memberTags: {
     enabled: false,
-    tagText: 'Human Verified', // 15 chars (within 16-char limit)
+    tagText: 'Human Verified', // 14 chars (including space)
     requireAdminPermission: 'can_manage_tags',
+  },
+  selectedGroupIds: {
+    enabled: false,
+    groups: {
+      // Example: "-1001234567890": { name: "My Group", chatId: -1001234567890, enforceGate: true }
+    },
   },
   openclawSync: {
     enabled: false,
-    configPath: process.env.OPENCLAW_CONFIG_PATH || './openclaw.config.json5',
+    configPath: process.env.OPENCLAW_CONFIG_PATH || '',
     syncMode: 'per-request',
     periodicSyncIntervalSeconds: 300, // 5 minutes
     failClosedOnSyncError: true,
@@ -153,11 +202,27 @@ export function validateConfig(config: GateConfig): string[] {
     errors.push('action cannot be empty or whitespace-only');
   }
 
-  // Verify endpoint validation
+  // Verify endpoint validation with URL parsing
   if (!config.verifyEndpoint || typeof config.verifyEndpoint !== 'string') {
     errors.push('verifyEndpoint is required and must be a string');
-  } else if (!config.verifyEndpoint.startsWith('https://')) {
-    errors.push('verifyEndpoint must be a valid HTTPS URL');
+  } else {
+    try {
+      const url = new URL(config.verifyEndpoint);
+      
+      if (url.protocol !== 'https:') {
+        errors.push('verifyEndpoint must use HTTPS protocol');
+      }
+      
+      if (!url.hostname || url.hostname.trim().length === 0) {
+        errors.push('verifyEndpoint must have a valid non-empty hostname');
+      }
+      
+      if (url.username || url.password) {
+        errors.push('verifyEndpoint must not contain userinfo/credentials in URL');
+      }
+    } catch (e) {
+      errors.push(`verifyEndpoint is not a valid URL: ${e instanceof Error ? e.message : 'parse error'}`);
+    }
   }
 
   // requireProofOfHuman validation

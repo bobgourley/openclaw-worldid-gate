@@ -159,7 +159,7 @@ This runs 66 tests covering:
 
 ### 2. Create Custom Test Scenario
 
-Create a new test file `src/custom.test.ts`:
+Create a new test file `src/custom-operator-example.test.ts`:
 
 ```typescript
 import { describe, it } from 'node:test';
@@ -168,26 +168,38 @@ import { AdmissionGate } from './admission-gate.js';
 import { WorldIdVerifierStub } from './verifier-stub.js';
 import { InMemoryEnrollmentStore } from './enrollment-store.js';
 import { createTelegramUpdate, createWorldIdProof } from './fixtures.js';
-import { gateConfig } from './config.js';
+import type { GateConfig } from './types.js';
 
-describe('Custom operator test', () => {
+describe('Custom operator test (documented example)', () => {
   it('simulates enrollment and admission', async () => {
-    // Setup: Use test config with stub verifier
-    const testConfig = { ...gateConfig, allowTestMode: true };
+    // Explicit synthetic test config (not placeholder)
+    const testConfig: GateConfig = {
+      rpId: 'rp_test_synthetic_123',
+      action: 'test-action-synthetic',
+      verifyEndpoint: 'https://developer.world.org/api/v4/verify',
+      requireProofOfHuman: true,
+      enrollmentTtlSeconds: 2592000,
+      allowTestMode: true,
+    };
+
     const verifier = new WorldIdVerifierStub();
     const store = new InMemoryEnrollmentStore();
     const gate = new AdmissionGate(testConfig, verifier, store);
     
     // Simulate World ID proof for Telegram user 123456789
     const telegramUserId = 123456789;
-    const proof = createWorldIdProof({ action: testConfig.action });
-    verifier.addValidNullifier(proof.responses[0].nullifier);
+    const nullifier = '0xtest_nullifier_123';
+    verifier.addValidNullifier(nullifier);
+    const proof = createWorldIdProof({ 
+      nullifier, 
+      action: testConfig.action 
+    });
     
     // Enroll user
     const enrollResult = await gate.enroll(telegramUserId, proof);
     assert.equal(enrollResult.success, true);
     
-    // Check admission (createTelegramUpdate uses options object, not positional args)
+    // Check admission (createTelegramUpdate uses options object)
     const update = createTelegramUpdate({
       userId: telegramUserId,
       text: 'Hello bot',
@@ -206,7 +218,8 @@ describe('Custom operator test', () => {
 Run your custom test (tsx discovers .test.ts files in src/):
 
 ```bash
-npm test
+npm test src/custom-operator-example.test.ts
+# Output: tests 1, pass 1, fail 0
 ```
 
 ### 3. Synthetic Orchestrator Integration (PLANNED PSEUDOCODE, NOT RUNNABLE)

@@ -88,7 +88,7 @@ export class WorldIdVerifierStub implements WorldIdVerifier {
       }
 
       const now = Math.floor(Date.now() / 1000);
-      if (response.expires_at_min && response.expires_at_min < now) {
+      if (response.expires_at_min && response.expires_at_min <= now) {
         return {
           identifier: response.identifier,
           success: false,
