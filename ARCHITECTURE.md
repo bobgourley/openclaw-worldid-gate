@@ -5,7 +5,7 @@ This document describes the INITIAL small-group architecture for World ID-based 
 
 ## Implementation Status
 
-**IMPLEMENTED Production Components** (commit 382f240+):
+**IMPLEMENTED Production Components** (commit 382f240 + current):
 - ✅ Production Telegram Mini App `initData` backend validator (`src/telegram-initdata.ts`)
   - HMAC-SHA256 validation per official Telegram algorithm
   - Duplicate query key rejection (prevents parameter pollution)
@@ -61,6 +61,35 @@ This document describes the INITIAL small-group architecture for World ID-based 
 - ❌ OpenClaw group allowlist integration
 - ❌ Registry-to-allowlist sync lifecycle
 - ❌ Mac mini deployment supervision/monitoring
+
+## Official SDK Integration (Current Session)
+
+**Authentic World ID v4 Protocol Implementation** using official SDKs:
+- ✅ Installed `@worldcoin/idkit-core@4.6.0` and `@worldcoin/idkit-server@1.2.0`
+- ✅ `WorldIdChallengeAdapter` (`src/worldid-challenge-adapter.ts`)
+  - Official SDK signal hashing: Keccak256 + field reduction (`hashSignal()`)
+  - Official RP challenge signing: ECDSA EIP-191 message signing (`signRequest()`)
+  - Runtime configuration: App ID, RP ID, signing key (not hardcoded)
+  - Per-action uniqueness proofs (not sessions)
+  - 27 comprehensive unit tests with throwaway test keys
+- ✅ Protocol documentation (`docs/WORLDID_V4_PROTOCOL.md`)
+  - Uniqueness proofs vs sessions clarified from SDK source
+  - Action semantics: arbitrary string (not portal-configured)
+  - Signal hashing algorithm: Keccak256 >> 8 (not SHA-256)
+  - RP signature message format: version || nonce || timestamps || action_hash
+  - Verification flow with Developer Portal API
+
+**Bob's World ID Setup** (relayed by Archie):
+- App ID: `app_b466e1f63a70a695b6d990d261e31b6a`
+- RP ID: `rp_223416a2a76673a1`
+- Signing key: Retained by Bob (secure secret, not in repository)
+- Portal status: External integration selected, verification sidebar open
+
+**Next Steps**:
+- Integrate `WorldIdChallengeAdapter` into `EnrollmentService`
+- Update verification client to validate SDK-signed challenges
+- Write integration tests with mocked Developer Portal API
+- Document runtime configuration for Mac mini deployment
 
 ## Deployment Architecture Decision
 
