@@ -81,22 +81,6 @@ export class HttpService {
       next();
     });
 
-    // Generic error handler (no identity leaks)
-    this.app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-      console.error('Request error:', err);
-
-      if (err.type === 'entity.parse.failed') {
-        return res.status(400).json({ error: 'Invalid JSON' });
-      }
-
-      if (err.type === 'entity.too.large') {
-        return res.status(413).json({ error: 'Request body too large' });
-      }
-
-      // Generic error (no details leaked)
-      res.status(500).json({ error: 'Internal service error' });
-    });
-
     // Liveness probe (process is alive)
     this.app.get('/health', (req: Request, res: Response) => {
       res.json({ status: 'healthy' });
@@ -196,6 +180,23 @@ export class HttpService {
     // 404 handler
     this.app.use((req: Request, res: Response) => {
       res.status(404).json({ error: 'Not found' });
+    });
+
+    // Generic error handler (no identity leaks)
+    // MUST be registered AFTER all routes and 404 handler
+    this.app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+      console.error('Request error:', err);
+
+      if (err.type === 'entity.parse.failed') {
+        return res.status(400).json({ error: 'Invalid JSON' });
+      }
+
+      if (err.type === 'entity.too.large') {
+        return res.status(413).json({ error: 'Request body too large' });
+      }
+
+      // Generic error (no details leaked)
+      res.status(500).json({ error: 'Internal service error' });
     });
   }
 
