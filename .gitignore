@@ -1,0 +1,26 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# Secrets and credentials
+.env
+.env.local
+*.key
+*.pem
+config.production.ts
+secrets/
+
+# TypeScript
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test coverage
+coverage/
+.nyc_output/
