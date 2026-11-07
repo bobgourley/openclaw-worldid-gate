@@ -5,7 +5,7 @@ This document describes the INITIAL small-group architecture for World ID-based 
 
 ## Implementation Status
 
-**IMPLEMENTED Production Components** (commit 5852627+):
+**IMPLEMENTED Production Components** (commit 382f240+):
 - ✅ Production Telegram Mini App `initData` backend validator (`src/telegram-initdata.ts`)
   - HMAC-SHA256 validation per official Telegram algorithm
   - Duplicate query key rejection (prevents parameter pollution)
@@ -29,14 +29,23 @@ This document describes the INITIAL small-group architecture for World ID-based 
   - In-memory implementation for development (NOT for production)
   - 25 comprehensive unit tests
 - ✅ SQLite challenge and enrollment stores (`src/enrollment-store-sqlite.ts`)
-  - Durable transactional persistence with atomic operations
-  - Requester-bound challenge completion (copied challenge cannot change account)
-  - Enrollment uniqueness constraints (nullifier + user+action pairs)
+  - Durable persistence with separate database connections per store
+  - Enrollment uniqueness constraints (nullifier per-action + user+action pairs)
   - Automatic cleanup of expired sessions/enrollments
   - Restart persistence (survives process restart)
   - WAL mode for better concurrency
   - Portable to Mac Node24
-  - 24 comprehensive behavioral tests (rollback/fault, concurrent replay, no stale grants)
+  - 24 comprehensive behavioral tests
+  - NOTE: Stores use separate connections, NOT fully transactional requester-bound completion
+- ✅ Transactional enrollment service (`src/enrollment-service.ts`)
+  - Single shared database connection for atomic operations
+  - Transactional requester-bound completion (challenge consume + enrollment create together)
+  - Authenticated requester validation against stored challenge
+  - Signal binding (telegram:{userId}:{action} hashed to prevent proof replay)
+  - Invalid proof/account mismatch do not burn legitimate requester's challenge
+  - Per-action nullifier scoping (composite primary key: nullifier + action)
+  - Dependency-injected proof verification (no live HTTP calls in tests)
+  - 9 comprehensive behavioral tests (account mismatch, atomic transaction, proof replay protection)
 - ✅ Fail-closed admission gate with enrollment registry (`src/admission-gate.ts`)
   - Zero LLM/history/tool calls for rejected senders
   - Deterministic clock injection for testing
@@ -462,18 +471,55 @@ When sync fails (registry unavailable, OpenClaw config write error, etc.):
 - Protocol-level cryptographic guarantees depend on World ID's proof verification
 - Integration gaps remain (session renewal, mobile UX, RP onboarding)
 
-### Signal Binding Strategy (Unresolved)
+### Implementation Boundaries and Limitations
 
-**Required for Production**:
-- Define signal content (Telegram user ID? Session token? Community ID?)
-- Document signal generation and validation logic
-- Bind signal to specific requester context
-- Prevent signal reuse across different contexts
+**Implemented (Transactional Requester-Bound Completion)**:
+- ✅ Single atomic transaction: challenge consume + enrollment create (both or neither)
+- ✅ Authenticated requester validated against stored challenge before proof verification
+- ✅ Invalid proof/account mismatch do not burn legitimate requester's challenge
+- ✅ Signal binding prevents proof replay across accounts
+- ✅ Per-action nullifier scoping (composite PK: nullifier + action)
+- ✅ Shared database connection ensures transactional integrity
 
-**Current Implementation**:
-- `expectedContext.signalHash` parameter available for validation
-- Signal comparison enforced when provided
-- Actual signal binding strategy awaiting production design
+**Replay Protection Boundary**:
+- Nullifier uniqueness enforced per-action via database constraint
+- TTL cleanup drops expired enrollments (no permanent replay memory)
+- Cannot claim "full replay lifecycle protection" - expired nullifiers can be reused
+- No revocation audit log (revoked enrollments deleted, not archived)
+
+**Cross-Account Policy (Explicit Unresolved)**:
+- No silent global uniqueness enforcement across actions
+- No cross-community nullifier deduplication
+- User policy choice required: per-action isolation vs. global uniqueness
+- Current implementation: explicit per-action scoping only
+
+**Privacy/Retention Policy (Explicit Unresolved)**:
+- No names, usernames, raw initData, or raw proofs stored
+- Only nullifier (0x hex), Telegram user ID (numeric), action, timestamps
+- No automatic data deletion beyond expiry cleanup
+- User retention policy choice required before production
+
+### Signal Binding Strategy (Implemented)
+
+**Current Implementation** (`EnrollmentService`):
+- Signal constructed as `"telegram:{userId}:{action}"`
+- Hashed with SHA-256 to produce `signal_hash`
+- Bound to specific Telegram user ID + action combination
+- Prevents proof replay across different accounts
+- Service computes expected signal_hash from stored challenge context
+- World ID verification confirms signal_hash in proof matches expected value
+
+**Signal Binding Contract**:
+- Application constructs signal deterministically
+- Client MUST provide same signal when generating proof
+- World ID's proof verification confirms signal_hash cryptographic binding
+- We rely on World ID's documented API contract: successful verification with matching signal_hash means proof is bound to that signal
+- CAVEAT: We are not auditing zk-SNARK internals, but using documented API semantics
+
+**Mandatory for Granting Path**:
+- Signal binding is required for any enrollment completion
+- `completeEnrollment()` always validates signal_hash match
+- Mismatched signal fails verification without burning challenge
 
 ## Reject-Path Behavior
 
