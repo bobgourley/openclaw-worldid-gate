@@ -117,3 +117,34 @@ export class OpenClawTelegramAdapter implements AuthenticatedTelegramAdapter {
     );
   }
 }
+
+/**
+ * Validate Telegram update authentication
+ * 
+ * In production, this must validate:
+ * - Webhook: X-Telegram-Bot-Api-Secret-Token header
+ * - Or HMAC signature for initData
+ * - Or validate getUpdates polling connection
+ * 
+ * This starter implementation performs minimal structure validation only.
+ * Real authentication validation is required for production.
+ */
+export function validateTelegramUpdate(
+  update: TelegramUpdate,
+  botToken: string
+): { valid: boolean; reason?: string } {
+  // Minimal structure validation
+  // Real implementation must validate cryptographic signatures
+  
+  if (!update || typeof update !== 'object') {
+    return { valid: false, reason: 'Invalid update object' };
+  }
+  
+  if (typeof update.update_id !== 'number') {
+    return { valid: false, reason: 'Missing or invalid update_id' };
+  }
+  
+  // In production, validate webhook signature header or HMAC
+  // For now, accept if structure is valid
+  return { valid: true };
+}
