@@ -156,7 +156,7 @@ export class WorldIdVerificationClient {
         };
       }
 
-      const verification: WorldIdVerifyResponse = await response.json();
+      const verification = (await response.json()) as WorldIdVerifyResponse;
 
       if (!verification.success) {
         return {

@@ -5,27 +5,58 @@ This document describes the INITIAL small-group architecture for World ID-based 
 
 ## Implementation Status
 
-**IMPLEMENTED in this starter:**
-- Fail-closed admission gate with enrollment registry
-- World ID proof verification (stub for testing)
-- Enrollment lifecycle with configurable TTL (default 30 days)
-- Action-scoping validation
-- Constructor-level configuration validation with bounded safety checks
-- Deterministic unit and integration tests (66 tests)
+**IMPLEMENTED Production Components** (commit 554a982):
+- ✅ Production Telegram Mini App `initData` backend validator (`src/telegram-initdata.ts`)
+  - HMAC-SHA256 validation per official Telegram algorithm
+  - Freshness check (auth_date within configurable window)
+  - Secure user extraction from validated initData
+  - 11 comprehensive unit tests
+- ✅ Production World ID v4.0 proof verification client (`src/worldid-client.ts`)
+  - Server-side proof verification against Developer Portal API
+  - Environment validation (production/staging)
+  - HTTPS-only endpoint enforcement
+  - Timeout and error handling
+  - 8 comprehensive unit tests
+- ✅ Production enrollment store abstraction (`src/enrollment-store.ts`)
+  - Challenge session interface for single-use nonce binding
+  - Enrollment interface with transactional semantics
+  - In-memory implementation for development (NOT for production)
+  - 25 comprehensive unit tests
+- ✅ Fail-closed admission gate with enrollment registry (`src/admission-gate.ts`)
+  - Zero LLM/history/tool calls for rejected senders
+  - Deterministic clock injection for testing
+  - Action-scoping validation
+  - 44 unit tests proving fail-closed guarantees
+- ✅ Constructor-level configuration validation with bounded safety checks
 
-**PLANNED but NOT YET IMPLEMENTED:**
-- Separate verification bot with DM `/verify` command
-- Short-lived single-use enrollment link generator
-- Telegram Mini App with `initData` HMAC validation
-- Member tag management via `setChatMemberTag`
-- OpenClaw group allowlist integration
-- Registry-to-allowlist sync lifecycle
-- Durable enrollment storage (PostgreSQL, Redis, etc.)
-- Production World ID API client
+**NOT YET IMPLEMENTED (require integration/configuration):**
+- ❌ Verification service HTTP server/API endpoints
+- ❌ Challenge session management workflow
+- ❌ Telegram Mini App frontend (HTML/JS/CSS)
+- ❌ Member tag management via `setChatMemberTag`
+- ❌ OpenClaw group allowlist integration
+- ❌ Registry-to-allowlist sync lifecycle
+- ❌ Durable production store (PostgreSQL/SQLite replacing in-memory)
+- ❌ Mac mini deployment supervision/monitoring
+
+## Deployment Architecture Decision
+
+**Hosting**: Mac mini backend for verification service, separate from live OpenClaw workspace.
+
+**Network Topology**:
+- Public HTTPS endpoint exposes verification service only (challenge initiation, Mini App backend, enrollment completion)
+- OpenClaw main bot remains private (no public exposure)
+- Verification service communicates with OpenClaw via local/VPN connection to sync allowlist
+
+**Rationale**:
+- Separate verification service reduces attack surface on main OpenClaw bot
+- Public HTTPS required only for Telegram Mini App (Telegram validates TLS certificate)
+- Transactional registry can use local SQLite or PostgreSQL on Mac mini
+- Mac mini provides durable storage and reliable uptime for enrollment registry
 
 ## Small-Group Architecture
 
-The preferred initial architecture is designed for small trusted groups with human-verified member admission control.
+The architecture is designed for small trusted groups with human-verified member admission control.
 
 ### Components
 
