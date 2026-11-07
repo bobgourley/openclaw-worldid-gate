@@ -74,8 +74,8 @@ export class WorldIdHttpVerifier {
     this.environment = config.environment;
     this.timeoutMs = timeout;
 
-    // Official endpoints (override only for testing)
-    this.baseUrl = config.baseUrlOverride ?? 'https://developer.worldcoin.org';
+    // Official primary endpoint (override only for explicit test transport injection)
+    this.baseUrl = config.baseUrlOverride ?? 'https://developer.world.org';
   }
 
   /**
@@ -93,6 +93,20 @@ export class WorldIdHttpVerifier {
     idkitResult: IDKitResult,
     expectedContext: ExpectedVerificationContext
   ): Promise<BackendVerificationResult> {
+    // Validate expectedContext at runtime FIRST (fail-closed on malformed server state)
+    if (!expectedContext || typeof expectedContext !== 'object') {
+      return { success: false, error: 'Invalid expectedContext: must be object' };
+    }
+    if (!expectedContext.action || typeof expectedContext.action !== 'string' || expectedContext.action.length === 0) {
+      return { success: false, error: 'Invalid expectedContext.action: must be non-empty string' };
+    }
+    if (!expectedContext.nonce || typeof expectedContext.nonce !== 'string' || expectedContext.nonce.length === 0) {
+      return { success: false, error: 'Invalid expectedContext.nonce: must be non-empty string' };
+    }
+    if (!expectedContext.signalHash || typeof expectedContext.signalHash !== 'string' || expectedContext.signalHash.length === 0) {
+      return { success: false, error: 'Invalid expectedContext.signalHash: must be non-empty string (server-trusted requester binding)' };
+    }
+
     // Validate IDKitResult structure (fail-closed)
     if (!idkitResult || typeof idkitResult !== 'object') {
       return { success: false, error: 'Invalid idkitResult: expected object' };
@@ -166,7 +180,7 @@ export class WorldIdHttpVerifier {
     // Forward IDKit result as-is to v4 API (no field remapping required)
     const verifyRequest: V4VerifyRequest = idkitResult;
 
-    // Call v4 Developer Portal API
+    // Call v4 Developer Portal API (primary endpoint only, test override explicit)
     const endpoint = `${this.baseUrl}/api/v4/verify/${this.rpId}`;
 
     const controller = new AbortController();
@@ -182,10 +196,22 @@ export class WorldIdHttpVerifier {
         signal: controller.signal,
       });
 
-      clearTimeout(timeoutId);
+      // Check HTTP status before reading body (fail-closed on non-2xx)
+      if (!apiResponse.ok) {
+        return {
+          success: false,
+          error: `Developer Portal returned HTTP ${apiResponse.status}`,
+        };
+      }
 
-      // Read response body completely (bounded timeout)
-      const responseText = await apiResponse.text();
+      // Read response body with timeout coverage (bounded consumption)
+      let responseText: string;
+      try {
+        responseText = await apiResponse.text();
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
       let apiResult: V4VerifyResponse;
 
       try {
@@ -194,8 +220,8 @@ export class WorldIdHttpVerifier {
         return { success: false, error: 'Developer Portal returned malformed JSON' };
       }
 
-      // Validate response structure
-      if (typeof apiResult !== 'object' || apiResult === null) {
+      // Validate response structure (runtime unknown input boundary)
+      if (typeof apiResult !== 'object' || apiResult === null || Array.isArray(apiResult)) {
         return { success: false, error: 'Developer Portal returned invalid response' };
       }
 
@@ -207,11 +233,65 @@ export class WorldIdHttpVerifier {
         };
       }
 
+      // Validate response environment matches expected (required per documentation)
+      if (!apiResult.environment || typeof apiResult.environment !== 'string') {
+        return {
+          success: false,
+          error: 'Response missing environment field',
+        };
+      }
+
+      if (apiResult.environment !== this.environment) {
+        return {
+          success: false,
+          error: `Environment mismatch: expected ${this.environment}, response ${apiResult.environment}`,
+        };
+      }
+
       // Validate results array exists
       if (!Array.isArray(apiResult.results) || apiResult.results.length === 0) {
         return {
           success: false,
           error: 'Verification response missing results array',
+        };
+      }
+
+      // Validate all result items are objects with required fields
+      for (let i = 0; i < apiResult.results.length; i++) {
+        const item = apiResult.results[i];
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+          return {
+            success: false,
+            error: `Result item ${i} is not a valid object`,
+          };
+        }
+        if (typeof item.identifier !== 'string' || item.identifier.length === 0) {
+          return {
+            success: false,
+            error: `Result item ${i} has invalid identifier`,
+          };
+        }
+        if (typeof item.success !== 'boolean') {
+          return {
+            success: false,
+            error: `Result item ${i} has invalid success field`,
+          };
+        }
+        if (typeof item.nullifier !== 'string' || item.nullifier.length === 0) {
+          return {
+            success: false,
+            error: `Result item ${i} has invalid nullifier`,
+          };
+        }
+      }
+
+      // Check for duplicate identifiers (ambiguous results)
+      const identifiers = apiResult.results.map(r => r.identifier);
+      const uniqueIdentifiers = new Set(identifiers);
+      if (identifiers.length !== uniqueIdentifiers.size) {
+        return {
+          success: false,
+          error: 'Ambiguous response: duplicate credential identifiers',
         };
       }
 
@@ -233,17 +313,50 @@ export class WorldIdHttpVerifier {
         };
       }
 
-      // Validate nullifier format (0x-prefixed hex)
-      if (!credentialResult.nullifier || !credentialResult.nullifier.startsWith('0x')) {
+      // Validate nullifier format (strict 256-bit hex validation)
+      if (!credentialResult.nullifier.startsWith('0x')) {
         return {
           success: false,
-          error: 'Invalid nullifier format in response: expected 0x-prefixed hex',
+          error: 'Invalid nullifier format: must start with 0x',
         };
       }
 
-      // Verify nullifier consistency (normalized numerical value)
-      const requestNullifier = BigInt(response.nullifier);
-      const responseNullifier = BigInt(credentialResult.nullifier);
+      const nullifierHex = credentialResult.nullifier.slice(2);
+      if (!/^[0-9a-f]{64}$/i.test(nullifierHex)) {
+        return {
+          success: false,
+          error: 'Invalid nullifier format: must be 0x followed by 64 hex characters (256-bit)',
+        };
+      }
+
+      // Verify nullifier consistency (strict bounded numerical normalization)
+      let requestNullifier: bigint;
+      let responseNullifier: bigint;
+
+      try {
+        requestNullifier = BigInt(response.nullifier);
+        if (requestNullifier < 0n) {
+          return { success: false, error: 'Request nullifier is negative' };
+        }
+        // 2^256 - 1 maximum
+        if (requestNullifier > 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffn) {
+          return { success: false, error: 'Request nullifier exceeds 256-bit maximum' };
+        }
+      } catch {
+        return { success: false, error: 'Request nullifier is not a valid number' };
+      }
+
+      try {
+        responseNullifier = BigInt(credentialResult.nullifier);
+        if (responseNullifier < 0n) {
+          return { success: false, error: 'Response nullifier is negative' };
+        }
+        if (responseNullifier > 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffn) {
+          return { success: false, error: 'Response nullifier exceeds 256-bit maximum' };
+        }
+      } catch {
+        return { success: false, error: 'Response nullifier is not a valid number' };
+      }
 
       if (requestNullifier !== responseNullifier) {
         return {
@@ -262,6 +375,7 @@ export class WorldIdHttpVerifier {
     } catch (error: any) {
       clearTimeout(timeoutId);
 
+      // Fail-closed result (not generic throw)
       if (error.name === 'AbortError') {
         return { success: false, error: 'Verification request timeout' };
       }
