@@ -13,7 +13,8 @@ import { EnrollmentService } from './enrollment-service-production.js';
 import { WorldIdChallengeAdapter } from './worldid-challenge-adapter.js';
 import { TelegramBotHandler } from './telegram-bot-handler.js';
 import type { TelegramBotTransport } from './telegram-bot-handler.js';
-import { mkdir, writeFile, unlink, chmod } from 'node:fs/promises';
+import { mkdir, writeFile, unlink, chmod, readFile } from 'node:fs/promises';
+import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -84,11 +85,13 @@ describe('OpenClaw Integration', () => {
       enrollmentTtlSeconds: 2592000,
     });
 
-    // Create fake CLI executable that returns JSON
+    // Create fake CLI executable that returns actual OpenClaw JSON schema
+    // Schema from fc23bc864e4553c2d215e479eeec47b67a0bf943:
+    // src/commands/agent-via-gateway.ts:81-96
     fakeCliPath = join(tmpdir(), `fake-openclaw-${randomBytes(8).toString('hex')}.sh`);
     await writeFile(
       fakeCliPath,
-      '#!/bin/bash\necho \'{"text":"Hello from OpenClaw","status":"success"}\'\nexit 0\n',
+      '#!/bin/bash\necho \'{"status":"ok","result":{"payloads":[{"text":"Hello from OpenClaw"}]}}\'\nexit 0\n',
       { mode: 0o755 }
     );
     await chmod(fakeCliPath, 0o755);
@@ -291,7 +294,7 @@ describe('OpenClaw Integration', () => {
       // Should dispatch and respond
       assert.strictEqual(mockTransport.sentMessages.length, 1);
       assert.strictEqual(mockTransport.sentMessages[0].chatId, -1001234567890);
-      assert.ok(mockTransport.sentMessages[0].text.includes('Hello from OpenClaw'));
+      assert.strictEqual(mockTransport.sentMessages[0].text, 'Hello from OpenClaw');
     });
   });
 
@@ -425,7 +428,7 @@ describe('OpenClaw Integration', () => {
       
       assert.strictEqual(mockTransport.sentMessages.length, 1);
       assert.strictEqual(mockTransport.sentMessages[0].chatId, -1001234567890);
-      assert.ok(mockTransport.sentMessages[0].text.includes('Hello from OpenClaw'));
+      assert.strictEqual(mockTransport.sentMessages[0].text, 'Hello from OpenClaw');
     });
   });
 
@@ -477,9 +480,173 @@ describe('OpenClaw Integration', () => {
       await new Promise(resolve => setTimeout(resolve, 200));
       assert.strictEqual(mockTransport.sentMessages.length, 0);
     });
+
+    test('prevents concurrent duplicate invocations', async () => {
+      // Create CLI with counter to track invocations
+      const counterFile = join(tmpdir(), `counter-${randomBytes(8).toString('hex')}.txt`);
+      await writeFile(counterFile, '0', 'utf8');
+
+      const counterCliPath = join(tmpdir(), `counter-openclaw-${randomBytes(8).toString('hex')}.sh`);
+      await writeFile(
+        counterCliPath,
+        `#!/bin/bash
+count=$(cat ${counterFile})
+count=$((count + 1))
+echo $count > ${counterFile}
+sleep 0.1
+echo '{"status":"ok","result":{"payloads":[{"text":"Response $count"}]}}'
+exit 0
+`,
+        { mode: 0o755 }
+      );
+      await chmod(counterCliPath, 0o755);
+
+      const counterBotHandler = new TelegramBotHandler({
+        botToken: 'test_bot_token',
+        enrollmentService,
+        transport: mockTransport,
+        enrollmentBaseUrl: 'http://localhost:3000',
+        webhookSecret: 'test_webhook_secret',
+        openclawConfig: {
+          openclawBin: counterCliPath,
+          agentId: 'test-agent',
+          telegramAccountId: 'test-account',
+          timeoutSeconds: 5,
+          maxOutputBytes: 1024 * 1024,
+        },
+        allowedGroupId: -1001234567890,
+      });
+
+      // Create test server with counter handler
+      const counterApp = express();
+      counterApp.post('/telegram/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+        const rawBody = req.body?.toString('utf-8') || '';
+        const secretToken = req.headers['x-telegram-bot-api-secret-token'] as string | undefined;
+
+        if (!counterBotHandler.validateWebhook(rawBody, secretToken)) {
+          res.status(403).json({ error: 'Invalid webhook request' });
+          return;
+        }
+
+        try {
+          const update = JSON.parse(rawBody);
+          await counterBotHandler.handleUpdate(update);
+          res.status(200).json({ ok: true });
+        } catch {
+          res.status(400).json({ error: 'Invalid JSON' });
+        }
+      });
+
+      const counterServer = counterApp.listen(0);
+      const counterAddress = counterServer.address();
+      const counterPort = typeof counterAddress === 'object' && counterAddress ? counterAddress.port : 0;
+
+      try {
+        await enrollmentService.directEnroll({
+          telegramUserId: 99999,
+          nullifier: 'test_nullifier_99999',
+          credential: { credential_type: 'proof_of_human' } as any,
+        });
+
+        const update = {
+          update_id: 999,
+          message: {
+            message_id: 999,
+            from: { id: 99999, is_bot: false, first_name: 'Test' },
+            chat: { id: -1001234567890, type: 'group' as const },
+            date: Math.floor(Date.now() / 1000),
+            text: '/ask concurrent test',
+          },
+        };
+
+        mockTransport.reset();
+
+        // Send two concurrent requests
+        const [response1, response2] = await Promise.all([
+          fetch(`http://localhost:${counterPort}/telegram/webhook`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Telegram-Bot-Api-Secret-Token': 'test_webhook_secret',
+            },
+            body: JSON.stringify(update),
+          }),
+          fetch(`http://localhost:${counterPort}/telegram/webhook`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Telegram-Bot-Api-Secret-Token': 'test_webhook_secret',
+            },
+            body: JSON.stringify(update),
+          }),
+        ]);
+
+        assert.strictEqual(response1.status, 200);
+        assert.strictEqual(response2.status, 200);
+
+        // Wait for async processing
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        // Read counter file
+        const finalCount = parseInt(await fs.readFile(counterFile, 'utf8'), 10);
+
+        // Assert CLI was invoked exactly once despite concurrent requests
+        assert.strictEqual(finalCount, 1, 'CLI should be invoked exactly once for concurrent duplicate requests');
+
+        // Should have exactly one response
+        assert.strictEqual(mockTransport.sentMessages.length, 1);
+
+      } finally {
+        await new Promise<void>((resolve) => counterServer.close(() => resolve()));
+        await unlink(counterFile).catch(() => {});
+        await unlink(counterCliPath).catch(() => {});
+      }
+    });
   });
 
   describe('CLI error handling', () => {
+    test('handles missing CLI binary', async () => {
+      const missingBotHandler = new TelegramBotHandler({
+        botToken: 'test_bot_token',
+        enrollmentService,
+        transport: mockTransport,
+        enrollmentBaseUrl: 'http://localhost:3000',
+        webhookSecret: 'test_webhook_secret',
+        openclawConfig: {
+          openclawBin: '/nonexistent/openclaw',
+          agentId: 'test-agent',
+          telegramAccountId: 'test-account',
+          timeoutSeconds: 5,
+          maxOutputBytes: 1024 * 1024,
+        },
+        allowedGroupId: -1001234567890,
+      });
+
+      await enrollmentService.directEnroll({
+        telegramUserId: 11111,
+        nullifier: 'test_nullifier_11111',
+        credential: { credential_type: 'proof_of_human' } as any,
+      });
+
+      const update = {
+        update_id: 111,
+        message: {
+          message_id: 111,
+          from: { id: 11111, is_bot: false, first_name: 'Test' },
+          chat: { id: -1001234567890, type: 'group' as const },
+          date: Math.floor(Date.now() / 1000),
+          text: '/ask hello',
+        },
+      };
+
+      mockTransport.reset();
+      await missingBotHandler.handleUpdate(update);
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      assert.strictEqual(mockTransport.sentMessages.length, 1);
+      assert.ok(mockTransport.sentMessages[0].text.includes('failed'));
+    });
+
     test('handles CLI timeout', async () => {
       // Create slow CLI that exceeds timeout
       const slowCliPath = join(tmpdir(), `slow-openclaw-${randomBytes(8).toString('hex')}.sh`);
@@ -583,6 +750,110 @@ describe('OpenClaw Integration', () => {
       assert.ok(mockTransport.sentMessages[0].text.includes('failed'));
 
       await unlink(errorCliPath).catch(() => {});
+    });
+
+    test('handles invalid JSON response (fail closed)', async () => {
+      const invalidJsonCliPath = join(tmpdir(), `invalid-json-openclaw-${randomBytes(8).toString('hex')}.sh`);
+      await writeFile(
+        invalidJsonCliPath,
+        '#!/bin/bash\necho \'not valid json\'\nexit 0\n',
+        { mode: 0o755 }
+      );
+      await chmod(invalidJsonCliPath, 0o755);
+
+      const invalidJsonBotHandler = new TelegramBotHandler({
+        botToken: 'test_bot_token',
+        enrollmentService,
+        transport: mockTransport,
+        enrollmentBaseUrl: 'http://localhost:3000',
+        webhookSecret: 'test_webhook_secret',
+        openclawConfig: {
+          openclawBin: invalidJsonCliPath,
+          agentId: 'test-agent',
+          telegramAccountId: 'test-account',
+          timeoutSeconds: 5,
+          maxOutputBytes: 1024 * 1024,
+        },
+        allowedGroupId: -1001234567890,
+      });
+
+      await enrollmentService.directEnroll({
+        telegramUserId: 22222,
+        nullifier: 'test_nullifier_22222',
+        credential: { credential_type: 'proof_of_human' } as any,
+      });
+
+      const update = {
+        update_id: 222,
+        message: {
+          message_id: 222,
+          from: { id: 22222, is_bot: false, first_name: 'Test' },
+          chat: { id: -1001234567890, type: 'group' as const },
+          date: Math.floor(Date.now() / 1000),
+          text: '/ask hello',
+        },
+      };
+
+      mockTransport.reset();
+      await invalidJsonBotHandler.handleUpdate(update);
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      assert.strictEqual(mockTransport.sentMessages.length, 1);
+      assert.ok(mockTransport.sentMessages[0].text.includes('failed'));
+
+      await unlink(invalidJsonCliPath).catch(() => {});
+    });
+
+    test('handles missing result.payloads (fail closed)', async () => {
+      const missingPayloadsCliPath = join(tmpdir(), `missing-payloads-openclaw-${randomBytes(8).toString('hex')}.sh`);
+      await writeFile(
+        missingPayloadsCliPath,
+        '#!/bin/bash\necho \'{"status":"ok","result":{}}\'\nexit 0\n',
+        { mode: 0o755 }
+      );
+      await chmod(missingPayloadsCliPath, 0o755);
+
+      const missingPayloadsBotHandler = new TelegramBotHandler({
+        botToken: 'test_bot_token',
+        enrollmentService,
+        transport: mockTransport,
+        enrollmentBaseUrl: 'http://localhost:3000',
+        webhookSecret: 'test_webhook_secret',
+        openclawConfig: {
+          openclawBin: missingPayloadsCliPath,
+          agentId: 'test-agent',
+          telegramAccountId: 'test-account',
+          timeoutSeconds: 5,
+          maxOutputBytes: 1024 * 1024,
+        },
+        allowedGroupId: -1001234567890,
+      });
+
+      await enrollmentService.directEnroll({
+        telegramUserId: 33334,
+        nullifier: 'test_nullifier_33334',
+        credential: { credential_type: 'proof_of_human' } as any,
+      });
+
+      const update = {
+        update_id: 333,
+        message: {
+          message_id: 333,
+          from: { id: 33334, is_bot: false, first_name: 'Test' },
+          chat: { id: -1001234567890, type: 'group' as const },
+          date: Math.floor(Date.now() / 1000),
+          text: '/ask hello',
+        },
+      };
+
+      mockTransport.reset();
+      await missingPayloadsBotHandler.handleUpdate(update);
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      assert.strictEqual(mockTransport.sentMessages.length, 1);
+      assert.ok(mockTransport.sentMessages[0].text.includes('failed'));
+
+      await unlink(missingPayloadsCliPath).catch(() => {});
     });
   });
 

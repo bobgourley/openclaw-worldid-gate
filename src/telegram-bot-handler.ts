@@ -254,7 +254,7 @@ export class TelegramBotHandler {
         return;
       }
 
-      // Duplicate suppression (5-minute window)
+      // Duplicate suppression (5-minute window) - reserve BEFORE async work
       const deliveryKey = `${userId}:${chatId}:${updateId}`;
       const now = Date.now();
       const recentTime = this.recentDeliveries.get(deliveryKey);
@@ -263,6 +263,9 @@ export class TelegramBotHandler {
         return;
       }
 
+      // Reserve immediately to prevent concurrent duplicates
+      this.recentDeliveries.set(deliveryKey, now);
+
       // Clean old delivery records
       for (const [key, time] of this.recentDeliveries.entries()) {
         if (now - time > 600000) {
@@ -270,52 +273,55 @@ export class TelegramBotHandler {
         }
       }
 
-      // Fresh enrollment check (admission boundary - checked after async prep, right before spawn)
-      const enrollment = await this.enrollmentService.findEnrollment(userId);
-      
-      if (!enrollment) {
-        await this.transport.sendMessage(
-          chatId,
-          '❌ World ID verification required.\n\nUse /verify to start verification.'
-        );
-        return;
-      }
+      try {
+        // Fresh enrollment check (admission boundary - checked immediately before spawn)
+        const enrollment = await this.enrollmentService.findEnrollment(userId);
+        
+        if (!enrollment) {
+          await this.transport.sendMessage(
+            chatId,
+            '❌ World ID verification required.\n\nUse /verify to start verification.'
+          );
+          return;
+        }
 
-      if (enrollment.revoked) {
-        await this.transport.sendMessage(
-          chatId,
-          '❌ Your verification has been revoked.\n\nPlease contact support.'
-        );
-        return;
-      }
+        if (enrollment.revoked) {
+          await this.transport.sendMessage(
+            chatId,
+            '❌ Your verification has been revoked.\n\nPlease contact support.'
+          );
+          return;
+        }
 
-      if (enrollment.expired) {
-        await this.transport.sendMessage(
-          chatId,
-          '❌ Your verification has expired.\n\nUse /verify to renew.'
-        );
-        return;
-      }
+        if (enrollment.expired) {
+          await this.transport.sendMessage(
+            chatId,
+            '❌ Your verification has expired.\n\nUse /verify to renew.'
+          );
+          return;
+        }
 
-      // Mark as delivered BEFORE dispatch to prevent concurrent duplicates
-      this.recentDeliveries.set(deliveryKey, now);
+        // Dispatch to OpenClaw CLI
+        const result = await dispatchToOpenClaw(this.openclawConfig, {
+          telegramUserId: userId,
+          chatId: chatId,
+          text: query,
+        });
 
-      // Dispatch to OpenClaw CLI
-      const result = await dispatchToOpenClaw(this.openclawConfig, {
-        telegramUserId: userId,
-        chatId: chatId,
-        text: query,
-      });
-
-      if (result.success && result.response) {
-        // Send bounded model response to same chat
-        const responseText = result.response.slice(0, 4096);
-        await this.transport.sendMessage(chatId, responseText);
-      } else if (result.timeout) {
-        await this.transport.sendMessage(chatId, '⏱️ Request timed out.');
-      } else {
-        await this.transport.sendMessage(chatId, '❌ Request failed.');
-        console.error('OpenClaw dispatch error:', result.error);
+        if (result.success && result.response) {
+          // Send bounded model response to same chat
+          const responseText = result.response.slice(0, 4096);
+          await this.transport.sendMessage(chatId, responseText);
+        } else if (result.timeout) {
+          await this.transport.sendMessage(chatId, '⏱️ Request timed out.');
+        } else {
+          await this.transport.sendMessage(chatId, '❌ Request failed.');
+          console.error('OpenClaw dispatch error:', result.error);
+        }
+      } catch (error) {
+        // On failure, remove reservation to allow retry
+        this.recentDeliveries.delete(deliveryKey);
+        throw error;
       }
 
     } catch (error: any) {

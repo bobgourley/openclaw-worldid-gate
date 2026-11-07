@@ -13,6 +13,28 @@
  * 
  * Session key format: telegram:{accountId}:{groupId}:{userId}
  * This ensures each (account, group, user) tuple gets an isolated session.
+ * 
+ * OpenClaw CLI JSON output schema (from fc23bc864e4553c2d215e479eeec47b67a0bf943):
+ * src/commands/agent-via-gateway.ts:81-96 (type definitions)
+ * src/commands/agent-via-gateway.ts:876-885 (JSON builder)
+ * src/commands/agent-via-gateway.ts:1127-1129 (output call)
+ * 
+ * Schema:
+ * {
+ *   runId?: string;
+ *   status?: string;  // "ok" or "completed" for success
+ *   summary?: string;
+ *   result?: {
+ *     payloads?: Array<{
+ *       text?: string;              // Model-visible text
+ *       mediaUrl?: string | null;
+ *       mediaUrls?: string[];
+ *     }>;
+ *     deliveryStatus?: unknown;
+ *     meta?: unknown;
+ *   };
+ *   deliveryStatus?: unknown;
+ * }
  */
 
 import { spawn } from 'node:child_process';
@@ -71,6 +93,8 @@ export async function dispatchToOpenClaw(
   let outputBuffer = '';
   let errorBuffer = '';
   let timeoutTriggered = false;
+  let timeoutHandle: NodeJS.Timeout | null = null;
+  let sigkillHandle: NodeJS.Timeout | null = null;
 
   try {
     // Write message to temporary file with restricted permissions
@@ -101,7 +125,6 @@ export async function dispatchToOpenClaw(
     // Spawn process with bounded execution
     const child = spawn(config.openclawBin, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: config.timeoutSeconds * 1000 + 5000, // Add 5s buffer for process overhead
       env: {
         ...process.env,
         // Prevent token leakage
@@ -112,6 +135,7 @@ export async function dispatchToOpenClaw(
 
     let outputSize = 0;
     const maxSize = config.maxOutputBytes;
+    let processExited = false;
 
     child.stdout.on('data', (chunk: Buffer) => {
       outputSize += chunk.length;
@@ -129,16 +153,30 @@ export async function dispatchToOpenClaw(
 
     // Wait for process completion
     const exitCode = await new Promise<number | null>((resolve) => {
-      child.on('exit', (code) => resolve(code));
-      child.on('error', () => resolve(null));
-      
+      const cleanup = () => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        if (sigkillHandle) clearTimeout(sigkillHandle);
+      };
+
+      child.on('exit', (code) => {
+        processExited = true;
+        cleanup();
+        resolve(code);
+      });
+
+      child.on('error', (err) => {
+        cleanup();
+        resolve(null);
+      });
+
       // Timeout handler
-      setTimeout(() => {
-        if (!child.killed) {
+      timeoutHandle = setTimeout(() => {
+        if (!processExited) {
           timeoutTriggered = true;
           child.kill('SIGTERM');
-          setTimeout(() => {
-            if (!child.killed) {
+          // Escalate to SIGKILL after 2 seconds
+          sigkillHandle = setTimeout(() => {
+            if (!processExited) {
               child.kill('SIGKILL');
             }
           }, 2000);
@@ -157,7 +195,7 @@ export async function dispatchToOpenClaw(
     if (exitCode !== 0) {
       return {
         success: false,
-        error: `OpenClaw agent exited with code ${exitCode}: ${errorBuffer.trim()}`,
+        error: `OpenClaw agent exited with code ${exitCode}`,
       };
     }
 
@@ -168,13 +206,43 @@ export async function dispatchToOpenClaw(
       };
     }
 
-    // Parse JSON output
+    // Parse JSON output (actual OpenClaw schema from fc23bc864e4553c2d215e479eeec47b67a0bf943)
     try {
-      const parsed = JSON.parse(outputBuffer.trim());
-      const responseText = parsed.response || parsed.text || JSON.stringify(parsed);
+      const parsed = JSON.parse(outputBuffer.trim()) as {
+        runId?: string;
+        status?: string;
+        summary?: string;
+        result?: {
+          payloads?: Array<{
+            text?: string;
+            mediaUrl?: string | null;
+            mediaUrls?: string[];
+          }>;
+          deliveryStatus?: unknown;
+          meta?: unknown;
+        };
+        deliveryStatus?: unknown;
+      };
+
+      // Extract model-visible text from first payload (fail closed on unknown schema)
+      if (!parsed.result || !parsed.result.payloads || parsed.result.payloads.length === 0) {
+        return {
+          success: false,
+          error: 'OpenClaw response missing result.payloads',
+        };
+      }
+
+      const firstPayload = parsed.result.payloads[0];
+      if (!firstPayload || typeof firstPayload.text !== 'string') {
+        return {
+          success: false,
+          error: 'OpenClaw response missing text in first payload',
+        };
+      }
+
       return {
         success: true,
-        response: responseText.slice(0, 4096), // Bounded response
+        response: firstPayload.text.slice(0, 4096), // Bounded response
       };
     } catch (parseError) {
       return {
@@ -189,6 +257,10 @@ export async function dispatchToOpenClaw(
       error: `OpenClaw dispatch failed: ${String(error)}`,
     };
   } finally {
+    // Cleanup timeout timers
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    if (sigkillHandle) clearTimeout(sigkillHandle);
+
     // Cleanup temporary message file
     try {
       await unlink(messageFile);
