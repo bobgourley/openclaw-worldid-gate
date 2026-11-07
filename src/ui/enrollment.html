@@ -122,6 +122,15 @@
       Loading verification session...
     </div>
     
+    <div id="connectorDisplay" class="hidden" style="margin: 20px 0; text-align: center;">
+      <a id="connectorLink" href="#" target="_blank" class="button" style="display: inline-block; text-decoration: none;">
+        Open World App
+      </a>
+      <p style="margin-top: 10px; font-size: 12px; color: #718096;">
+        Or scan QR code on another device
+      </p>
+    </div>
+    
     <button id="verifyButton" class="button hidden" disabled>
       Connect World App
     </button>
@@ -295,10 +304,25 @@
           allow_legacy_proofs: true,
         }).preset(proofOfHuman({ signal: session.signal }));
         
-        // Display QR code connection URI
-        showStatus('Scan QR code with World App or open link on your phone', 'success');
+        // CRITICAL: Display connectorURI in tappable DOM element BEFORE polling
+        if (!request.connectorURI) {
+          showError('Failed to generate World App connection. Please try again.');
+          buttonEl.disabled = false;
+          return;
+        }
         
-        // Poll for completion
+        // Display the actual connectorURI for user to tap/scan
+        const connectorDisplay = document.getElementById('connectorDisplay');
+        const connectorLink = document.getElementById('connectorLink');
+        
+        connectorLink.href = request.connectorURI;
+        connectorLink.textContent = 'Open World App';
+        connectorDisplay.classList.remove('hidden');
+        
+        showStatus('Tap "Open World App" button below or scan QR code on another device', 'success');
+        buttonEl.classList.add('hidden');
+        
+        // Poll for completion (user taps link in parallel)
         const result = await request.pollUntilCompletion({
           pollInterval: 2000,
           timeout: 300000, // 5 minutes

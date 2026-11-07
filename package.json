@@ -4,7 +4,9 @@
   "description": "World ID-gated Telegram bot admission control for OpenClaw",
   "type": "module",
   "scripts": {
-    "test": "tsx --test src/**/*.test.ts",
+    "test": "tsx --test 'src/**/!(*.browser).test.ts'",
+    "test:browser": "playwright test src/**/*.browser.test.ts",
+    "test:all": "npm test && npm run test:browser",
     "typecheck": "tsc --noEmit",
     "build": "tsc && mkdir -p dist/ui && node scripts/bundle-idkit.js && cp src/ui/enrollment.html dist/ui/",
     "start": "node dist/server.js",

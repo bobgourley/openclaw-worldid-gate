@@ -371,10 +371,27 @@ export class TelegramBotHandler {
    * @param sessionId - Session ID from URL
    * @returns Session info or null if invalid/expired
    */
+  /**
+   * Store challenge data for a session.
+   * Called after creating challenge via enrollment service.
+   */
+  storeChallengeForSession(sessionId: string, userId: number, challengeData: {
+    signedChallenge: any;
+    appId: string;
+    rpId: string;
+    signal: string;
+  }): void {
+    const session = this.activeSessions.get(userId);
+    if (session && session.sessionId === sessionId) {
+      (session as any).challengeData = challengeData;
+    }
+  }
+
   async getSessionInfo(sessionId: string): Promise<{
     userId: number;
     signedChallenge: any;
     appId: string;
+    rpId: string;
     signal: string;
   } | null> {
     // Validate session ID format
@@ -391,12 +408,17 @@ export class TelegramBotHandler {
           return null;
         }
 
-        // Reconstruct challenge nonce from session ID
+        // Return stored challenge data if available
+        const challengeData = (session as any).challengeData;
+        if (challengeData) {
+          return {
+            userId,
+            ...challengeData,
+          };
+        }
+
+        // Fallback for legacy sessions without stored data
         const nonce = `0x${sessionId}${'0'.repeat(32)}`;
-        
-        // Get enrollment service info
-        // Note: In production, we'd fetch the actual stored challenge
-        // For now, we return placeholder data that matches the session
         return {
           userId,
           signedChallenge: {
@@ -404,7 +426,8 @@ export class TelegramBotHandler {
             nonce,
             signalHash: `0x${sessionId.split('').reverse().join('')}`,
           },
-          appId: 'placeholder', // Would be injected from config
+          appId: 'placeholder',
+          rpId: 'rp_0000000000000000',
           signal: `telegram:${userId}`,
         };
       }
