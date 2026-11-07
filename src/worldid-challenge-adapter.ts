@@ -9,20 +9,37 @@
  * - RP signature: ECDSA over version || nonce || created_at || expires_at || [action_hash]
  * - Uniqueness proofs (action-based): one-time nullifier per action
  * - Session proofs (action-free): recurring authentication, not used here
+ *
+ * UNIQUENESS SEMANTICS:
+ * - World ID generates RP-scoped nullifiers: hash(credential, rp_id, action)
+ * - Same human + same action -> same nullifier (deterministic)
+ * - Backend MUST check nullifier uniqueness (World does not prevent replay at API level)
+ * - "One-time per action" means backend enrollment registry enforces single use
+ * - Different actions -> different nullifiers (per-action isolation)
+ *
+ * ACTION SCOPE:
+ * - Action MUST be stable service/group scope (e.g., "telegram-bot-human-verification")
+ * - Action MUST NOT be per-user (e.g., "enroll-user-12345") - breaks one-human policy
+ * - Signal binds proof to requester context (e.g., telegram:{userId}) without changing nullifier scope
+ * - Nonce binds challenge to session without changing nullifier scope
  */
 
 import { hashSignal } from '@worldcoin/idkit-core';
 import { signRequest, type RpSignature } from '@worldcoin/idkit-server';
 
+// Re-export SDK types for service integration
+export { hashSignal } from '@worldcoin/idkit-core';
+export type { RpSignature } from '@worldcoin/idkit-server';
+
 /**
  * Runtime configuration for World ID integration.
- * IDs are not hardcoded; they must be provided at instantiation.
+ * IDs are not hardcoded; they must be provided at instantiation from secure configuration.
  */
 export interface WorldIdChallengeAdapterConfig {
-  /** App ID from Developer Portal (e.g., "app_b466e1f63a70a695b6d990d261e31b6a") */
+  /** App ID from Developer Portal (format: "app_" + 32 hex characters) */
   appId: `app_${string}`;
 
-  /** Relying Party ID from Developer Portal (e.g., "rp_223416a2a76673a1") */
+  /** Relying Party ID from Developer Portal (format: "rp_" + 16 hex characters) */
   rpId: `rp_${string}`;
 
   /**

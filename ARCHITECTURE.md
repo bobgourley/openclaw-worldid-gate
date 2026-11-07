@@ -62,7 +62,7 @@ This document describes the INITIAL small-group architecture for World ID-based 
 - ❌ Registry-to-allowlist sync lifecycle
 - ❌ Mac mini deployment supervision/monitoring
 
-## Official SDK Integration (Current Session)
+## Official SDK Integration (Completed)
 
 **Authentic World ID v4 Protocol Implementation** using official SDKs:
 - ✅ Installed `@worldcoin/idkit-core@4.6.0` and `@worldcoin/idkit-server@1.2.0`
@@ -72,24 +72,141 @@ This document describes the INITIAL small-group architecture for World ID-based 
   - Runtime configuration: App ID, RP ID, signing key (not hardcoded)
   - Per-action uniqueness proofs (not sessions)
   - 27 comprehensive unit tests with throwaway test keys
-- ✅ Protocol documentation (`docs/WORLDID_V4_PROTOCOL.md`)
-  - Uniqueness proofs vs sessions clarified from SDK source
-  - Action semantics: arbitrary string (not portal-configured)
-  - Signal hashing algorithm: Keccak256 >> 8 (not SHA-256)
-  - RP signature message format: version || nonce || timestamps || action_hash
-  - Verification flow with Developer Portal API
+- ✅ `EnrollmentServiceV2` (`src/enrollment-service-v2.ts`)
+  - Full SDK integration replacing handwritten SHA-256
+  - Stable action scope (service-level, not per-user)
+  - Signal binds proof to requester (telegram:{userId})
+  - Expected context stored with signal hash
+  - 14 integration tests with SDK-signed contexts
+- ✅ SDK-based type contracts (`src/worldid-types.ts`)
+  - Frontend IDKit configuration (RpContext, FrontendIDKitConfig)
+  - IDKitResult from World App
+  - Developer Portal API request/response
+  - Expected verification context
+- ✅ **World ID v4 Protocol Reference** (consolidated in ARCHITECTURE.md)
+  
+### Uniqueness Semantics (from Official SDK)
 
-**Bob's World ID Setup** (relayed by Archie):
-- App ID: `app_b466e1f63a70a695b6d990d261e31b6a`
-- RP ID: `rp_223416a2a76673a1`
-- Signing key: Retained by Bob (secure secret, not in repository)
-- Portal status: External integration selected, verification sidebar open
+**Nullifier Generation**:
+- World ID generates RP-scoped nullifiers: `hash(credential, rp_id, action)`
+- Same human + same action → same nullifier (deterministic)
+- Different actions → different nullifiers (per-action isolation)
 
-**Next Steps**:
-- Integrate `WorldIdChallengeAdapter` into `EnrollmentService`
-- Update verification client to validate SDK-signed challenges
-- Write integration tests with mocked Developer Portal API
-- Document runtime configuration for Mac mini deployment
+**One-Time Per Action**:
+- World cryptographically generates nullifiers but does NOT prevent replay at API level
+- Backend MUST enforce nullifier uniqueness in enrollment registry
+- "One-time per action" = backend check, not World cryptographic refusal
+- Same nullifier submitted twice → second attempt rejected by backend (UNIQUE constraint)
+
+**Action Scope Requirements**:
+- Action MUST be stable service/group scope (e.g., "telegram-bot-human-verification")
+- Action MUST NOT be per-user (e.g., "enroll-user-{userId}") - breaks one-human policy
+- Signal binds proof to requester context without changing nullifier scope
+- Nonce binds challenge to session without changing nullifier scope
+
+**Session Proofs vs Uniqueness Proofs**:
+- Uniqueness proofs: One-time per action, requires action field
+- Session proofs: Recurring authentication, no action field, generates session_id
+- Our integration uses uniqueness proofs only
+- 30-day recurring renewal requires session proofs (different flow, not yet implemented)
+
+### Signal Hashing (Keccak256 + Field Reduction)
+
+The SDK uses Keccak256 (not SHA-256) with field reduction:
+
+```typescript
+function hashToField(input: Uint8Array): Uint8Array {
+  const hash = BigInt('0x' + bytesToHex(keccak_256(input))) >> 8n;
+  return hexToBytes(hash.toString(16).padStart(64, '0'));
+}
+
+function hashSignal(signal: string | Uint8Array): string {
+  // UTF-8 encoding for strings, hex decoding for 0x-prefixed hex strings
+  return '0x' + bytesToHex(hashToField(input));
+}
+```
+
+**Key differences from SHA-256**:
+- Keccak256 (not SHA-256/SHA3-256)
+- Right-shift by 8 bits for field reduction
+- Returns 0x-prefixed 64-character hex
+- UTF-8 encoding for string signals
+
+### RP Challenge Signing (ECDSA EIP-191)
+
+```typescript
+function signRequest({ signingKeyHex, action?, ttl? }): RpSignature {
+  // Message: version(1) || nonce(32) || createdAt(8 BE) || expiresAt(8 BE) || [actionHash(32)]
+  // Ethereum EIP-191 message signing
+  // Returns: { sig: '0x...' (65 bytes), nonce: '0x...' (32 bytes), createdAt, expiresAt }
+}
+```
+
+**Signed message structure**:
+- Version: Always `0x01`
+- Nonce: 32-byte cryptographically secure random, hashed to field
+- Timestamps: Unix seconds, 8-byte big-endian
+- Action hash: Appended for uniqueness proofs, omitted for sessions
+- Signature: 65-byte ECDSA with recovery byte (v) at offset 64
+
+### Runtime Configuration
+
+**Environment variables (production)**:
+```bash
+WORLDID_APP_ID=app_b466e1f63a70a695b6d990d261e31b6a
+WORLDID_RP_ID=rp_223416a2a76673a1
+WORLDID_SIGNING_KEY_HEX=<32-byte ECDSA private key, hex>
+WORLDID_ENVIRONMENT=production
+WORLDID_ACTION=telegram-bot-human-verification
+TELEGRAM_BOT_TOKEN=<bot token from BotFather>
+```
+
+**Security**:
+- Signing key MUST be loaded from secure secret management
+- NEVER commit signing keys to version control
+- Test keys in tests are throwaway (NEVER use in production)
+- Bob retains production signing key
+
+### Developer Portal API
+
+**Verification endpoint**: `https://developer.worldcoin.org/api/v2/verify/{app_id}`
+
+**Request body**:
+```json
+{
+  "action": "telegram-bot-human-verification",
+  "nullifier_hash": "nil_<64-hex>",
+  "merkle_root": "0x<64-hex>",
+  "proof": "0x<long-hex>",
+  "credential_type": "proof_of_human",
+  "signal_hash": "0x<64-hex>"
+}
+```
+
+**Response (success)**:
+```json
+{
+  "success": true,
+  "action": "telegram-bot-human-verification",
+  "nullifier_hash": "nil_<64-hex>",
+  "created_at": "2026-11-07T04:00:00.000Z",
+  "credential_type": "proof_of_human"
+}
+```
+
+**Response (failure)**:
+```json
+{
+  "success": false,
+  "code": "invalid_proof",
+  "detail": "Proof verification failed"
+}
+```
+
+**Success validation**:
+- MUST be exact boolean `true` (not truthy)
+- Response does NOT contain credential details (those are in request)
+- Backend extracts nullifier from original IDKitResult, not API response
 
 ## Deployment Architecture Decision
 
