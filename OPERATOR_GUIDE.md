@@ -286,72 +286,87 @@ When ready for production:
 
 **DO NOT collect or configure secrets in this synthetic dry-run phase.**
 
-### Step 2: Create Verification Bot
+### Step 2: Register Verification Bot with @BotFather
 
-**DO NOT CREATE THIS BOT NOW** (requires separate bot and integration code not yet implemented).
+**Verification bot handler ALREADY IMPLEMENTED** (tested at commit 040e904).
 
-When implementing separate verification bot:
+**Components Existing**:
+- ✅ Telegram bot handler with `/verify`, `/status`, `/help`, `/start` commands
+- ✅ Challenge session management with requester binding
+- ✅ Local HTTP service for enrollment API
 
+**NOT Tested** (require live integration):
+- Real Telegram webhook/polling with authentic update signatures
+- Real World App proof generation on device
+- Public HTTPS hosting with valid TLS certificate
+
+**Live Bot Registration Steps** (when ready):
 1. Message @BotFather on Telegram
 2. Send `/newbot`
 3. Choose name: "MyApp Verification Bot"
 4. Choose username: "myapp_verify_bot"
 5. Copy bot token
-6. Set `VERIFICATION_BOT_TOKEN` environment variable
+6. Configure `TELEGRAM_BOT_TOKEN` environment variable
 7. **Bot Privacy and Group Messages**:
-   - `/setprivacy` → **Enable** (default): Bot sees only messages addressed to it (commands, replies, mentions)
-   - `/setprivacy` → **Disable**: Bot sees ALL group messages (broadens visibility, not DM-only)
-   - Neither setting restricts bot to DMs only
-   - For DM-focused bots: Use OpenClaw `dmPolicy: "allowlist"` + `groupPolicy: "disabled"` in config
+   - `/setprivacy` → **Enable** (default): Bot sees only messages addressed to it
    - Reference: https://core.telegram.org/bots/features#privacy-mode
 
-### Step 3: Implement Enrollment Mini App
+### Step 3: Deploy Enrollment Mini App
 
-**NOT YET IMPLEMENTED** (requires Telegram Mini App development).
+**Telegram Mini App UI ALREADY IMPLEMENTED** (tested at commit 040e904).
 
-Implementation checklist:
-- [ ] Build web UI with World ID IDKit integration
-- [ ] Validate Telegram `initData` HMAC-SHA256 with bot token
-- [ ] Generate short-lived single-use enrollment links
-- [ ] Bind enrollment links to requesting Telegram user ID
-- [ ] Submit validated proof to backend
-- [ ] Create enrollment in durable store
+**Components Existing**:
+- ✅ Enrollment UI with World ID IDKit SDK integration
+- ✅ Telegram `initData` HMAC-SHA256 validation
+- ✅ Challenge session binding to requesting Telegram user ID
+- ✅ 3 browser tests passing
 
-### Step 4: Implement Production Verifier
+**NOT Tested** (require live integration):
+- Real World App proof generation on device
+- Public HTTPS endpoint with valid TLS certificate (provider NOT YET SELECTED)
 
-**NOT YET IMPLEMENTED** (requires production World ID API client).
+**Live Deployment Prerequisites**:
+- [ ] Select HTTPS provider (Cloudflare Tunnel / ngrok / custom domain)
+- [ ] Provision public HTTPS endpoint for Mini App
+- [ ] Configure TLS certificate
 
-**PLANNED PSEUDOCODE (NOT RUNNABLE)**:
+### Step 4: Configure Production Verifier
 
-The `WorldIdVerifierProduction` class exists as a placeholder that throws "not implemented" errors. Future implementation would:
+**World ID HTTP verification client ALREADY IMPLEMENTED** (tested at commit 040e904).
+
+**Components Existing**:
+- ✅ Production World ID API client (production and staging endpoints)
+- ✅ Error handling, retries, timeouts
+- ✅ Nullifier validation and replay prevention
+- ✅ 354 unit tests passing
+
+**NOT Tested** (require live integration):
+- Live World ID Developer Portal API calls with registered app credentials
+
+**Live Configuration Steps**:
+1. Register World ID application at https://developer.worldcoin.org/
+2. Obtain production `app_id` and `action`
+3. Configure `WORLDID_APP_ID` and `WORLDID_ACTION` environment variables
+4. Select verification level (device / orb)
+
+### Step 5: Configure Durable Enrollment Store
+
+**SQLite enrollment store ALREADY IMPLEMENTED** (tested at commit 040e904).
+
+**Components Existing**:
+- ✅ Durable transactional SQLite store
+- ✅ Revocation lifecycle management
+- ✅ Atomic operations for enrollment CRUD
+- ✅ Single atomic transaction: challenge consume + enrollment create
+- ✅ 354 unit tests passing
+
+**Production Configuration**:
 
 ```typescript
-// PSEUDOCODE ONLY - WorldIdVerifierProduction constructor signature unknown
-import { WorldIdVerifierProduction } from './src/verifier-stub.js';
+// Current implementation (SQLite)
+import { SQLiteEnrollmentStore } from './src/enrollment-store.js';
 
-// Constructor parameters not yet defined
-const verifier = new WorldIdVerifierProduction(rpId, endpoint);
-```
-
-Implementation requirements:
-- Real HTTPS client (fetch or axios)
-- Error handling (network failures, timeouts)
-- Retry logic with exponential backoff
-- Nullifier caching to prevent replay attacks
-
-### Step 5: Implement Durable Enrollment Store
-
-**NOT YET IMPLEMENTED** (requires database integration).
-
-**PLANNED PSEUDOCODE (NOT RUNNABLE)**:
-
-No `PostgreSQLEnrollmentStore` class exists. Future implementation would require:
-
-```typescript
-// PSEUDOCODE ONLY - class does not exist
-import { DurableEnrollmentStore } from './src/enrollment-store.js';
-
-const store = new DurableEnrollmentStore({
+const store = new SQLiteEnrollmentStore({
   // Configuration TBD
 });
 ```
@@ -404,191 +419,68 @@ When all components are implemented and deployed:
 
 ### Integration Design Status
 
-**Current Status**: Integration design completed and documented in `ARCHITECTURE.md`.  
-**Approval Required**: Bob must approve OpenClaw upstream modifications before implementation.  
+**Current Status**: Integration requirements documented in `ARCHITECTURE.md`.  
+**Approval Status**: Bob has NOT approved any upstream OpenClaw modifications.  
 **Verified Source**: OpenClaw commit `fc23bc864e4553c2d215e479eeec47b67a0bf943`
 
-### Pre-History Ingress Gate (DESIGN SPECIFICATION)
+### UNAPPROVED Integration Requirements
 
-**Proposed Approach**: Inject World ID verification gate as OpenClaw middleware BEFORE all history/cache/model/tool effects.
+**UNRESOLVED Technical Scope**:
+- OpenClaw middleware injection mechanism (no public plugin API exists)
+- Human actor extraction utility (not yet implemented)
+- Protected group scope configuration (format NOT DEFINED)
+- Fresh recheck for queued/debounced updates (seam locations NOT TRACED)
 
-**Modified OpenClaw Files** (pending approval):
-1. `extensions/telegram/src/bot-core.ts` - Add middleware at line ~120
-2. `extensions/telegram/src/bot.types.ts` - Add `preAuthorizationGate` option
-3. NEW: `extensions/telegram/src/bot-human-actor.ts` - Actor extraction utility
+**Known Limitations**:
+- Poll registry reads content BEFORE any proposed gate (line 212)
+- Content-free poll classification policy NOT YET ESTABLISHED
+- Callback/native command separate authorization paths NOT YET UNIFIED
+- Fail-closed guarantees depend on recheck frequency (NOT YET DEFINED)
 
-**Key Properties**:
-- ✅ Runs BEFORE history writes (verified at line 223: `recordMessageForReplyChain`)
-- ✅ Queries registry on EVERY admission (no stale grants)
-- ✅ Enforces human actor requirement (rejects bots/channels/anonymous/missing)
-- ✅ Fail-closed on registry timeout/outage
-- ✅ Preserves out-of-scope groups (pass-through unchanged)
+### Operator Configuration Requirements (UNRESOLVED)
 
-### Operator Configuration (AFTER Approval)
+**Prerequisites BEFORE Configuration**:
+1. Bob approval for upstream OpenClaw modifications
+2. OpenClaw middleware injection API implemented
+3. Poll registry content read policy selected (Option A vs B)
+4. Fresh recheck seam locations identified and verified
 
-**Step 1: Identify Protected Groups**
+**Protected Group Identification**:
+- Obtain numeric chat IDs for protected groups (e.g., `-1001234567890`)
+- Document out-of-scope groups (pass-through behavior)
+- Define DM policy (enforce verification or allow) - NOT YET ESTABLISHED
 
-Get numeric chat IDs for protected groups:
+**Configuration Mechanism** (NOT YET DEFINED):
+- OpenClaw plugin/middleware registration format UNKNOWN
+- Protected group scope configuration interface UNKNOWN
+- Registry connection specification UNKNOWN
+- Fresh recheck trigger configuration UNKNOWN
 
-```bash
-# In protected Telegram group:
-# 1. Add bot as admin temporarily
-# 2. Send any message
-# 3. Bot receives update with chat.id
+**Test Requirements** (AFTER implementation):
 
-# Example chat IDs (negative for groups/supergroups):
-PROTECTED_GROUP_1=-1001234567890
-PROTECTED_GROUP_2=-1009876543210
-```
+Critical test cases required BEFORE production:
+1. Protected group + verified human → history/model called
+2. Protected group + expired enrollment → zero history/model/tools
+3. Protected group + revoked enrollment → zero history/model/tools
+4. Protected group + channel actor (sender_chat) → zero history/model/tools
+5. Protected group + missing actor → zero history/model/tools
+6. Out-of-scope group + any actor → pass-through (existing behavior)
+7. Registry timeout → fail-closed behavior (policy NOT YET DEFINED)
+8. Unknown poll in protected group → policy NOT YET ESTABLISHED
 
-**Step 2: Configure Gate Hook**
+**UNPROVEN Test Coverage**:
+- Fresh recheck for queued updates (seam location NOT TRACED)
+- Fresh recheck for debounced updates (seam location NOT TRACED)
+- Fresh recheck for media album buffer (seam location NOT TRACED)
+- Callback query authorization unified with gate (NOT YET UNIFIED)
+- Native command authorization unified with gate (NOT YET UNIFIED)
 
-Create `openclaw-gate-config.ts`:
-
-```typescript
-import { createTelegramBot } from "openclaw/telegram";
-import { WorldIdRegistry } from "./worldid-registry.js";
-
-const protectedGroupIds = new Set([
-  -1001234567890,  // Main discussion group
-  -1009876543210,  // Secondary support group
-]);
-
-const worldIdRegistry = new WorldIdRegistry({
-  databasePath: "/var/lib/worldid-gate/enrollments.db",
-  queryTimeout: 500, // 500ms timeout, fail-closed on exceed
-});
-
-function extractChatId(update: Update): number | null {
-  if (update.message?.chat.id) return update.message.chat.id;
-  if (update.callback_query?.message?.chat.id) return update.callback_query.message.chat.id;
-  if (update.message_reaction?.chat.id) return update.message_reaction.chat.id;
-  return null;
-}
-
-export const bot = await createTelegramBot({
-  token: process.env.TELEGRAM_BOT_TOKEN,
-  accountId: "main",
-  
-  preAuthorizationGate: async (ctx, { extractHumanActor }) => {
-    const chatId = extractChatId(ctx.update);
-    
-    // Out-of-scope: allow all senders
-    if (!chatId || !protectedGroupIds.has(chatId)) {
-      return { allowed: true };
-    }
-    
-    // Protected group: enforce verification
-    const actor = extractHumanActor();
-    
-    // Reject non-human actors
-    if (actor.actorType !== "human") {
-      return {
-        allowed: false,
-        reason: `non-human-actor:${actor.actorType}`,
-      };
-    }
-    
-    // Query World ID registry
-    try {
-      const enrollment = await worldIdRegistry.checkEnrollment(
-        String(actor.actorId),
-        Date.now()
-      );
-      
-      if (!enrollment) {
-        return {
-          allowed: false,
-          senderId: String(actor.actorId),
-          reason: "not-enrolled",
-        };
-      }
-      
-      if (enrollment.expired) {
-        return {
-          allowed: false,
-          senderId: String(actor.actorId),
-          reason: "expired",
-        };
-      }
-      
-      if (enrollment.revoked) {
-        return {
-          allowed: false,
-          senderId: String(actor.actorId),
-          reason: "revoked",
-        };
-      }
-      
-      return {
-        allowed: true,
-        senderId: String(actor.actorId),
-      };
-      
-    } catch (error) {
-      // Fail-closed on registry error
-      console.error("World ID registry query failed:", error);
-      return {
-        allowed: false,
-        senderId: String(actor.actorId),
-        reason: "registry-error",
-      };
-    }
-  },
-  
-  // ... rest of OpenClaw config
-});
-```
-
-**Step 3: Test Gate Enforcement**
-
-Run these checks BEFORE production deployment:
-
-```bash
-# Test Matrix (8 critical cases):
-
-# 1. Protected group + verified human → ALLOW
-# Expected: Message processed, history written, model called
-
-# 2. Protected group + expired enrollment → DENY
-# Expected: Zero history/model/tools, silent rejection
-
-# 3. Protected group + revoked enrollment → DENY
-# Expected: Zero history/model/tools, silent rejection
-
-# 4. Protected group + channel actor (sender_chat) → DENY
-# Expected: Zero history/model/tools, silent rejection
-
-# 5. Protected group + missing actor → DENY
-# Expected: Zero history/model/tools, silent rejection
-
-# 6. Out-of-scope group + any actor → ALLOW (pass-through)
-# Expected: Existing behavior unchanged
-
-# 7. Registry timeout → DENY (fail-closed)
-# Expected: All admissions denied until registry recovers
-
-# 8. Unknown poll in protected group → DENY
-# Expected: Poll answer rejected if poll not in registry
-```
-
-**Step 4: Monitor Admission Metrics**
-
-Set up monitoring for:
-
-```typescript
-// Prometheus metrics (example)
-admission_attempts_total{group, result} // result: allowed|denied|error
-admission_denials_by_reason{reason} // reason: not-enrolled|expired|revoked|non-human|...
-registry_query_duration_seconds{quantile}
-registry_query_errors_total{error_type}
-```
-
-**Alert Conditions**:
-- Denial rate > 10% (indicates enrollment issues or attack)
-- Registry query P99 > 500ms (performance degradation)
-- Registry errors > 0 (availability issue)
-- All admissions denied for >1 minute (outage)
+**Monitoring Requirements**:
+- Admission attempts (allowed vs denied)
+- Denial reasons distribution
+- Registry query latency (P50, P95, P99)
+- Registry errors and timeouts
+- Alert on high denial rate, registry unavailable, or timeout spikes
 
 ### Rollback and Recovery
 
@@ -601,22 +493,29 @@ registry_query_errors_total{error_type}
 
 **SAFE Rollback Options**:
 
-#### Option A: Deny-All During Uncertain Restore
+#### Option A: Protected Admissions Remain Fail-Closed During Uncertain Restore
 
 ```bash
-# 1. Disable gate or set deny-all mode
-export WORLDID_GATE_MODE=deny-all
+# 1. Keep gate active with deny-all for protected groups
+# NEVER disable gate or bypass protected admission enforcement
+# Out-of-scope groups continue unchanged
 
 # 2. Restore database backup
 cp enrollments-backup.db enrollments.db
 
-# 3. Manually verify current state
-# - Check revocation log separately
-# - Re-query World ID API for verification states
-# - Validate enrollment expirations
+# 3. Verify trustworthy revocation state
+# CRITICAL: World ID API CANNOT recover local revocation history
+# World API verifies proof validity, NOT enrollment revocation status
+# Local registry maintains revocation lifecycle independently
 
-# 4. Re-enable gate after verification
-export WORLDID_GATE_MODE=normal
+# Option 3a: Apply fresh post-revoke enrollment policy
+# - Require new challenge + proof for ALL restored enrollments
+# - Pre-revoke challenges CANNOT restore
+
+# Option 3b: Reconcile from separate immutable revocation log (not yet built)
+
+# 4. Resume protected admissions only after reconciliation
+# Uncertain restored state MUST remain deny-all until trustworthy
 ```
 
 #### Option B: Immutable Revocation Log (NOT YET IMPLEMENTED)
@@ -626,56 +525,74 @@ export WORLDID_GATE_MODE=normal
 - Query revocations independently after DB restore
 - Requires implementation of separate log storage
 
-#### Option C: Re-Verify All Enrollments
+#### Option C: Fresh Post-Revoke Enrollment Policy
+
+**CRITICAL**: World ID API CANNOT recover local revocation history.
 
 ```bash
-# Query World ID API for current verification state
-# Expensive but cryptographically authoritative
+# World API verifies proof validity, NOT enrollment revocation status
+# Local registry maintains revocation lifecycle independently
 
-# Pseudo-code:
-for userId in enrollments:
-  currentState = await worldIdAPI.verify(userId)
-  if currentState != enrollmentRecord:
-    updateEnrollment(userId, currentState)
+# Require fresh challenge + proof for ALL restored enrollments
+# Pre-revoke challenges CANNOT restore
 ```
 
-**Recommended**: Use Option A (deny-all during restore) until Option B (immutable log) is implemented.
+**Recommended**: Use Option A (fail-closed during restore) until Option B (immutable log) is implemented.
 
 ### Unresolved Decisions (Awaiting Bob's Approval)
 
 1. **OpenClaw Ingress Gate Design**
-   - Approve middleware injection at line ~120
-   - Approve modified files (bot-core.ts, bot.types.ts, bot-human-actor.ts)
-   - Approve human actor extraction logic
+   - Bob has NOT approved any upstream OpenClaw modifications
+   - No public middleware injection API exists
+   - Fresh recheck seam locations NOT YET TRACED
 
 2. **Poll Registry Content Read Policy**
    - Option A: Content-free index (metadata-only routing)
    - Option B: Deny unknown polls in protected groups
-   - Current: Registry reads poll question/options BEFORE gate
+   - Current: Registry reads poll question/options BEFORE any proposed gate (line 212)
 
 3. **Retention Policy**
    - How long to retain expired/revoked enrollments?
-   - Auto-delete vs manual cleanup vs indefinite retention?
+   - Options: indefinite / 90-day / explicit deletion
+   - Current: soft-expire (no auto-delete)
 
-4. **Multiple Accounts Per Nullifier**
-   - Should same verified human enroll multiple Telegram accounts?
-   - Current: Allowed by design
+4. **HTTPS Provider Selection**
+   - Options: Cloudflare Tunnel / ngrok / custom domain
+   - Current: NOT YET PROVISIONED
 
-5. **Post-Revocation Restoration**
-   - Revoked accounts: require admin approval or automatic restoration?
-   - Current: Automatic via fresh verification
+### Settled Policies (NOT reopened for Bob decision)
+
+1. **Multiple Accounts Per Nullifier**: ALLOWED - same verified human may enroll multiple Telegram accounts, each requires fresh authenticated proof per account
+
+2. **Post-Revocation Restoration**: ALLOWED - revoked accounts may restore via fresh post-revoke challenge + proof; pre-revoke challenges CANNOT restore
+
+3. **Default TTL**: 30 days (2592000 seconds), bounded [60s, 31536000s]
+
+4. **TTL Configuration Changes**: Do NOT retroactively alter stored `expiresAt` timestamps; apply to NEW enrollments only
 
 ### Operator Pre-Deployment Checklist
 
-- [ ] Bob approved OpenClaw ingress gate design
-- [ ] OpenClaw source modifications merged upstream
+**Existing Components** (built and tested at 040e904):
+- [x] Telegram bot handler with `/verify`, `/status`, `/help`, `/start` commands
+- [x] Telegram Mini App enrollment UI with World ID IDKit SDK integration
+- [x] World ID HTTP verification client (production and staging endpoints)
+- [x] SQLite enrollment store with revocation lifecycle
+- [x] Challenge session management with requester binding
+- [x] 354 unit tests + 3 browser tests passing
+
+**Unresolved Prerequisites** (awaiting Bob approval):
+- [ ] Bob approved upstream OpenClaw modifications
+- [ ] Poll registry content read policy selected (Option A vs B)
+- [ ] Fresh recheck seam locations identified and verified
+- [ ] HTTPS provider selected and provisioned (Cloudflare Tunnel / ngrok / custom)
+
+**Deployment Prerequisites** (AFTER Bob approval):
+- [ ] OpenClaw ingress gate implemented
 - [ ] Protected group numeric chat IDs documented
-- [ ] World ID registry database path configured
-- [ ] Registry query timeout set (recommended: 500ms)
+- [ ] Registry connection configured
 - [ ] Monitoring and alerting configured
-- [ ] Rollback procedure documented and tested
+- [ ] Rollback procedure tested with fail-closed guarantees
 - [ ] Test matrix executed (8+ critical test cases)
-- [ ] Fail-closed behavior verified (timeout → deny)
 - [ ] Out-of-scope groups tested (pass-through unchanged)
 
 ### Alternative: Periodic Allowlist Sync (NOT RECOMMENDED)
@@ -927,20 +844,35 @@ export const testConfig: GateConfig = {
 
 ## Appendix B: Production Checklist
 
-Before deploying to production:
+**Existing Components** (tested at commit 040e904):
+- [x] Production World ID HTTP verifier (production and staging endpoints)
+- [x] Durable SQLite enrollment store with revocation lifecycle
+- [x] Telegram bot handler with `/verify`, `/status`, `/help`, `/start`
+- [x] Enrollment Mini App with World ID IDKit SDK integration
+- [x] Telegram `initData` HMAC-SHA256 validation
+- [x] 354 unit tests + 3 browser tests passing
 
+**Unresolved Prerequisites** (awaiting Bob approval):
+- [ ] Bob approved upstream OpenClaw modifications
+- [ ] Poll registry content read policy selected (Option A vs B)
+- [ ] Fresh recheck seam locations identified and verified
+- [ ] HTTPS provider selected and provisioned
+
+**Live Integration** (NOT tested):
+- [ ] Real Telegram webhook/polling with authentic update signatures
+- [ ] Real World App proof generation on device
+- [ ] Live World ID Developer Portal API calls
+- [ ] Public HTTPS endpoint with valid TLS certificate
+
+**Production Deployment**:
 - [ ] Set `allowTestMode: false`
-- [ ] Use production World ID RP ID
-- [ ] Implement production World ID verifier (replace stub)
-- [ ] Implement durable enrollment store (replace in-memory)
-- [ ] Set up database backups
+- [ ] Use production World ID app ID and action
+- [ ] Set up database backups with fail-closed restore procedures
 - [ ] Configure monitoring and alerting
-- [ ] Test disaster recovery procedures
+- [ ] Test disaster recovery procedures (deny-all during uncertain restore)
 - [ ] Document runbook for on-call operator
-- [ ] Implement separate verification bot
-- [ ] Implement enrollment Mini App with HMAC validation
-- [ ] Implement registry-to-allowlist sync
-- [ ] Implement member tag management
+- [ ] OpenClaw ingress gate integration (AFTER Bob approval)
+- [ ] Member tag management (optional)
 - [ ] Review and test fail-closed behavior
 - [ ] Conduct security audit
 - [ ] Set up rate limiting on verification endpoint

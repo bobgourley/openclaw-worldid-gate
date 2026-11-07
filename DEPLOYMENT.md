@@ -140,124 +140,67 @@ GET /health
   Response: { status: "ok", version: string }
 ```
 
-### 7. OpenClaw Integration (DESIGN APPROVED PENDING)
+### 7. OpenClaw Integration (UNAPPROVED DESIGN)
 
-**Status**: Integration design completed and documented in `ARCHITECTURE.md`. **Requires Bob's approval before implementation.**
+**Status**: Integration requirements documented in `ARCHITECTURE.md`. **Bob has NOT approved any upstream OpenClaw modifications.**
 
 **Verified OpenClaw Source**:
 - Repository: https://github.com/openclaw/openclaw
 - Commit: `fc23bc864e4553c2d215e479eeec47b67a0bf943`
 - Verified: Commit SHA confirmed in local clone
 
-**Proposed Integration Approach**:
+**UNAPPROVED Integration Requirements**:
 
-#### A. Pre-History Ingress Gate (RECOMMENDED)
+#### Unresolved Technical Scope
 
-**Modification Required**: OpenClaw upstream source  
-**Approval Status**: DESIGN ONLY - awaiting Bob's approval
+**OpenClaw Modification** (Bob has NOT approved):
+- Middleware injection mechanism (no public plugin API exists)
+- Human actor extraction utility (not yet implemented)
+- Protected group scope configuration (format NOT DEFINED)
+- Fresh recheck for queued/debounced updates (seam locations NOT TRACED)
 
-**Modified Files**:
-1. `extensions/telegram/src/bot-core.ts` - Add middleware injection point (~line 120)
-2. `extensions/telegram/src/bot.types.ts` - Add `preAuthorizationGate` option
-3. NEW: `extensions/telegram/src/bot-human-actor.ts` - Human actor extraction utility
+**Known Limitations**:
+- Poll registry reads content BEFORE any proposed gate (line 212 vs proposed ~120)
+- Content-free poll classification policy NOT YET ESTABLISHED
+- Callback/native command separate authorization paths NOT YET UNIFIED
+- Missing chat ID extraction (e.g., poll_answer) NOT RESOLVED
 
-**Key Design Properties**:
-- Gate runs BEFORE all history writes, cache reads, model calls, and tool execution
-- Queries World ID registry on EVERY admission request (no stale grants)
-- Enforces human actor requirement (rejects bots, channels, anonymous, missing actors)
-- Fail-closed on timeout/outage
-- Out-of-scope groups pass through unchanged
+**Integration Prerequisites** (UNRESOLVED):
+1. Bob approval for upstream OpenClaw modifications
+2. Poll registry content read policy decision (Option A vs B)
+3. Fresh recheck seam locations identified and verified
+4. Unified authorization mechanism across all update types
 
-**Integration Steps** (AFTER Bob approves design):
-1. Submit pull request to OpenClaw with proposed changes
-2. Obtain OpenClaw maintainer review and approval
-3. Merge upstream changes
-4. Update OpenClaw installation to include ingress gate
-5. Configure gate with World ID registry connection
-6. Test admission enforcement in protected groups
+### 8. OpenClaw Deployment Prerequisites (UNRESOLVED)
 
-**Configuration Example**:
-```typescript
-const bot = await createTelegramBot({
-  token: process.env.TELEGRAM_BOT_TOKEN,
-  
-  preAuthorizationGate: async (ctx, { extractHumanActor }) => {
-    const chatId = extractChatId(ctx.update);
-    
-    // Protected groups only
-    if (!protectedGroupIds.has(chatId)) {
-      return { allowed: true };
-    }
-    
-    // Enforce human actor + World ID verification
-    const actor = extractHumanActor();
-    if (actor.actorType !== "human") {
-      return { allowed: false, reason: `non-human:${actor.actorType}` };
-    }
-    
-    const verified = await worldIdRegistry.checkEnrollment(
-      String(actor.actorId),
-      Date.now()
-    );
-    
-    return {
-      allowed: verified.valid && !verified.expired && !verified.revoked,
-      senderId: String(actor.actorId),
-      reason: verified.reason,
-    };
-  },
-});
-```
-
-#### B. Periodic Allowlist Sync (NOT RECOMMENDED - Insufficient for Exact Expiry)
-
-**Status**: INSUFFICIENT for required exact expiry/revocation guarantees.
-
-**Problem**: Static allowlist has NO mechanism to stop stale authorized senders between sync intervals.
-
-**If Required Despite Limitations**:
-- Implement OpenClaw config writer to update `channels.telegram.groupAllowFrom`
-- Sync every 1-5 minutes (shorter interval reduces but never eliminates staleness)
-- **MUST add independent per-request lease/deadline check** to bound stale authorization
-- Monitor sync failures with fail-closed fallback (disable channel or deny all)
-
-**Limitations**:
-- Staleness window: Up to sync interval duration
-- Not real-time: Expiry enforcement delayed
-- Cannot prove exact expiry without additional enforcement
-
-**Recommended**: Use Option A (Pre-History Ingress Gate) instead.
-
-### 8. OpenClaw Deployment Prerequisites
-
-**Operator Must Verify BEFORE Integration**:
+**Operator Must Verify BEFORE Integration** (pending Bob approval):
 
 1. **OpenClaw Version Compatibility**
    - Locate OpenClaw installation version/commit
-   - Verify middleware injection compatibility
-   - Test external gate hook registration
+   - Verify NO PUBLIC middleware injection API exists
+   - Determine upstream modification approval process
 
 2. **Protected Group Configuration**
    - Identify numeric chat IDs for protected groups (e.g., `-1001234567890`)
    - Document out-of-scope groups (pass-through, no enforcement)
-   - Define DM policy (enforce verification or allow)
+   - Define DM policy (enforce verification or allow) - NOT YET ESTABLISHED
 
 3. **World ID Registry Connection**
    - Registry database path accessible from OpenClaw process
-   - Query latency acceptable (<100ms typical, <500ms timeout)
+   - Query latency acceptable (<100ms typical, <500ms timeout recommended)
    - Registry service monitoring and alerting configured
 
-4. **Fail-Closed Testing**
-   - Verify registry timeout triggers denial
-   - Test revocation effective immediately
-   - Confirm expired enrollments rejected at boundary
+4. **Fail-Closed Testing Requirements** (NOT YET PROVEN):
+   - Verify registry timeout behavior (denial / retry / fallback NOT DEFINED)
+   - Test revocation timing (depends on recheck frequency NOT YET ESTABLISHED)
+   - Confirm expiry enforcement at exact boundary (requires clock consistency)
    - Validate non-human actors rejected in protected groups
 
 5. **Operator Supervision Plan**
    - Monitoring: admission denial rate, registry query latency
    - Alerting: high denial rate, registry unavailable, timeout spikes
-   - Rollback: Safe database restore procedure documented
-   - Recovery: Post-outage verification re-check process defined
+   - Rollback: Protected admissions remain fail-closed during uncertain restore
+   - Recovery: Local revocation history is authoritative (World API CANNOT recover)
 
 ## Portable macOS Deployment Guidance
 
@@ -415,33 +358,43 @@ npm start
 
 ## Next Steps for User
 
+**Existing Components** (built and tested at commit 040e904):
+- ✅ Telegram bot handler with `/verify`, `/status`, `/help`, `/start` commands
+- ✅ Enrollment Mini App with World ID IDKit SDK integration
+- ✅ World ID HTTP verification client (production and staging endpoints)
+- ✅ SQLite enrollment store with revocation lifecycle
+- ✅ HTTP server endpoints for enrollment API
+- ✅ 354 unit tests + 3 browser tests passing
+
+**NOT Tested** (require live integration):
+- Real Telegram webhook/polling with authentic update signatures
+- Real World App proof generation on device
+- Live World ID Developer Portal API calls
+- Public HTTPS hosting with valid TLS certificate
+
+**Live Integration Steps**:
+
 1. **Complete World Developer Portal registration**:
    - Create application at https://developer.world.org
-   - Record `app_id`, `rp_id`, `signing_key`, and action
+   - Record `app_id` and `action`
    - Choose production or staging environment
 
-2. **Create Telegram verification bot**:
+2. **Register Telegram verification bot**:
    - Use @BotFather `/newbot` to create new bot
    - Record bot token
    - Store token securely (never commit)
 
-3. **Choose public HTTPS solution**:
-   - Evaluate Cloudflare Tunnel vs ngrok vs custom domain
-   - Set up tunnel/domain to Mac mini
+3. **Choose and provision public HTTPS solution** (NOT YET SELECTED):
+   - Options: Cloudflare Tunnel / ngrok / custom domain
+   - Set up tunnel/domain to deployment host
    - Record public HTTPS URL
 
-4. **Provide prerequisites to development**:
-   - Share `app_id`, `rp_id`, action (signing_key remains secret)
-   - Share bot token (via secure channel, not public)
-   - Share public HTTPS URL
+4. **Configure environment**:
+   - Set `WORLDID_APP_ID`, `WORLDID_ACTION`, `TELEGRAM_BOT_TOKEN`
    - Confirm environment choice (production vs staging)
 
-5. **After prerequisites resolved**:
-   - Implement HTTP server endpoints
-   - Implement durable store (SQLite recommended for simplicity)
-   - Create Telegram Mini App frontend
-   - Deploy to Mac mini
-   - Configure OpenClaw allowlist integration
+5. **OpenClaw Integration** (AFTER Bob approval):
+   - Implement ingress gate (UNAPPROVED DESIGN)
    - Test end-to-end enrollment flow
 
 ## Security Review Checklist

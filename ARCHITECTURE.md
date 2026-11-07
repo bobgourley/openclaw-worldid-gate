@@ -901,9 +901,9 @@ curl http://127.0.0.1:3000/health
 - ⚠️  NOT verified: renewal flow, mobile SDK integration, live World API contract
 - ⚠️  NOT verified: production hosting, HTTPS, rate limiting, monitoring
 
-## OpenClaw Pre-History Ingress Gate Integration (DESIGN SPECIFICATION)
+## OpenClaw Pre-History Ingress Gate Integration (UNAPPROVED DESIGN)
 
-This section documents the DESIGN for integrating World ID verification as an OpenClaw pre-history authorization gate. **This is a specification pending Bob's approval for upstream OpenClaw modification.**
+This section documents UNRESOLVED integration requirements for World ID verification as an OpenClaw pre-history authorization gate. **Bob has NOT approved any upstream OpenClaw modifications.**
 
 ### Verified OpenClaw Source Analysis
 
@@ -917,137 +917,29 @@ This section documents the DESIGN for integrating World ID verification as an Op
 - Line 239: Logging middleware
 - Line 370: Handler registration `handlers.register(nativeCommandCallbackDispatcher)`
 
-### Proposed Integration Point
+### Unresolved Integration Scope
 
-**File**: `extensions/telegram/src/bot-core.ts`  
-**Function**: `createTelegramBotCore`  
-**Insertion Point**: After line 117 (`bot.api.config.use(accountThrottler.transformer)`)
+**UNAPPROVED Candidate Injection Point**: After line 117 (`bot.api.config.use(accountThrottler.transformer)`)
 
-**Rationale**: This is the EARLIEST injection point in the grammy middleware chain, BEFORE:
-- Update tracking/deduplication (line 155)
-- Poll preparation registry reads (line 212)
-- Sequentializer (line 228)
-- Handler registration (line 370+)
+**Known Limitations of Proposed Placement**:
+- Poll preparation middleware at line 212 runs AFTER line 117
+- Poll registry read occurs at line 212 (BEFORE proposed gate at line ~120 is impossible)
+- Poll registry schema contains content fields (`question`, `options`) not just routing metadata
+- Content-free poll classification policy NOT YET ESTABLISHED
 
-### Modified Files (Design)
+### Unresolved Technical Requirements
 
-#### 1. `extensions/telegram/src/bot-core.ts`
+**UNAPPROVED upstream modifications required** (Bob has NOT approved):
+1. OpenClaw middleware injection mechanism (no public plugin API exists)
+2. Human actor extraction across all update types
+3. Protected group scope configuration interface
+4. Fresh authorization recheck for queued/debounced updates
 
-Insert middleware after line 117:
-
-```typescript
-// Line 117: bot.api.config.use(accountThrottler.transformer);
-
-// NEW: Pre-authorization gate (if configured)
-if (opts.preAuthorizationGate) {
-  bot.use(async (ctx, next) => {
-    const gateResult = await opts.preAuthorizationGate(ctx, {
-      extractHumanActor: () => extractTelegramHumanActor(ctx.update),
-    });
-    if (!gateResult.allowed) {
-      // Rejected updates stop here - no history/model/tools
-      return;
-    }
-    await next();
-  });
-}
-
-// Line 130: const initialUpdateId = ...
-```
-
-#### 2. `extensions/telegram/src/bot.types.ts`
-
-Add new field to `TelegramBotOptions`:
-
-```typescript
-export type TelegramBotOptions = {
-  token: string;
-  accountId?: string;
-  // ... existing fields ...
-  
-  /** Pre-authorization gate (runs before all history/cache/model/tools) */
-  preAuthorizationGate?: (
-    ctx: Context,
-    helpers: {
-      extractHumanActor: () => TelegramHumanActor;
-    }
-  ) => Promise<{
-    allowed: boolean;
-    senderId?: string;
-    reason?: string;
-  }>;
-};
-```
-
-#### 3. NEW: `extensions/telegram/src/bot-human-actor.ts`
-
-Create new utility for human actor extraction:
-
-```typescript
-import type { Update } from "grammy/types";
-
-export type TelegramHumanActor = {
-  actorId: number | null;
-  actorUsername: string | null;
-  actorType: "human" | "bot" | "channel" | "anonymous" | "missing";
-};
-
-export function extractTelegramHumanActor(update: Update): TelegramHumanActor {
-  // Message updates
-  if (update.message?.from) {
-    return {
-      actorId: update.message.from.id,
-      actorUsername: update.message.from.username ?? null,
-      actorType: update.message.from.is_bot ? "bot" : "human",
-    };
-  }
-  
-  // Channel posts (sender_chat indicates non-human)
-  if (update.message?.sender_chat || update.channel_post?.sender_chat) {
-    return {
-      actorId: null,
-      actorUsername: null,
-      actorType: "channel",
-    };
-  }
-  
-  // Callback queries
-  if (update.callback_query?.from) {
-    return {
-      actorId: update.callback_query.from.id,
-      actorUsername: update.callback_query.from.username ?? null,
-      actorType: update.callback_query.from.is_bot ? "bot" : "human",
-    };
-  }
-  
-  // Reactions
-  if (update.message_reaction?.user) {
-    const user = update.message_reaction.user;
-    return {
-      actorId: user.id,
-      actorUsername: user.username ?? null,
-      actorType: user.is_bot ? "bot" : "human",
-    };
-  }
-  
-  // Poll answers
-  if (update.poll_answer?.user) {
-    const user = update.poll_answer.user;
-    return {
-      actorId: user.id,
-      actorUsername: user.username ?? null,
-      actorType: user.is_bot ? "bot" : "human",
-    };
-  }
-  
-  // Missing actor
-  return {
-    actorId: null,
-    actorUsername: null,
-    actorType: "missing",
-  };
-}
-```
+**UNRESOLVED seam locations**:
+- Exact insertion point for fresh recheck AFTER debounce flush (not yet traced)
+- Exact insertion point for fresh recheck AFTER media album buffer (not yet traced)
+- Callback query authorization already exists separately (not unified with proposed gate)
+- Native command authorization already exists separately (not unified with proposed gate)
 
 ### Human Identity Rules
 
@@ -1148,72 +1040,15 @@ export type TelegramPollRegistryEntry = {
 
 **Recommendation**: **Option A (Content-Free Index)** provides cleaner security boundary. Implement in separate PR after ingress gate approval.
 
-### Scope Preservation
+### Unresolved Scope Requirements
 
-**Protected Groups** (Explicit Configuration):
-```typescript
-const protectedGroupIds = new Set([
-  -1001234567890,  // Main group
-  -1009876543210,  // Secondary group
-]);
-```
+**Protected vs Out-of-Scope Groups**:
+- Protected groups require explicit numeric chat ID configuration
+- Out-of-scope groups must preserve existing behavior (pass-through)
+- Bot maintenance updates (`my_chat_member`, `message:migrate_to_chat_id`) require special handling
+- DM policy (enforce verification or allow) NOT YET ESTABLISHED
 
-**Scope Rules**:
-- Out-of-scope groups (not in `protectedGroupIds`) → allow all senders (pass-through)
-- DMs from verified users → allow
-- Protected groups → enforce human actor + World ID verification
-- Bot maintenance updates (`my_chat_member`, `message:migrate_to_chat_id`) → allow based on update type, not actor
-
-**Gate Logic**:
-```typescript
-preAuthorizationGate: async (ctx, { extractHumanActor }) => {
-  const chatId = extractChatId(ctx.update);
-  
-  // Out-of-scope: allow
-  if (!chatId || !protectedGroupIds.has(chatId)) {
-    return { allowed: true };
-  }
-  
-  // Protected group: enforce rules
-  const actor = extractHumanActor();
-  
-  // Reject non-human actors
-  if (actor.actorType !== "human") {
-    return {
-      allowed: false,
-      reason: `protected-group-non-human:${actor.actorType}`,
-    };
-  }
-  
-  // Verify World ID enrollment
-  const verified = await worldIdRegistry.verify(String(actor.actorId));
-  if (!verified.valid) {
-    return {
-      allowed: false,
-      senderId: String(actor.actorId),
-      reason: "not-verified",
-    };
-  }
-  
-  if (verified.expired) {
-    return {
-      allowed: false,
-      senderId: String(actor.actorId),
-      reason: "expired",
-    };
-  }
-  
-  if (verified.revoked) {
-    return {
-      allowed: false,
-      senderId: String(actor.actorId),
-      reason: "revoked",
-    };
-  }
-  
-  return { allowed: true, senderId: String(actor.actorId) };
-}
-```
+**UNRESOLVED**: Missing chat ID extraction for updates without direct chat field (e.g., poll_answer requires registry lookup)
 
 ### Concurrency and Linearization
 
@@ -1262,80 +1097,42 @@ preAuthorizationGate: async (ctx, { extractHumanActor }) => {
 - Verification timeout → fail-closed (denied)
 - Unknown scope (missing routing data) → denied in protected groups
 
-### Fail-Closed Guarantees
+### Unresolved Fail-Closed Requirements
 
-**Expiry Enforcement**:
-- Per-request lease/deadline check at ingress gate
-- Registry query returns current `expiresAt` timestamp
-- Gate rejects if `now >= expiresAt` (exact boundary)
-- NO stale authorization from periodic sync lag
+**Expiry Enforcement** (mechanism NOT YET ESTABLISHED):
+- Per-request deadline check at ingress gate (proposed, not verified)
+- Fresh recheck for queued/debounced updates (seam location NOT YET TRACED)
+- Exact boundary enforcement (`now >= expiresAt`) requires clock consistency
 
-**Revocation Enforcement**:
-- Registry query returns `revoked` flag
-- Gate rejects if `revoked === true`
-- Revocation effective immediately (no sync delay)
+**Revocation Enforcement** (timing NOT YET ESTABLISHED):
+- Local registry revocation is authoritative
+- Revocation timing depends on recheck frequency (NOT YET DEFINED)
+- In-flight admitted work CANNOT be retroactively cancelled
+- Queued updates may complete with stale authorization if no fresh recheck
 
-**Outage Handling**:
-- Registry timeout → fail-closed (deny admission)
-- Registry unavailable → fail-closed (deny admission)
-- Invalid/corrupt registry response → fail-closed (deny admission)
+**Outage Handling** (policy NOT YET ESTABLISHED):
+- Registry timeout behavior (deny vs retry vs fallback) NOT DEFINED
+- Registry unavailable duration threshold NOT DEFINED
+- Invalid/corrupt registry response handling NOT DEFINED
 
-**No Stale Positive Grants**:
-- Every admission queries fresh registry state
-- NO cached authorization decisions
-- NO static allowlist between registry and gate
+**No Stale Positive Grants** (NOT YET PROVEN):
+- Requires fresh registry query at EVERY decision point
+- Debounce/buffer/queue recheck seams NOT YET TRACED
+- Callback/native command separate authorization paths NOT YET UNIFIED
 
-### Deployment Configuration Example
+### Unresolved Deployment Requirements
 
-```typescript
-import { createTelegramBot } from "openclaw/telegram";
-import { WorldIdRegistry } from "./worldid-registry.js";
+**Configuration Mechanism** (NOT YET ESTABLISHED):
+- OpenClaw plugin/middleware registration API does not exist
+- Protected group numeric chat ID configuration format NOT DEFINED
+- Registry connection interface NOT DEFINED
+- Fresh recheck trigger points NOT TRACED
 
-const worldIdRegistry = new WorldIdRegistry({
-  databasePath: "/var/lib/worldid-gate/enrollments.db",
-  // ... registry config
-});
-
-const protectedGroupIds = new Set([
-  -1001234567890,  // Main group (numeric chat ID)
-]);
-
-const bot = await createTelegramBot({
-  token: process.env.TELEGRAM_BOT_TOKEN,
-  
-  preAuthorizationGate: async (ctx, { extractHumanActor }) => {
-    const chatId = extractChatId(ctx.update);
-    
-    // Out-of-scope: allow
-    if (!chatId || !protectedGroupIds.has(chatId)) {
-      return { allowed: true };
-    }
-    
-    // Protected group: enforce verification
-    const actor = extractHumanActor();
-    
-    if (actor.actorType !== "human") {
-      return {
-        allowed: false,
-        reason: `non-human:${actor.actorType}`,
-      };
-    }
-    
-    const verified = await worldIdRegistry.checkEnrollment(
-      String(actor.actorId),
-      Date.now()
-    );
-    
-    return {
-      allowed: verified.valid && !verified.expired && !verified.revoked,
-      senderId: String(actor.actorId),
-      reason: verified.valid ? undefined : verified.reason,
-    };
-  },
-  
-  // ... other OpenClaw config
-});
-```
+**Integration Prerequisites** (UNRESOLVED):
+- Bob approval for upstream OpenClaw modifications
+- Content-free poll classification policy decision
+- Fresh recheck seam locations identified and verified
+- Unified authorization across all update paths (messages, callbacks, commands)
 
 ### Operator Plan
 
@@ -1364,20 +1161,23 @@ const bot = await createTelegramBot({
 
 **SAFE Rollback Options**:
 
-1. **Deny-All During Uncertain Restore**:
-   - Disable gate or set all to deny
-   - Manually re-verify current state
-   - Re-enable after confirmation
+1. **Protected Admissions Remain Fail-Closed During Uncertain Restore**:
+   - Keep gate active with deny-all for protected groups
+   - Out-of-scope groups continue unchanged
+   - NEVER disable gate or bypass protected admission enforcement
+   - Manually verify trustworthy revocation state before allowing admissions
+   - Apply fresh post-revoke enrollment policy (require new challenge + proof)
 
 2. **Immutable Revocation Log**:
    - Separate append-only revocation store outside main DB
    - Check revocations independently after DB restore
    - Requires separate log implementation (not yet built)
 
-3. **Remote Verification Service**:
-   - Query World ID API for current verification state
-   - Re-verify all enrollments after restore
-   - Expensive but cryptographically authoritative
+3. **Local Revocation History is Authoritative**:
+   - World ID proof verification API CANNOT recover local revocation history
+   - World API verifies proof validity, NOT enrollment revocation status
+   - Local registry maintains revocation lifecycle independently
+   - Post-restore verification queries World API for proof validity, NOT revocation status
 
 **Retention Policy** (Not Yet Selected):
 - Options: Retain expired/revoked indefinitely, 90-day retention, explicit deletion after X days
@@ -1387,10 +1187,17 @@ const bot = await createTelegramBot({
 ### Unresolved Decisions
 
 1. **Poll Registry Content Read**: Option A (content-free index) vs Option B (deny unknown) - requires Bob's decision
-2. **Native Command Path**: Apply same gate or separate authorization? Current design applies gate to all updates including native commands.
-3. **Retention Policy**: How long to retain expired/revoked enrollments?
-4. **Multiple Accounts Per Nullifier**: Should same verified human be allowed to enroll multiple Telegram accounts? (Currently allowed by design)
-5. **Post-Revocation Restoration**: Should revoked accounts require admin approval or automatic restoration via fresh verification? (Currently automatic)
+2. **Native Command Path**: Apply same gate or separate authorization? Current separate authorization path NOT YET UNIFIED
+3. **Retention Policy**: How long to retain expired/revoked enrollments? (indefinite / 90-day / explicit deletion)
+4. **HTTPS Provider Selection**: Cloudflare Tunnel / ngrok / custom domain (not yet provisioned)
+5. **Fresh Recheck Seam Locations**: Exact insertion points for queued/debounced update rechecks NOT YET TRACED
+
+### Settled Policies (NOT reopened for Bob decision)
+
+1. **Multiple Accounts Per Nullifier**: ALLOWED - same verified human may enroll multiple Telegram accounts, each requires fresh authenticated proof per account
+2. **Post-Revocation Restoration**: ALLOWED - revoked accounts may restore via fresh post-revoke challenge + proof; pre-revoke challenges CANNOT restore
+3. **Default TTL**: 30 days (2592000 seconds), bounded [60s, 31536000s]
+4. **TTL Configuration Changes**: Do NOT retroactively alter stored `expiresAt` timestamps; apply to NEW enrollments only
 
 ### Evidence vs Assumptions
 
@@ -1419,53 +1226,52 @@ const bot = await createTelegramBot({
 
 **NO code changes to OpenClaw source are authorized until Bob approves this design.**
 
-## Next Steps for Production
+## Existing Components (Built and Tested at Commit 040e904)
+
+**Offline Components Implemented**:
+- ✅ Telegram bot handler with `/verify`, `/status`, `/help`, `/start` commands
+- ✅ Telegram Mini App enrollment UI with World ID IDKit SDK integration
+- ✅ World ID HTTP verification client (production and staging endpoints)
+- ✅ SQLite enrollment store (durable, transactional, with revocation lifecycle)
+- ✅ Challenge session management with requester binding
+- ✅ Local HTTP service (enrollment API endpoints)
+
+**Test Coverage**: 354 unit tests + 3 browser tests passing at commit 040e904
+
+**NOT Tested** (require live integration):
+- Real Telegram webhook/polling with authentic update signatures
+- Real World App proof generation on device
+- Live World ID Developer Portal API calls
+- Public HTTPS hosting with valid TLS certificate
+
+## Remaining Integration Requirements
 
 1. **Obtain Bob's Approval for OpenClaw Ingress Gate Design**
-   - Review proposed middleware injection point (line ~120)
-   - Approve modified files and new utility
-   - Select poll registry content read policy
+   - Review UNAPPROVED integration approach
+   - Decide poll registry content read policy (Option A vs B)
+   - Approve upstream OpenClaw modification scope
+   - Define fresh recheck seam locations for queued/debounced updates
 
-2. **Implement Separate Verification Bot**
-   - Create dedicated bot with DM `/verify` command
-   - Generate short-lived enrollment links
-   - Bind links to requesting Telegram user ID
+2. **Select and Provision HTTPS Provider** (NOT YET SELECTED)
+   - Options: Cloudflare Tunnel / ngrok / custom domain
+   - Provision public HTTPS endpoint for Telegram Mini App
+   - Configure TLS certificate
 
-3. **Implement Telegram Mini App**
-   - Build enrollment UI with World ID IDKit integration
-   - Validate `initData` HMAC-SHA256 with bot token
-   - Submit proof to backend for validation
-
-4. **Implement Production World ID Verifier**
-   - Real HTTPS client for World ID API
-   - Error handling, retries, timeouts
-   - Nullifier caching to prevent replay
-
-5. **Implement Durable Enrollment Store**
-   - PostgreSQL, Redis, or other persistent storage
-   - Indexed queries on Telegram user ID and nullifier
-   - Atomic operations for enrollment CRUD
-
-6. **Implement OpenClaw Ingress Gate Hook** (AFTER approval)
-   - Modify OpenClaw source per design specification
-   - Create human actor extraction utility
-   - Implement World ID registry query integration
+3. **OpenClaw Ingress Gate Integration** (AFTER Bob approval)
+   - Trace exact fresh recheck insertion points for debounce/buffer
+   - Implement human actor extraction utility
+   - Unify authorization across message/callback/command paths
    - Add comprehensive test coverage per test matrix
 
-7. **Implement Member Tag Management**
+4. **Member Tag Management** (OPTIONAL)
    - `setChatMemberTag` integration
    - Tag application on enrollment
    - Tag removal on expiry/revocation
    - Error handling for permission/API failures
 
-8. **Security Hardening**
-   - Authenticated Telegram update adapter (OpenClaw gateway or webhook validation)
-   - Enrollment challenge protocol (dual authentication)
-   - Rate limiting on verification attempts
-   - Monitoring and alerting for suspicious activity
-
-9. **Operational Readiness**
+5. **Operational Readiness**
+   - Select retention policy (indefinite / 90-day / explicit deletion)
+   - Define registry timeout/outage behavior
    - Deployment runbook (see `OPERATOR_GUIDE.md`)
-   - Monitoring dashboards (enrollment rate, admission rate, expiry rate)
-   - Alerting rules (sync failures, verification errors, high rejection rate)
-   - Backup and recovery procedures for enrollment database
+   - Monitoring dashboards and alerting rules
+   - Backup and recovery procedures with fail-closed guarantees
