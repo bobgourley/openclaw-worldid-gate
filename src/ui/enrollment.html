@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>World ID Verification</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      max-width: 420px;
+      width: 100%;
+      padding: 40px 30px;
+      text-align: center;
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: 700;
+      color: #1a202c;
+      margin-bottom: 12px;
+    }
+    .subtitle {
+      font-size: 16px;
+      color: #718096;
+      margin-bottom: 32px;
+      line-height: 1.5;
+    }
+    #status {
+      padding: 16px;
+      border-radius: 8px;
+      margin-bottom: 24px;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    #status.loading {
+      background: #edf2f7;
+      color: #4a5568;
+    }
+    #status.error {
+      background: #fed7d7;
+      color: #c53030;
+    }
+    #status.success {
+      background: #c6f6d5;
+      color: #22543d;
+    }
+    #status.warning {
+      background: #fefcbf;
+      color: #744210;
+    }
+    .button {
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 14px 28px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      width: 100%;
+      margin-top: 16px;
+    }
+    .button:hover {
+      background: #5a67d8;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+    .button:disabled {
+      background: #cbd5e0;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    .info {
+      font-size: 13px;
+      color: #a0aec0;
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 1px solid #e2e8f0;
+    }
+    .spinner {
+      border: 3px solid #e2e8f0;
+      border-top: 3px solid #667eea;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin: 20px auto;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>World ID Verification</h1>
+    <p class="subtitle">Verify your unique personhood to access this Telegram group</p>
+    
+    <div id="status" class="loading">
+      <div class="spinner"></div>
+      Loading verification session...
+    </div>
+    
+    <button id="verifyButton" class="button hidden" disabled>
+      Connect World App
+    </button>
+    
+    <div class="info">
+      <strong>Privacy:</strong> Your World ID proof never leaves your device. Only a zero-knowledge proof is verified.
+    </div>
+  </div>
+
+  <script type="module">
+    // NO SECRETS IN CLIENT CODE
+    // Configuration injected via meta tags or URL params
+    
+    const urlParams = new URLSearchParams(window.location.search);
+    const sessionId = urlParams.get('session');
+    
+    const statusEl = document.getElementById('status');
+    const buttonEl = document.getElementById('verifyButton');
+    
+    function showStatus(message, type = 'loading') {
+      statusEl.className = type;
+      statusEl.innerHTML = type === 'loading' 
+        ? `<div class="spinner"></div>${message}`
+        : message;
+    }
+    
+    function showError(message) {
+      showStatus(message, 'error');
+      buttonEl.classList.add('hidden');
+    }
+    
+    function showSuccess(message) {
+      showStatus(message, 'success');
+      buttonEl.classList.add('hidden');
+    }
+    
+    async function initializeSession() {
+      if (!sessionId) {
+        showError('Invalid verification link. Please request a new one from the bot.');
+        return;
+      }
+      
+      try {
+        // Fetch session configuration from backend
+        const response = await fetch(`/api/enrollment/session/${sessionId}`);
+        
+        if (!response.ok) {
+          if (response.status === 404) {
+            showError('Verification session not found or expired. Please request a new one.');
+          } else if (response.status === 410) {
+            showError('This verification session has already been used.');
+          } else {
+            showError('Unable to load verification session. Please try again.');
+          }
+          return;
+        }
+        
+        const session = await response.json();
+        
+        // Validate session data
+        if (!session.signedChallenge || !session.signedChallenge.action || !session.signedChallenge.nonce) {
+          showError('Invalid session configuration.');
+          return;
+        }
+        
+        // Display ready state
+        showStatus('Ready to verify with World App', 'success');
+        buttonEl.classList.remove('hidden');
+        buttonEl.disabled = false;
+        
+        // Store session for verification
+        window.enrollmentSession = session;
+        
+        // Set up verification handler
+        buttonEl.onclick = handleVerification;
+        
+      } catch (error) {
+        console.error('Session initialization error:', error);
+        showError('Network error. Please check your connection and try again.');
+      }
+    }
+    
+    async function handleVerification() {
+      const session = window.enrollmentSession;
+      if (!session) {
+        showError('Session expired. Please request a new verification link.');
+        return;
+      }
+      
+      buttonEl.disabled = true;
+      showStatus('Opening World App...', 'loading');
+      
+      try {
+        // Import IDKit dynamically (official SDK)
+        const { IDKitWidget, VerificationLevel } = await import('https://cdn.jsdelivr.net/npm/@worldcoin/idkit-core@4.6.0/+esm');
+        
+        // Create IDKit widget with session configuration
+        const widget = new IDKitWidget({
+          app_id: session.appId,
+          action: session.signedChallenge.action,
+          signal: session.signal,
+          verification_level: VerificationLevel.Orb,
+          onSuccess: handleProofReceived,
+          onError: handleProofError,
+        });
+        
+        // Open World App
+        await widget.open();
+        
+      } catch (error) {
+        console.error('Verification error:', error);
+        showError('Unable to connect to World App. Please try again.');
+        buttonEl.disabled = false;
+      }
+    }
+    
+    async function handleProofReceived(result) {
+      showStatus('Submitting proof for verification...', 'loading');
+      
+      try {
+        const response = await fetch('/api/enrollment/complete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            sessionId: sessionId,
+            idkitResult: result,
+          }),
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok && data.success) {
+          showSuccess(`✓ Verification successful! You can now return to Telegram. Your enrollment expires ${formatExpiry(data.expiresAt)}.`);
+        } else {
+          showError(data.error || 'Verification failed. Please try again.');
+          buttonEl.disabled = false;
+        }
+        
+      } catch (error) {
+        console.error('Proof submission error:', error);
+        showError('Network error while submitting proof. Please try again.');
+        buttonEl.disabled = false;
+      }
+    }
+    
+    function handleProofError(error) {
+      console.error('World App error:', error);
+      showError('World App verification was cancelled or failed. Please try again.');
+      buttonEl.disabled = false;
+    }
+    
+    function formatExpiry(timestamp) {
+      const date = new Date(timestamp * 1000);
+      const days = Math.floor((date - Date.now()) / (1000 * 60 * 60 * 24));
+      return days > 0 ? `in ${days} days` : 'soon';
+    }
+    
+    // Initialize on page load
+    initializeSession();
+  </script>
+</body>
+</html>

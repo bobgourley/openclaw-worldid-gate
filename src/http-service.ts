@@ -9,6 +9,13 @@
 
 import express, { type Request, type Response, type NextFunction } from 'express';
 import type { EnrollmentService, CreateChallengeResult, CompleteEnrollmentRequest, CompleteEnrollmentResult } from './enrollment-service-production.js';
+import type { TelegramBotHandler } from './telegram-bot-handler.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 /**
  * HTTP service configuration.
@@ -16,6 +23,9 @@ import type { EnrollmentService, CreateChallengeResult, CompleteEnrollmentReques
 export interface HttpServiceConfig {
   /** Enrollment service (dependency injection) */
   enrollmentService: EnrollmentService;
+
+  /** Telegram bot handler (optional, for bot integration) */
+  telegramBotHandler?: TelegramBotHandler;
 
   /** Port to bind (default: 3000) */
   port?: number;
@@ -40,8 +50,11 @@ export class HttpService {
   private readonly port: number;
   private readonly host: string;
 
+  private telegramBotHandler?: TelegramBotHandler;
+
   constructor(config: HttpServiceConfig) {
     this.enrollmentService = config.enrollmentService;
+    this.telegramBotHandler = config.telegramBotHandler;
     this.port = config.port ?? 3000;
     this.host = config.host ?? '127.0.0.1';
 
@@ -133,6 +146,41 @@ export class HttpService {
         res.status(500).json({ error: 'Enrollment query failed' });
       }
     });
+
+    // Telegram bot webhook endpoint (optional, only if bot handler configured)
+    if (this.telegramBotHandler) {
+      this.app.post('/telegram/webhook', express.raw({ type: 'application/json' }), async (req: Request, res: Response) => {
+        try {
+          await this.handleTelegramWebhook(req, res);
+        } catch (error) {
+          console.error('Telegram webhook error:', error);
+          res.status(500).json({ error: 'Webhook processing failed' });
+        }
+      });
+
+      // Enrollment UI route
+      this.app.get('/enrollment', (req: Request, res: Response) => {
+        try {
+          const uiPath = join(__dirname, 'ui', 'enrollment.html');
+          const html = readFileSync(uiPath, 'utf-8');
+          res.setHeader('Content-Type', 'text/html');
+          res.send(html);
+        } catch (error) {
+          console.error('UI serving error:', error);
+          res.status(500).send('Service unavailable');
+        }
+      });
+
+      // Session info API (for UI initialization)
+      this.app.get('/api/enrollment/session/:sessionId', async (req: Request, res: Response) => {
+        try {
+          await this.handleGetSessionInfo(req, res);
+        } catch (error) {
+          console.error('Session info error:', error);
+          res.status(500).json({ error: 'Session retrieval failed' });
+        }
+      });
+    }
 
     // 404 handler
     this.app.use((req: Request, res: Response) => {
@@ -266,6 +314,78 @@ export class HttpService {
     // Query enrollment
     // TODO: Implement proper initData authentication without challenge creation
     res.status(501).json({ error: 'Query endpoint not yet implemented (requires auth refactor)' });
+  }
+
+  /**
+   * Handle Telegram webhook request.
+   * 
+   * Security: Validates webhook secret header, rejects forged updates.
+   */
+  private async handleTelegramWebhook(req: Request, res: Response): Promise<void> {
+    if (!this.telegramBotHandler) {
+      res.status(404).json({ error: 'Bot not configured' });
+      return;
+    }
+
+    // Get raw body and secret token header
+    const rawBody = req.body?.toString('utf-8') || '';
+    const secretToken = req.headers['x-telegram-bot-api-secret-token'] as string | undefined;
+
+    // Validate webhook (fail-closed)
+    if (!this.telegramBotHandler.validateWebhook(rawBody, secretToken)) {
+      res.status(403).json({ error: 'Invalid webhook request' });
+      return;
+    }
+
+    // Parse update
+    let update: any;
+    try {
+      update = JSON.parse(rawBody);
+    } catch {
+      res.status(400).json({ error: 'Invalid JSON' });
+      return;
+    }
+
+    // Handle update (async, don't block webhook response)
+    this.telegramBotHandler.handleUpdate(update).catch(err => {
+      console.error('Update handling error:', err);
+    });
+
+    // Telegram expects 200 OK quickly
+    res.status(200).json({ ok: true });
+  }
+
+  /**
+   * Handle session info request (for UI initialization).
+   * 
+   * Security: Validates session ID format, checks expiry.
+   */
+  private async handleGetSessionInfo(req: Request, res: Response): Promise<void> {
+    if (!this.telegramBotHandler) {
+      res.status(404).json({ error: 'Bot not configured' });
+      return;
+    }
+
+    const sessionId = req.params.sessionId;
+
+    if (!sessionId || typeof sessionId !== 'string') {
+      res.status(400).json({ error: 'Invalid session ID' });
+      return;
+    }
+
+    const sessionInfo = await this.telegramBotHandler.getSessionInfo(sessionId);
+
+    if (!sessionInfo) {
+      res.status(404).json({ error: 'Session not found or expired' });
+      return;
+    }
+
+    // Return session configuration (NO SECRETS)
+    res.json({
+      signedChallenge: sessionInfo.signedChallenge,
+      appId: sessionInfo.appId,
+      signal: sessionInfo.signal,
+    });
   }
 
   /**

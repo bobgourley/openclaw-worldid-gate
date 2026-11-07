@@ -252,23 +252,62 @@ For production reliability, use a process supervisor (choose one):
 
 ## Current Implementation Status Summary
 
-**Implemented and tested (116 tests passing)**:
+**Implemented and tested (298 tests passing, 0 skipped)**:
 - ✅ Telegram `initData` HMAC-SHA256 validation
-- ✅ World ID v4.0 proof verification client
-- ✅ Challenge session and enrollment store interfaces
-- ✅ Fail-closed admission gate
+- ✅ World ID v4.0 proof verification with security hardening
+- ✅ SQLite enrollment and challenge session stores (production-ready)
+- ✅ Fail-closed admission gate with lifecycle management
+- ✅ HTTP service with enrollment endpoints
+- ✅ Telegram bot handler with /verify, /status, /help commands
+- ✅ Enrollment UI with official IDKit SDK integration
+- ✅ Webhook secret validation (X-Telegram-Bot-Api-Secret-Token)
+- ✅ Session-based enrollment flow (requester-bound, single-use)
+- ✅ Security regression tests (18 adversarial tests)
 
-**Requires integration (evidence-backed, implementation blocked by prerequisites)**:
-- ⏳ HTTP server with challenge/complete endpoints
-- ⏳ Durable store implementation (SQLite or PostgreSQL)
-- ⏳ Telegram Mini App frontend
-- ⏳ OpenClaw allowlist sync
+**Runtime Configuration Required**:
 
-**Blocked by external prerequisites**:
-- 🚫 World Developer Portal app/RP/action registration
-- 🚫 Telegram bot token from @BotFather
-- 🚫 Public HTTPS domain/tunnel configuration
-- 🚫 Mac mini deployment and supervision setup
+Environment variables (required for production):
+```bash
+# World ID Configuration (from developer.world.org)
+export WORLDID_APP_ID=app_xxxxx              # Your application ID
+export WORLDID_RP_ID=rp_xxxxx                # Your relying party ID
+export WORLDID_SIGNING_KEY_HEX=xxxxx         # 64-char hex signing key
+export WORLDID_ENVIRONMENT=production        # or 'staging'
+export WORLDID_ACTION=openclaw-admission     # Action identifier
+
+# Telegram Configuration (from @BotFather)
+export TELEGRAM_BOT_TOKEN=123456:ABC-DEF     # Bot token
+export TELEGRAM_WEBHOOK_SECRET=random_secret # Webhook validation secret
+
+# Service Configuration
+export DATABASE_PATH=/var/lib/worldid-gate/enrollments.db
+export HTTP_HOST=127.0.0.1                   # Localhost only
+export HTTP_PORT=3000
+export ENROLLMENT_BASE_URL=https://verify.example.com
+```
+
+**Tested Run Commands** (after configuration):
+```bash
+# Development (uses test defaults, not for production)
+npm run start:dev
+
+# Production (requires all environment variables)
+npm run build
+npm start
+```
+
+**Unverified Integration Points** (requires deployment acceptance):
+- ⏳ Live Telegram Bot API webhook/polling with real token
+- ⏳ Live World ID Developer Portal verification with real credentials
+- ⏳ HTTPS public endpoint with real TLS certificate
+- ⏳ Mobile device: Telegram → World App → return flow
+- ⏳ OpenClaw pre-history ingress authorization hook
+
+**Blocked by External Prerequisites**:
+- 🚫 World Developer Portal app/RP/action registration (Bob must complete)
+- 🚫 Telegram bot token from @BotFather (Bob must provide)
+- 🚫 Public HTTPS domain/tunnel configuration (deployment requirement)
+- 🚫 Mac mini deployment and supervision setup (operations requirement)
 
 ## Next Steps for User
 

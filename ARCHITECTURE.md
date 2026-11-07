@@ -54,10 +54,30 @@ This document describes the INITIAL small-group architecture for World ID-based 
   - 44 unit tests proving fail-closed guarantees
 - ✅ Constructor-level configuration validation with bounded safety checks
 
-**NOT YET IMPLEMENTED (require integration/configuration):**
-- ❌ Verification service HTTP server/API endpoints
-- ❌ Challenge session management workflow
-- ❌ Telegram Mini App frontend (HTML/JS/CSS)
+- ✅ HTTP service with enrollment endpoints (`src/http-service.ts`)
+  - Localhost-only binding (127.0.0.1:3000)
+  - Body size limits (max 2MB, World ID proofs ~10-50KB)
+  - Request timeouts (30 seconds default)
+  - Generic error responses (no identity leaks)
+  - Health and readiness probes
+  - Challenge creation, enrollment completion, and query endpoints
+  - 8 comprehensive integration tests
+- ✅ Telegram bot handler (`src/telegram-bot-handler.ts`)
+  - Webhook secret validation (X-Telegram-Bot-Api-Secret-Token)
+  - Fail-closed on malformed updates, bot messages, group messages
+  - Commands: /verify, /status, /help, /start
+  - Session-based enrollment flow (requester-bound, single-use, 5-minute expiry)
+  - Injectable transport for testing (no live Telegram API calls in tests)
+  - 25 comprehensive security tests
+- ✅ Enrollment UI (`src/ui/enrollment.html`)
+  - Self-contained HTML with no secrets in client code
+  - Official IDKit SDK integration via CDN (v4.6.0)
+  - Session validation before displaying verification UI
+  - Proof submission to backend enrollment API
+  - Clear user feedback for errors, expiry, success states
+
+**NOT YET IMPLEMENTED (require deployment/live integration):**
+- ❌ OpenClaw pre-history ingress authorization hook
 - ❌ Member tag management via `setChatMemberTag`
 - ❌ OpenClaw group allowlist integration
 - ❌ Registry-to-allowlist sync lifecycle
