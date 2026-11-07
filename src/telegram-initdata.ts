@@ -54,10 +54,10 @@ export interface InitDataValidationResult {
  * Algorithm per https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app:
  * 1. Parse initData query string
  * 2. Construct data-check-string from sorted fields (excluding 'hash')
- * 3. Derive secret_key = HMAC_SHA256(bot_token, "WebAppData")
+ * 3. Derive secret_key = HMAC_SHA256("WebAppData", bot_token)  [note: key is first arg]
  * 4. Compute expected_hash = HMAC_SHA256(data_check_string, secret_key)
  * 5. Compare expected_hash with provided hash using timing-safe comparison
- * 6. Verify auth_date is within maxAgeSeconds threshold
+ * 6. Verify auth_date is within maxAgeSeconds threshold (must be positive finite integer)
  *
  * @param initData - Raw initData string from Telegram.WebApp.initData
  * @param config - Validation configuration with bot token and max age
@@ -69,6 +69,14 @@ export function validateTelegramInitData(
 ): InitDataValidationResult {
   const maxAgeSeconds = config.maxAgeSeconds ?? 3600;
 
+  // Validate maxAgeSeconds bounds
+  if (!Number.isFinite(maxAgeSeconds) || maxAgeSeconds <= 0 || maxAgeSeconds > 86400 * 365) {
+    return {
+      valid: false,
+      error: "Invalid maxAgeSeconds: must be positive finite number <= 1 year",
+    };
+  }
+
   try {
     // Parse query string into key-value pairs
     const params = new URLSearchParams(initData);
@@ -78,15 +86,23 @@ export function validateTelegramInitData(
       return { valid: false, error: "Missing hash parameter" };
     }
 
-    // Extract and validate auth_date
+    // Extract and validate auth_date (must be positive safe integer)
     const authDateStr = params.get("auth_date");
     if (!authDateStr) {
       return { valid: false, error: "Missing auth_date parameter" };
     }
 
+    // Strict integer parsing: no leading/trailing junk, must be valid decimal
+    if (!/^\d+$/.test(authDateStr)) {
+      return { valid: false, error: "Invalid auth_date format: not a decimal integer" };
+    }
+
     const authDateSeconds = parseInt(authDateStr, 10);
-    if (isNaN(authDateSeconds)) {
-      return { valid: false, error: "Invalid auth_date format" };
+    if (!Number.isSafeInteger(authDateSeconds) || authDateSeconds <= 0) {
+      return {
+        valid: false,
+        error: "Invalid auth_date: must be positive safe integer",
+      };
     }
 
     const authDate = new Date(authDateSeconds * 1000);
@@ -121,6 +137,14 @@ export function validateTelegramInitData(
     // Compute expected_hash = HMAC_SHA256(data_check_string, secret_key)
     const expectedHash = createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
 
+    // Validate hash is hex string of correct length (64 hex chars = 32 bytes)
+    if (!/^[0-9a-f]{64}$/i.test(receivedHash)) {
+      return {
+        valid: false,
+        error: "Invalid hash format: must be 64 hex characters",
+      };
+    }
+
     // Timing-safe comparison
     const receivedHashBuffer = Buffer.from(receivedHash, "hex");
     const expectedHashBuffer = Buffer.from(expectedHash, "hex");
@@ -145,14 +169,27 @@ export function validateTelegramInitData(
       return { valid: false, error: "Invalid user JSON" };
     }
 
-    if (typeof userData.id !== "number") {
-      return { valid: false, error: "Missing or invalid user.id" };
+    // Validate user.id is positive safe integer (Telegram user IDs are positive integers)
+    if (
+      typeof userData.id !== "number" ||
+      !Number.isSafeInteger(userData.id) ||
+      userData.id <= 0
+    ) {
+      return {
+        valid: false,
+        error: "Missing or invalid user.id: must be positive safe integer",
+      };
     }
 
-    if (typeof userData.first_name !== "string") {
-      return { valid: false, error: "Missing or invalid user.first_name" };
+    if (typeof userData.first_name !== "string" || userData.first_name.length === 0) {
+      return {
+        valid: false,
+        error: "Missing or invalid user.first_name: must be non-empty string",
+      };
     }
 
+    // Only extract essential fields (id, firstName). Username/lastName are mutable display names,
+    // not suitable for security decisions or long-term storage.
     const user: ValidatedTelegramUser = {
       id: userData.id,
       firstName: userData.first_name,

@@ -174,7 +174,7 @@ describe("validateTelegramInitData", () => {
     const result = validateTelegramInitData(params.toString(), config);
 
     assert.ok(!result.valid);
-    assert.equal(result.error, "Missing or invalid user.id");
+    assert.equal(result.error, "Missing or invalid user.id: must be positive safe integer");
   });
 
   it("accepts user data with minimal required fields", () => {
