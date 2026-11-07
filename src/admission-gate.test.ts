@@ -182,6 +182,51 @@ describe('AdmissionGate', () => {
       assert.equal(metrics.toolExecutionCount, 0);
     });
 
+    it('rejects enrollment at exact expiry boundary (expiresAt == now)', async () => {
+      const clock = new FakeClock(2000000);
+      const { gate, verifier } = createGate(clock);
+      const userId = 44445;
+      const nullifier = '0xexact_boundary';
+
+      verifier.addValidNullifier(nullifier);
+      const proof = createWorldIdProof({ nullifier, action: TEST_CONFIG.action });
+      await gate.enroll(userId, proof, 100);
+
+      // Advance exactly to expiresAt
+      clock.advance(100);
+
+      const update = createTelegramUpdate({ userId });
+      const result = await gate.checkAdmission({
+        telegramUpdate: update,
+        timestamp: Date.now(),
+      });
+
+      assert.equal(result.allowed, false);
+      assert.equal(result.reason, 'Enrollment has expired');
+    });
+
+    it('admits enrollment one second before expiry', async () => {
+      const clock = new FakeClock(3000000);
+      const { gate, verifier } = createGate(clock);
+      const userId = 44446;
+      const nullifier = '0xbefore_expiry';
+
+      verifier.addValidNullifier(nullifier);
+      const proof = createWorldIdProof({ nullifier, action: TEST_CONFIG.action });
+      await gate.enroll(userId, proof, 100);
+
+      // Advance to one second before expiry
+      clock.advance(99);
+
+      const update = createTelegramUpdate({ userId });
+      const result = await gate.checkAdmission({
+        telegramUpdate: update,
+        timestamp: Date.now(),
+      });
+
+      assert.equal(result.allowed, true);
+    });
+
     it('rejects action mismatch with ZERO downstream calls', async () => {
       const { gate, verifier } = createGate();
       const userId = 55555;

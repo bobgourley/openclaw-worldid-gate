@@ -99,22 +99,31 @@ The preferred initial architecture is designed for small trusted groups with hum
 **Security Properties**:
 - TTL: 5 minutes (configurable)
 - Single-use: Link invalidated after one successful verification
-- User-bound: Telegram `initData` HMAC validation ensures link opener matches requester
-- Not copyable/forwardable to other users
+- User-bound: Backend validates that completion comes from the user who requested the link
+- Links CAN be copied/forwarded, but backend validation prevents authorization transfer
 
 **Telegram Mini App Integration**:
-- Mini App validates `initData` via HMAC-SHA256 with bot token
-- Validates `auth_date` within acceptable window (e.g., 1 hour)
-- Extracts authenticated `user.id` from `initData`
+- **BACKEND ONLY** validates `initData` via HMAC-SHA256 with bot token
+- Frontend NEVER has access to bot token, NEVER validates HMAC
+- Backend validates `auth_date` within acceptable window (e.g., 1 hour)
+- Backend extracts authenticated `user.id` from Telegram-provided `initData`
+- Bot does NOT mint `initData`; Telegram provides it with each Mini App launch
 - Reference: https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
 
 **Implementation Steps**:
-1. Generate random enrollment session ID
-2. Store session with (sessionId, telegramUserId, expiresAt)
-3. Construct Mini App URL with sessionId parameter
-4. Mini App backend validates Telegram `initData` HMAC
-5. Mini App frontend shows World ID IDKit verification
-6. Backend validates proof and creates enrollment only if Telegram user ID matches session
+1. User requests `/verify` in DM to verification bot
+2. Backend generates random enrollment session ID
+3. Backend stores session with (sessionId, requestingTelegramUserId, expiresAt, used=false)
+4. Backend constructs Mini App URL with sessionId parameter
+5. User opens link; Telegram launches Mini App with fresh signed `initData`
+6. **Mini App frontend** shows World ID IDKit verification UI (does NOT validate HMAC)
+7. **Backend** receives completion with `initData` + World ID proof
+8. **Backend** validates Telegram-provided `initData` HMAC-SHA256 with bot token
+9. **Backend** validates `auth_date` is recent
+10. **Backend** validates extracted `user.id` matches session's requestingTelegramUserId
+11. **Backend** validates World ID proof via World ID API
+12. **Backend** creates enrollment only if ALL validations pass
+13. **Backend** marks session as used (prevent reuse)
 
 ### Member Tags (PLANNED)
 
@@ -126,9 +135,11 @@ The preferred initial architecture is designed for small trusted groups with hum
 - Bot must have administrator right `can_manage_tags` in group/supergroup
 - Target must be regular member (not administrator, creator, or bot)
 - Tag text: 0-16 characters, no emoji
-- Proposed tag: "Human Verified" (15 characters)
+- Proposed tag: "Human Verified" (14 characters)
 
-**Reference**: https://core.telegram.org/bots/api#setchatmembertag
+**Official Reference**: https://core.telegram.org/bots/api/methods/setchatmembertag.md
+
+**Evidence**: Verified in current Telegram Bot API documentation (accessed 2026-11-07)
 
 **Limitations**:
 - Only works in groups and supergroups
@@ -140,13 +151,13 @@ The preferred initial architecture is designed for small trusted groups with hum
 - Apply tag after successful enrollment
 - Remove tag when enrollment expires or is revoked
 - Tag updates are best-effort (member may leave/rejoin, bot may lose admin rights)
-- Tag is a UX feature, not a security boundary
+- **Tag is display-only UX, not access control**: Tag failure (missing permission, API error) CANNOT grant access. Access enforcement happens at admission gate, independently of tagging success.
 
 ### OpenClaw Group Allowlist Integration (PLANNED)
 
 **Purpose**: Fail-closed admission enforcement at OpenClaw gateway level using numeric Telegram user ID allowlist.
 
-**OpenClaw Configuration Schema** (verified from official docs):
+**OpenClaw Configuration Schema** (from official docs):
 
 ```json5
 {
@@ -154,12 +165,13 @@ The preferred initial architecture is designed for small trusted groups with hum
     telegram: {
       enabled: true,
       dmPolicy: "allowlist",
-      allowFrom: [123456789], // Numeric Telegram user IDs
+      allowFrom: [123456789], // Numeric Telegram user IDs for DMs
       groupPolicy: "allowlist",
+      groupAllowFrom: [123456789, 987654321], // Global group sender allowlist
       groups: {
         "-1001234567890": {
           requireMention: true,
-          groupAllowFrom: [123456789, 987654321] // Per-group sender allowlist
+          allowFrom: [123456789] // Per-group override (NOT groupAllowFrom)
         }
       }
     }
@@ -170,8 +182,10 @@ The preferred initial architecture is designed for small trusted groups with hum
 **Key Configuration Fields**:
 - `channels.telegram.groups`: Map of allowed group chat IDs (negative IDs for groups/supergroups)
 - `groupPolicy`: `"open"` (any member) | `"allowlist"` (default, requires explicit IDs) | `"disabled"`
-- `groupAllowFrom`: Numeric Telegram user IDs allowed in groups (falls back to `allowFrom` if unset)
-- Per-group `allowFrom`: Can override global `groupAllowFrom` for specific group
+- `channels.telegram.groupAllowFrom`: Global numeric Telegram user IDs allowed in ALL groups (falls back to `allowFrom` if unset)
+- `groups[chatId].allowFrom`: Per-group override of global `groupAllowFrom` for specific group
+
+**Schema verified from**: https://docs.openclaw.ai/channels/telegram/access-control (accessed 2026-11-07)
 
 **Access Control Semantics**:
 - Group sender auth NEVER inherits DM pairing approvals (security boundary since 2026.2.25)
@@ -206,21 +220,24 @@ This section describes a robust sync lifecycle for maintaining OpenClaw's allowl
 
 **Sync Modes**:
 
-**Mode 1: Per-Request Ingress Enforcement (RECOMMENDED)**
-- Check enrollment validity at EVERY admission request
-- Query registry for current enrollment status (valid, expired, revoked)
+**Mode 1: Per-Request Ingress Enforcement with Lease Checks (RECOMMENDED)**
+- Check enrollment validity (not expired, not revoked) at EVERY admission request
+- Query registry for current enrollment status before admitting each message
 - Reject if enrollment invalid or missing
 - NO stale allowlist grants (always current)
 - Higher query load on registry
-- Exact expiry enforcement guarantee
+- Exact expiry enforcement guarantee via enforced ingress deadline check
 
-**Mode 2: Periodic Sync with Fail-Closed Bounds**
+**Mode 2: Periodic Static Allowlist Sync (INSUFFICIENT FOR EXACT EXPIRY, NOT RECOMMENDED FOR REQUIRED GUARANTEES)**
 - Sync registry → allowlist on schedule (e.g., every 5 minutes)
-- Add verified enrollments, remove expired/revoked enrollments
-- Between syncs: allowlist may be stale
-- Bounded staleness: max sync interval (e.g., 5 minutes)
-- Lower query load on registry
-- CANNOT guarantee exact expiry enforcement between syncs
+- Add verified enrollments, remove expired/revoked enrollments from allowlist
+- **Between syncs: static allowlist has NO MECHANISM to stop stale authorized senders**
+- A user who was valid at sync time but expires before next sync CAN STILL SEND (stale authorization)
+- Short sync interval (e.g., 1 minute) reduces but NEVER eliminates staleness window
+- Periodic sync alone CANNOT prove exact expiry enforcement
+- **Requires additional enforcement**: Independent per-message lease/deadline check OR fail-closed channel disable/watchdog
+
+**IMPORTANT**: Mode 2 static allowlist alone is UNSAFE for required expiry guarantees. Only enforced ingress deadline checks or independent fail-closed mechanisms can bound stale authorization.
 
 **Sync Properties**:
 
@@ -237,9 +254,22 @@ This section describes a robust sync lifecycle for maintaining OpenClaw's allowl
 When sync fails (registry unavailable, OpenClaw config write error, etc.):
 - Log error with details
 - Alert operator via monitoring system
-- DO NOT silently grant stale allowlist access beyond defined staleness bound
-- Reject new admission requests until sync succeeds
-- Existing admitted sessions MAY continue (depends on session lifetime policy)
+- **Option A (static allowlist only)**: Keep existing allowlist, reject new additions
+  - **DEFECT**: Has NO mechanism to stop stale authorized senders already in allowlist
+  - Existing enrollments that expire during outage continue to have access
+  - Writing config can fail, so clearing allowlist may also fail
+  - Static periodic sync mode is UNSAFE for required expiry guarantees
+- **Option B (fail-closed channel disable)**: Disable entire channel/gate until sync succeeds
+  - Safest: NO stale grants
+  - Most disruptive: ALL users (including valid) are blocked
+- **Option C (per-request enforcement)**: Ingress checks continue querying registry directly
+  - Requires Mode 1 architecture (not Mode 2 periodic sync)
+  - Each admission queries registry for current enrollment status
+  - Exact expiry enforcement maintained during sync outages
+
+**Recommended**: Mode 1 (per-request) with independent fail-closed watchdog, OR Mode 2 with separate per-request lease/deadline checks to bound stale authorization.
+
+**Manual Bypass Risk**: Manual entries added to allowlist outside the managed namespace/groups would bypass gate enforcement unless separated from managed policy or explicitly reserved.
 
 **Limitations of Static Allowlist + Periodic Sync**:
 
@@ -294,7 +324,9 @@ When sync fails (registry unavailable, OpenClaw config write error, etc.):
    - Starter uses `WorldIdVerifierStub` for testing
    - Production MUST use `WorldIdVerifierProduction` with real HTTPS calls to World ID API
    - Endpoint: `POST https://developer.world.org/api/v4/verify/{rp_id}`
-   - Staging endpoint: `POST https://staging-developer.worldcoin.org/api/v4/verify/{rp_id}` (verified in official OpenAPI spec)
+   - Staging endpoint: `POST https://staging-developer.worldcoin.org/api/v4/verify/{rp_id}`
+     - Evidence: Listed in OpenAPI servers at https://docs.world.org/api-reference/developer-portal/verify (accessed 2026-11-07)
+     - Endpoints remain synthetic/unwired in this starter
 
 3. **Enrollment Binding** (TEST-ONLY in starter, INSUFFICIENT for production)
    - Starter `enroll()` method accepts caller-supplied Telegram user ID
@@ -346,24 +378,30 @@ The admission gate rejects unauthorized senders BEFORE any agent processing.
 
 ## OpenClaw 2026.9.8 Compatibility
 
-**Research Status**: Compatibility report pending. Requires:
-- Verification of `channels.telegram.groups` schema in OpenClaw 2026.9.8 source/docs
-- Verification of `groupPolicy` and `groupAllowFrom` semantics
-- Verification of per-group `allowFrom` override behavior
-- Verification of group sender auth security boundary (no DM pairing inheritance)
-- Testing with installed OpenClaw 2026.9.8 instance (if available)
+**Research Status**: NOT ESTABLISHED. OpenClaw 2026.9.8 specific verification NOT performed.
 
-**Known Compatible Features** (from official docs):
+**Current documentation cited**: https://docs.openclaw.ai/channels/telegram/access-control (accessed 2026-11-07, version/date unspecified on page)
+
+**Not verified against 2026.9.8 specifically**:
+- No official 2026.9.8 release tag/commit link checked
+- No 2026.9.8 source code inspection performed
+- No installed 2026.9.8 instance available for testing
+- Schema examples drawn from current live docs, not version-specific documentation
+
+**To establish 2026.9.8 compatibility**, operators must:
+- Locate OpenClaw 2026.9.8 official release notes / changelog / git tag
+- Verify `channels.telegram.groups` schema in that version's docs or source
+- Verify `groupPolicy`, `groupAllowFrom`, and per-group `allowFrom` semantics
+- Test config changes with installed 2026.9.8 instance
+- Verify config hot-reload behavior and group member list sync timing
+
+**Current docs indicate** (version unspecified):
 - `channels.telegram.groups` with negative chat IDs
 - `groupPolicy: "allowlist"` with `groupAllowFrom` numeric user IDs
 - Per-group `allowFrom` override
 - Security boundary: group sender auth never inherits DM pairing approvals (since 2026.2.25)
 
-**Verification Pending**:
-- Exact schema validation rules in OpenClaw 2026.9.8
-- Config hot-reload behavior for allowlist changes
-- Group member list synchronization timing
-- Error handling for malformed `groupAllowFrom` entries
+**Illustrative config examples in this document are from current docs, not 2026.9.8 verified.**
 
 ## Configuration Reference
 

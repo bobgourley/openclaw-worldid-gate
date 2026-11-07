@@ -34,9 +34,12 @@ This guide walks through setting up and operating the World ID admission gate fo
 
 ### 1. Clone and Install
 
+**IMPORTANT**: The unmerged starter is on feature branch `cursor/worldid-gate-starter-9717`, NOT main.
+
 ```bash
 git clone https://github.com/bobgourley/openclaw-worldid-gate.git
 cd openclaw-worldid-gate
+git checkout cursor/worldid-gate-starter-9717
 npm install
 ```
 
@@ -156,16 +159,16 @@ This runs 66 tests covering:
 
 ### 2. Create Custom Test Scenario
 
-Create a new test file `test/custom.test.ts`:
+Create a new test file `src/custom.test.ts`:
 
 ```typescript
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { AdmissionGate } from '../src/admission-gate.js';
-import { WorldIdVerifierStub } from '../src/verifier-stub.js';
-import { InMemoryEnrollmentStore } from '../src/enrollment-store.js';
-import { createTelegramUpdate, createWorldIdProof } from '../src/fixtures.js';
-import { gateConfig } from '../src/config.js';
+import { AdmissionGate } from './admission-gate.js';
+import { WorldIdVerifierStub } from './verifier-stub.js';
+import { InMemoryEnrollmentStore } from './enrollment-store.js';
+import { createTelegramUpdate, createWorldIdProof } from './fixtures.js';
+import { gateConfig } from './config.js';
 
 describe('Custom operator test', () => {
   it('simulates enrollment and admission', async () => {
@@ -184,8 +187,11 @@ describe('Custom operator test', () => {
     const enrollResult = await gate.enroll(telegramUserId, proof);
     assert.equal(enrollResult.success, true);
     
-    // Check admission
-    const update = createTelegramUpdate(telegramUserId, 'Hello bot');
+    // Check admission (createTelegramUpdate uses options object, not positional args)
+    const update = createTelegramUpdate({
+      userId: telegramUserId,
+      text: 'Hello bot',
+    });
     const admissionResult = await gate.checkAdmission({
       telegramUpdate: update,
       timestamp: Date.now(),
@@ -197,29 +203,32 @@ describe('Custom operator test', () => {
 });
 ```
 
-Run your custom test:
+Run your custom test (tsx discovers .test.ts files in src/):
 
 ```bash
-npm test test/custom.test.ts
+npm test
 ```
 
-### 3. Synthetic Orchestrator Integration
+### 3. Synthetic Orchestrator Integration (PLANNED PSEUDOCODE, NOT RUNNABLE)
 
-Test the full orchestration flow with synthetic updates:
+The existing test suite demonstrates orchestration wiring. A future helper API might look like:
 
 ```typescript
-import { TestOrchestrator } from '../src/orchestrator.test.js';
+// PSEUDOCODE EXAMPLE (NOT IMPLEMENTED)
+// The actual TestOrchestrator requires gate and processor constructor arguments
+// See src/orchestrator.test.ts for runnable test examples
 
-// Create orchestrator with test gate
-const orchestrator = new TestOrchestrator();
+import { TestOrchestrator } from './orchestrator.test.js';
 
-// Enroll synthetic user
+// Would require: gate + processor instances
+const orchestrator = new TestOrchestrator(gate, processor);
+
+// Enroll and process (methods do not exist on current TestOrchestrator)
 await orchestrator.enrollUser(123456789);
-
-// Process synthetic message
-const result = await orchestrator.processMessage(123456789, 'Hello');
-console.log('Processing result:', result);
+await orchestrator.processMessage(123456789, 'Hello');
 ```
+
+**Runnable tests**: See existing test suite in `src/orchestrator.test.ts` for actual working examples.
 
 ### 4. Dry Run Verification
 
@@ -240,18 +249,29 @@ This section describes FUTURE steps for real World ID verification. These are NO
 
 ### Step 1: Register World ID Application
 
-**DO NOT PERFORM THESE STEPS NOW** (requires World ID Developer Portal account and real integration planning).
+**DO NOT PERFORM THESE STEPS NOW** (requires World ID Developer Portal account, HTTPS production hosting, and real integration planning).
+
+**Prerequisites for World ID Registration**:
+- HTTPS-hosted production server (World ID requires HTTPS for security)
+- World App installed on device OR Orb access for proof generation
+- Understanding of action strings and nullifier scope
 
 When ready for production:
 
 1. Visit https://developer.world.org/
 2. Sign in and create new application
-3. Configure application settings:
-   - App name: "OpenClaw Telegram Gate"
-   - App type: "Server-side verification"
-   - Action: "openclaw-gate-production" (or your chosen action string)
-4. Copy your RP ID (starts with `rp_`)
-5. Set `WORLDID_RP_ID` environment variable
+3. Configure application (specific setup steps depend on Developer Portal UI)
+4. Define action string (e.g., "openclaw-gate-production")
+5. Copy your RP ID (starts with `rp_`)
+6. Store RP ID securely (environment variable, not git)
+
+**Blockers for NOW**:
+- No HTTPS production hosting configured
+- No enrollment Mini App implemented
+- No production verification backend
+- Integration architecture not finalized
+
+**DO NOT collect or configure secrets in this synthetic dry-run phase.**
 
 ### Step 2: Create Verification Bot
 
@@ -265,7 +285,12 @@ When implementing separate verification bot:
 4. Choose username: "myapp_verify_bot"
 5. Copy bot token
 6. Set `VERIFICATION_BOT_TOKEN` environment variable
-7. Configure bot to only accept DMs: `/setprivacy` → Disable
+7. **Bot Privacy and Group Messages**:
+   - `/setprivacy` → **Enable** (default): Bot sees only messages addressed to it (commands, replies, mentions)
+   - `/setprivacy` → **Disable**: Bot sees ALL group messages (broadens visibility, not DM-only)
+   - Neither setting restricts bot to DMs only
+   - For DM-focused bots: Use OpenClaw `dmPolicy: "allowlist"` + `groupPolicy: "disabled"` in config
+   - Reference: https://core.telegram.org/bots/features#privacy-mode
 
 ### Step 3: Implement Enrollment Mini App
 
@@ -283,15 +308,16 @@ Implementation checklist:
 
 **NOT YET IMPLEMENTED** (requires production World ID API client).
 
-Replace `WorldIdVerifierStub` with `WorldIdVerifierProduction`:
+**PLANNED PSEUDOCODE (NOT RUNNABLE)**:
+
+The `WorldIdVerifierProduction` class exists as a placeholder that throws "not implemented" errors. Future implementation would:
 
 ```typescript
+// PSEUDOCODE ONLY - WorldIdVerifierProduction constructor signature unknown
 import { WorldIdVerifierProduction } from './src/verifier-stub.js';
 
-const verifier = new WorldIdVerifierProduction(
-  process.env.WORLDID_RP_ID!,
-  process.env.WORLDID_VERIFY_ENDPOINT
-);
+// Constructor parameters not yet defined
+const verifier = new WorldIdVerifierProduction(rpId, endpoint);
 ```
 
 Implementation requirements:
@@ -304,25 +330,25 @@ Implementation requirements:
 
 **NOT YET IMPLEMENTED** (requires database integration).
 
-Replace `InMemoryEnrollmentStore` with `PostgreSQLEnrollmentStore` or similar:
+**PLANNED PSEUDOCODE (NOT RUNNABLE)**:
+
+No `PostgreSQLEnrollmentStore` class exists. Future implementation would require:
 
 ```typescript
-import { PostgreSQLEnrollmentStore } from './src/enrollment-store.js';
+// PSEUDOCODE ONLY - class does not exist
+import { DurableEnrollmentStore } from './src/enrollment-store.js';
 
-const store = new PostgreSQLEnrollmentStore({
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
+const store = new DurableEnrollmentStore({
+  // Configuration TBD
 });
 ```
 
-Database schema (example for PostgreSQL):
+**Proposed database schema** (illustrative, NOT policy-approved):
 
 ```sql
 CREATE TABLE enrollments (
   telegram_user_id BIGINT PRIMARY KEY,
-  world_id_nullifier TEXT NOT NULL UNIQUE,
+  world_id_nullifier TEXT NOT NULL,  -- UNIQUE constraint pending policy decision
   enrolled_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
   action TEXT NOT NULL,
@@ -331,26 +357,35 @@ CREATE TABLE enrollments (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Indexes for performance
 CREATE INDEX idx_expires_at ON enrollments(expires_at);
-CREATE INDEX idx_nullifier ON enrollments(world_id_nullifier);
+-- Unique nullifier constraint pending Bob's uniqueness policy decision
 ```
+
+**Privacy note**: Logging plaintext nullifiers and user IDs raises privacy concerns. Minimization strategy unresolved.
 
 ### Step 6: Self-Verification (Real)
 
 **DO NOT PERFORM THIS STEP NOW** (requires all previous steps completed).
 
-When all implementation is complete:
+**PLANNED PROCEDURE (NOT RUNNABLE, NO IMPLEMENTATION)**:
 
-1. Start verification bot: `npm run start:verify-bot`
+When all components are implemented and deployed:
+
+1. Start verification bot (command TBD, no `npm run start:verify-bot` script exists)
 2. Send `/verify` to your verification bot in Telegram DM
 3. Click enrollment link (opens Mini App)
 4. Complete World ID verification via IDKit
-5. Verify enrollment created in database:
-   ```bash
-   psql $DATABASE_URL -c "SELECT * FROM enrollments WHERE telegram_user_id = YOUR_ID;"
-   ```
+5. Verify enrollment created in database (query depends on final schema)
 6. Test admission with your main bot
-7. Verify "Human Verified" tag appears in group (if enabled)
+7. Check for "Human Verified" tag in group (if implemented)
+
+**Current blockers**:
+- No verification bot implementation
+- No enrollment Mini App
+- No durable database
+- No OpenClaw integration
+- No tag management implementation
 
 ## OpenClaw Integration
 
@@ -358,16 +393,20 @@ When all implementation is complete:
 
 The current starter does NOT automatically sync enrollments to OpenClaw config. Operators must manually update `openclaw.config.json5`.
 
-### Manual Allowlist Update
+### Manual Allowlist Update (Current Workaround)
 
-1. Get enrolled Telegram user IDs from store:
+**Note**: `InMemoryEnrollmentStore` has no `listValid()` method. Manual inspection required.
+
+**PLANNED PSEUDOCODE (NOT RUNNABLE)**:
+
+1. Future durable store might provide query methods:
    ```typescript
+   // PSEUDOCODE - method does not exist on InMemoryEnrollmentStore
    const enrollments = await store.listValid();
    const userIds = enrollments.map(e => e.telegramUserId);
-   console.log(userIds); // [123456789, 987654321, ...]
    ```
 
-2. Edit OpenClaw config (`openclaw.config.json5`):
+2. Edit OpenClaw configuration file (filename and location depend on your OpenClaw setup):
    ```json5
    {
      channels: {
@@ -379,7 +418,7 @@ The current starter does NOT automatically sync enrollments to OpenClaw config. 
          groups: {
            "-1001234567890": {
              requireMention: true,
-             groupAllowFrom: [123456789, 987654321] // Copy enrolled IDs here
+             groupAllowFrom: [123456789, 987654321] // Add enrolled IDs
            }
          }
        }
@@ -387,10 +426,9 @@ The current starter does NOT automatically sync enrollments to OpenClaw config. 
    }
    ```
 
-3. Restart OpenClaw to apply changes:
-   ```bash
-   openclaw restart
-   ```
+3. Reload OpenClaw configuration (command depends on your OpenClaw installation and deployment method)
+
+**Current limitation**: No automatic sync implemented. Operator must manually maintain consistency between enrollment registry and OpenClaw allowlist.
 
 ### Future Automatic Sync
 

@@ -121,7 +121,7 @@ export class AdmissionGate {
     }
 
     const now = this.clock.nowSeconds();
-    if (enrollment.expiresAt < now) {
+    if (enrollment.expiresAt <= now) {
       return {
         allowed: false,
         reason: 'Enrollment has expired',
