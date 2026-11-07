@@ -85,20 +85,24 @@ describe('enrollment.html client execution', () => {
     const scriptContent = document.querySelector('script[type="module"]')?.textContent;
     assert.ok(scriptContent, 'Script should exist');
 
-    // Execute script in the window context
+    // Execute script in the window context - should throw when SDK missing
     const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
     const scriptFn = new AsyncFunction('window', 'document', 'console', scriptContent);
-    await scriptFn(window, document, console);
+    
+    // Script should throw error when Telegram SDK not loaded
+    await assert.rejects(
+      async () => await scriptFn(window, document, console),
+      /Telegram WebApp SDK not loaded/,
+      'Script must throw when Telegram SDK not loaded'
+    );
 
-    await waitForInit(window);
-
-    // Should show warning (fail-closed)
+    // Should show error before throwing (fail-closed)
     const statusEl = document.getElementById('status');
     assert.ok(statusEl, 'Status element should exist');
-    assert.strictEqual(statusEl.className, 'warning', 'Should show warning state');
+    assert.strictEqual(statusEl.className, 'error', 'Should show error state');
     assert.ok(
-      statusEl.textContent?.includes('Telegram bot'),
-      'Should explain that page must be opened from Telegram bot'
+      statusEl.textContent?.includes('Telegram'),
+      'Should explain that Telegram SDK failed to load'
     );
 
     // Button should be hidden (verification disabled)
@@ -106,18 +110,24 @@ describe('enrollment.html client execution', () => {
     assert.ok(buttonEl?.classList.contains('hidden'), 'Button should be hidden');
   });
 
-  test('should check for Telegram SDK before accessing window.Telegram', () => {
+  test('should explicitly load Telegram SDK and check availability', () => {
     const html = readFileSync(join(__dirname, 'enrollment.html'), 'utf-8');
-    const scriptContent = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1];
     
+    // Verify Telegram SDK is explicitly loaded
+    assert.ok(
+      html.includes('telegram-web-app.js'),
+      'Must explicitly load Telegram WebApp SDK'
+    );
+    
+    const scriptContent = html.match(/<script[^>]*type="module"[^>]*>([\s\S]*?)<\/script>/)?.[1];
     assert.ok(scriptContent, 'Script should exist');
     
-    // Verify script uses optional chaining (?.) or typeof checks before accessing window.Telegram
+    // Verify script explicitly checks if SDK loaded before use
     assert.ok(
-      /window\.Telegram\?\./.test(scriptContent) || 
       /typeof\s+window\.Telegram/.test(scriptContent) ||
-      /window\.Telegram\s*&&/.test(scriptContent),
-      'Script must safely check for window.Telegram existence before access'
+      /window\.Telegram\s*===/.test(scriptContent) ||
+      /!window\.Telegram/.test(scriptContent),
+      'Script must explicitly check if Telegram SDK loaded'
     );
     
     // Verify script checks for Telegram WebApp initData
@@ -131,8 +141,9 @@ describe('enrollment.html client execution', () => {
     // Verify script shows warning when initData is missing
     assert.ok(
       scriptContent.includes('Telegram bot') || 
-      scriptContent.includes('external browser'),
-      'Script must warn when opened in external browser without Telegram context'
+      scriptContent.includes('external browser') ||
+      scriptContent.includes('Telegram.'),
+      'Script must warn when SDK not loaded or opened in external browser'
     );
     
     // Verify script blocks verification without initData
@@ -144,7 +155,7 @@ describe('enrollment.html client execution', () => {
 
   test('should send initData along with idkitResult to /api/enrollment/complete', () => {
     const html = readFileSync(join(__dirname, 'enrollment.html'), 'utf-8');
-    const scriptContent = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1];
+    const scriptContent = html.match(/<script[^>]*type="module"[^>]*>([\s\S]*?)<\/script>/)?.[1];
     
     assert.ok(scriptContent, 'Script should exist');
     

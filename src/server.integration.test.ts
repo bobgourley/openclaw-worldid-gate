@@ -7,11 +7,18 @@
  * - Throwaway test configuration
  * - Fake remote transport (no live Telegram API calls)
  * - Security boundary validation (secrets, auth, CORS)
+ * 
+ * TERMINOLOGY:
+ * - Telegram webhook secret: X-Telegram-Bot-Api-Secret-Token header (shared secret)
+ * - Telegram initData HMAC: HMAC-SHA256 signature in initData string (validates user identity)
+ * These are separate security mechanisms - webhook uses shared secret header,
+ * initData validation uses HMAC computed from bot token.
  */
 
 import { test, describe, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { unlinkSync } from 'node:fs';
+import { createHmac } from 'node:crypto';
 import { EnrollmentService } from './enrollment-service-production.js';
 import { WorldIdChallengeAdapter } from './worldid-challenge-adapter.js';
 import { WorldIdHttpVerifier } from './worldid-verifier-http.js';
@@ -144,22 +151,28 @@ describe('Production server integration', () => {
       assert.ok(!html.includes(TEST_CONFIG.worldIdSigningKey), 'Should not contain signing key');
     });
 
-    test('GET /enrollment verifies Telegram SDK load before access', async () => {
+    test('GET /enrollment loads Telegram SDK and checks availability', async () => {
       const response = await fetch(`http://127.0.0.1:${testPort}/enrollment`);
       const html = await response.text();
       
+      // Verify Telegram SDK is loaded
+      assert.ok(
+        html.includes('telegram-web-app.js'),
+        'Should load Telegram WebApp SDK'
+      );
+      
       // Extract script content
-      const scriptMatch = html.match(/<script[^>]*>([\s\S]*?)<\/script>/);
-      assert.ok(scriptMatch, 'Should have script tag');
+      const scriptMatch = html.match(/<script[^>]*type="module"[^>]*>([\s\S]*?)<\/script>/);
+      assert.ok(scriptMatch, 'Should have module script tag');
       
       const script = scriptMatch[1];
       
-      // Verify safe access patterns
+      // Verify explicit SDK availability check
       assert.ok(
-        /window\.Telegram\?\./.test(script) || 
         /typeof\s+window\.Telegram/.test(script) ||
-        /window\.Telegram\s*&&/.test(script),
-        'Should safely check window.Telegram before access'
+        /window\.Telegram\s*===\s*['"]undefined['"]/.test(script) ||
+        /!window\.Telegram/.test(script),
+        'Should explicitly check window.Telegram availability'
       );
     });
   });
@@ -303,8 +316,58 @@ describe('Production server integration', () => {
       assert.match(data.error, /initData/i);
     });
 
-    test('POST /api/enrollment/complete with invalid authentication denies', async () => {
-      // Attempt completion with fabricated initData (invalid HMAC)
+    test('POST /api/enrollment/complete cross-account denial (valid HMAC, wrong user)', async () => {
+      // Generate valid initData HMAC for user 111
+      const authDate111 = Math.floor(Date.now() / 1000);
+      const user111 = JSON.stringify({ id: 111, first_name: 'User111' });
+      const dataCheckString111 = `auth_date=${authDate111}\nuser=${user111}`;
+      const secretKey111 = createHmac('sha256', 'WebAppData').update(TEST_CONFIG.telegramBotToken).digest();
+      const hash111 = createHmac('sha256', secretKey111).update(dataCheckString111).digest('hex');
+      const initData111 = `user=${encodeURIComponent(user111)}&auth_date=${authDate111}&hash=${hash111}`;
+      
+      // Create challenge for user 111
+      const challengeResult = await enrollmentService.createChallenge(initData111);
+      
+      // Generate valid initData HMAC for user 222 (different account)
+      const authDate222 = Math.floor(Date.now() / 1000);
+      const user222 = JSON.stringify({ id: 222, first_name: 'User222' });
+      const dataCheckString222 = `auth_date=${authDate222}\nuser=${user222}`;
+      const secretKey222 = createHmac('sha256', 'WebAppData').update(TEST_CONFIG.telegramBotToken).digest();
+      const hash222 = createHmac('sha256', secretKey222).update(dataCheckString222).digest('hex');
+      const initData222 = `user=${encodeURIComponent(user222)}&auth_date=${authDate222}&hash=${hash222}`;
+      
+      // Attempt to complete user 111's session with user 222's valid initData
+      const response = await fetch(`http://127.0.0.1:${testPort}/api/enrollment/complete`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          initData: initData222,
+          idkitResult: {
+            protocol_version: '4.0',
+            nonce: challengeResult.signedChallenge.nonce,
+            action: TEST_CONFIG.action,
+            responses: [{
+              identifier: 'proof_of_human',
+              proof: ['1', '2', '3', '4', '5'],
+              nullifier: '12345',
+              issuer_schema_id: 1,
+              expires_at_min: Math.floor(Date.now() / 1000) + 86400,
+            }],
+            environment: 'staging',
+          },
+        }),
+      });
+      
+      // Should fail with account mismatch (both HMACs valid, but different users)
+      assert.ok(response.status >= 400, 'Should deny cross-account completion');
+      const data = await response.json();
+      assert.ok(data.error, 'Should return error message');
+    });
+
+    test('POST /api/enrollment/complete with invalid HMAC denies', async () => {
+      // Attempt completion with fabricated initData (invalid HMAC signature)
       const authDate = Math.floor(Date.now() / 1000);
       const fakeHash = 'a'.repeat(64);
       const invalidInitData = `user=%7B%22id%22%3A999%7D&auth_date=${authDate}&hash=${fakeHash}`;
@@ -332,8 +395,8 @@ describe('Production server integration', () => {
         }),
       });
       
-      // Should fail with authentication error (invalid HMAC)
-      assert.equal(response.status, 401, 'Should deny invalid authentication');
+      // Should fail with authentication error (invalid Telegram initData HMAC)
+      assert.equal(response.status, 401, 'Should deny invalid initData HMAC');
       const data = await response.json();
       assert.ok(data.error, 'Should return error message');
     });
