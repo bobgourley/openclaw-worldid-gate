@@ -11,6 +11,8 @@
 
 import type { EnrollmentService } from './enrollment-service-production.js';
 import { createHmac } from 'node:crypto';
+import type { OpenClawDispatchConfig } from './openclaw-dispatcher.js';
+import { dispatchToOpenClaw } from './openclaw-dispatcher.js';
 
 /**
  * Telegram update structure (incoming from Bot API).
@@ -65,6 +67,12 @@ export interface TelegramBotHandlerConfig {
   
   /** Webhook secret for validation (optional, recommended) */
   webhookSecret?: string;
+  
+  /** OpenClaw dispatcher config (optional, enables /ask command) */
+  openclawConfig?: OpenClawDispatchConfig;
+  
+  /** Allowed group ID for OpenClaw dispatch (required if openclawConfig set) */
+  allowedGroupId?: number;
 }
 
 /**
@@ -76,7 +84,10 @@ export class TelegramBotHandler {
   private readonly transport: TelegramBotTransport;
   private readonly enrollmentBaseUrl: string;
   private readonly webhookSecret?: string;
+  private readonly openclawConfig?: OpenClawDispatchConfig;
+  private readonly allowedGroupId?: number;
   private readonly activeSessions: Map<number, { sessionId: string; createdAt: number }> = new Map();
+  private readonly recentDeliveries: Map<string, number> = new Map();
 
   constructor(config: TelegramBotHandlerConfig) {
     if (!config.botToken || typeof config.botToken !== 'string' || config.botToken.length === 0) {
@@ -97,6 +108,18 @@ export class TelegramBotHandler {
     this.transport = config.transport;
     this.enrollmentBaseUrl = config.enrollmentBaseUrl;
     this.webhookSecret = config.webhookSecret;
+    this.openclawConfig = config.openclawConfig;
+    this.allowedGroupId = config.allowedGroupId;
+    
+    // Validate OpenClaw config if provided
+    if (this.openclawConfig) {
+      if (!this.webhookSecret) {
+        throw new Error('Webhook secret required when OpenClaw integration enabled');
+      }
+      if (!this.allowedGroupId) {
+        throw new Error('Allowed group ID required when OpenClaw integration enabled');
+      }
+    }
   }
 
   /**
@@ -155,13 +178,22 @@ export class TelegramBotHandler {
       return;
     }
 
-    // Only private chats supported (fail-closed)
+    // Handle group messages only if OpenClaw enabled and allowed
     if (message.chat.type !== 'private') {
-      // Send error to group/channel
-      await this.transport.sendMessage(
-        message.chat.id,
-        '⚠️ World ID verification is only available in private chat with the bot. Please message me directly.'
-      ).catch(err => console.error('Failed to send group error:', err));
+      if (this.openclawConfig && message.chat.id === this.allowedGroupId) {
+        // OpenClaw dispatch in allowed group
+        const text = message.text?.trim() || '';
+        if (text.startsWith('/ask ')) {
+          await this.handleOpenClawCommand(message.from.id, message.chat.id, text.slice(5).trim(), update.update_id);
+        }
+        // Silently ignore other messages in group
+      } else {
+        // Send error to unauthorized group/channel
+        await this.transport.sendMessage(
+          message.chat.id,
+          '⚠️ World ID verification is only available in private chat with the bot. Please message me directly.'
+        ).catch(err => console.error('Failed to send group error:', err));
+      }
       return;
     }
 
@@ -178,8 +210,15 @@ export class TelegramBotHandler {
     } else if (text === '/status') {
       await this.handleStatusCommand(message.from.id);
     } else if (text.startsWith('/ask ')) {
-      // OpenClaw CLI dispatch command (gated by World ID enrollment)
-      await this.handleOpenClawCommand(message.from.id, message.chat.id, text.slice(5).trim());
+      // OpenClaw CLI dispatch command (private chat only)
+      if (this.openclawConfig) {
+        await this.handleOpenClawCommand(message.from.id, message.chat.id, text.slice(5).trim(), update.update_id);
+      } else {
+        await this.transport.sendMessage(
+          message.from.id,
+          '❌ OpenClaw integration not enabled.'
+        ).catch(err => console.error('Failed to send error:', err));
+      }
     } else if (text.startsWith('/')) {
       // Unknown command (fail-closed)
       await this.transport.sendMessage(
@@ -202,16 +241,36 @@ export class TelegramBotHandler {
    * - Numeric human sender (already validated)
    * - Fresh enrollment check before dispatch
    * - Bounded CLI execution
-   * - Private chat only
+   * - Duplicate suppression
    */
-  private async handleOpenClawCommand(userId: number, chatId: number, query: string): Promise<void> {
+  private async handleOpenClawCommand(userId: number, chatId: number, query: string, updateId: number): Promise<void> {
+    if (!this.openclawConfig) {
+      return;
+    }
+
     try {
       if (!query) {
         await this.transport.sendMessage(chatId, '❌ Usage: /ask <your question>');
         return;
       }
 
-      // Fresh enrollment check (admission boundary)
+      // Duplicate suppression (5-minute window)
+      const deliveryKey = `${userId}:${chatId}:${updateId}`;
+      const now = Date.now();
+      const recentTime = this.recentDeliveries.get(deliveryKey);
+      if (recentTime && now - recentTime < 300000) {
+        console.log(`Duplicate delivery suppressed: ${deliveryKey}`);
+        return;
+      }
+
+      // Clean old delivery records
+      for (const [key, time] of this.recentDeliveries.entries()) {
+        if (now - time > 600000) {
+          this.recentDeliveries.delete(key);
+        }
+      }
+
+      // Fresh enrollment check (admission boundary - checked after async prep, right before spawn)
       const enrollment = await this.enrollmentService.findEnrollment(userId);
       
       if (!enrollment) {
@@ -238,14 +297,26 @@ export class TelegramBotHandler {
         return;
       }
 
-      // Dispatch to OpenClaw CLI would happen here
-      // For now, respond with placeholder
-      await this.transport.sendMessage(
-        chatId,
-        `✅ Verified enrollment found.\n\n` +
-        `Query: "${query}"\n\n` +
-        `(OpenClaw CLI integration pending)`
-      );
+      // Mark as delivered BEFORE dispatch to prevent concurrent duplicates
+      this.recentDeliveries.set(deliveryKey, now);
+
+      // Dispatch to OpenClaw CLI
+      const result = await dispatchToOpenClaw(this.openclawConfig, {
+        telegramUserId: userId,
+        chatId: chatId,
+        text: query,
+      });
+
+      if (result.success && result.response) {
+        // Send bounded model response to same chat
+        const responseText = result.response.slice(0, 4096);
+        await this.transport.sendMessage(chatId, responseText);
+      } else if (result.timeout) {
+        await this.transport.sendMessage(chatId, '⏱️ Request timed out.');
+      } else {
+        await this.transport.sendMessage(chatId, '❌ Request failed.');
+        console.error('OpenClaw dispatch error:', result.error);
+      }
 
     } catch (error: any) {
       console.error('OpenClaw command error:', error);

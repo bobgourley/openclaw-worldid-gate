@@ -694,4 +694,31 @@ export class EnrollmentService {
   close(): void {
     this.db.close();
   }
+
+  /**
+   * Direct enrollment for testing (bypasses full verification flow).
+   * DO NOT use in production.
+   */
+  async directEnroll(params: {
+    telegramUserId: number;
+    nullifier: string;
+    credential: { credential_type: string };
+  }): Promise<void> {
+    const now = this.clock.nowSeconds();
+    const expiresAt = now + this.enrollmentTtlSeconds;
+
+    const stmt = this.db.prepare(`
+      INSERT INTO enrollments (telegram_user_id, action, nullifier, expires_at, created_at, revoked, revoked_at, revoked_at_seconds)
+      VALUES (?, ?, ?, ?, ?, 0, NULL, NULL)
+      ON CONFLICT (telegram_user_id, action) DO UPDATE SET
+        nullifier = excluded.nullifier,
+        expires_at = excluded.expires_at,
+        created_at = excluded.created_at,
+        revoked = 0,
+        revoked_at = NULL,
+        revoked_at_seconds = NULL
+    `);
+
+    stmt.run(params.telegramUserId, this.action, params.nullifier, expiresAt, now);
+  }
 }

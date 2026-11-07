@@ -32,6 +32,15 @@ const config = {
   // HTTP configuration
   httpHost: process.env.HTTP_HOST || '127.0.0.1',
   httpPort: parseInt(process.env.HTTP_PORT || '3000', 10),
+  
+  // OpenClaw integration (OPTIONAL)
+  openclawEnabled: process.env.OPENCLAW_ENABLED === 'true',
+  openclawBin: process.env.OPENCLAW_BIN || '/usr/local/bin/openclaw',
+  openclawAgent: process.env.OPENCLAW_AGENT || '',
+  openclawProfile: process.env.OPENCLAW_PROFILE,
+  openclawTimeout: parseInt(process.env.OPENCLAW_TIMEOUT || '30', 10),
+  openclawAllowedGroupId: process.env.OPENCLAW_ALLOWED_GROUP ? parseInt(process.env.OPENCLAW_ALLOWED_GROUP, 10) : undefined,
+  openclawAccountId: process.env.OPENCLAW_ACCOUNT_ID || 'default',
 };
 
 // Production readiness check (fail-closed)
@@ -138,12 +147,42 @@ async function main(): Promise<void> {
 
   // Create Telegram bot handler
   const telegramTransport = new TelegramHttpTransport(config.telegramBotToken);
+  
+  // Build OpenClaw config if enabled
+  let openclawConfig;
+  if (config.openclawEnabled) {
+    if (!config.openclawAgent) {
+      console.error('FATAL: OPENCLAW_AGENT required when OPENCLAW_ENABLED=true');
+      process.exit(1);
+    }
+    if (!config.openclawAllowedGroupId) {
+      console.error('FATAL: OPENCLAW_ALLOWED_GROUP required when OPENCLAW_ENABLED=true');
+      process.exit(1);
+    }
+    
+    openclawConfig = {
+      openclawBin: config.openclawBin,
+      agentId: config.openclawAgent,
+      telegramAccountId: config.openclawAccountId,
+      timeoutSeconds: config.openclawTimeout,
+      maxOutputBytes: 1024 * 1024, // 1MB
+      profile: config.openclawProfile,
+    };
+    
+    console.log('OpenClaw integration enabled:');
+    console.log(`  Agent: ${config.openclawAgent}`);
+    console.log(`  Allowed group: ${config.openclawAllowedGroupId}`);
+    console.log(`  Profile: ${config.openclawProfile || '(default)'}`);
+  }
+  
   const telegramBotHandler = new TelegramBotHandler({
     botToken: config.telegramBotToken,
     enrollmentService,
     transport: telegramTransport,
     enrollmentBaseUrl: config.enrollmentBaseUrl,
     webhookSecret: config.telegramWebhookSecret,
+    openclawConfig,
+    allowedGroupId: config.openclawAllowedGroupId,
   });
 
   // Create HTTP service with bot handler
