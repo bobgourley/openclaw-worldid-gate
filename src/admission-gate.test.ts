@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { AdmissionGate } from './admission-gate.js';
 import { WorldIdVerifierStub } from './verifier-stub.js';
 import { InMemoryEnrollmentStore } from './enrollment-store.js';
+import { FakeClock } from './clock.js';
 import {
   createTelegramUpdate,
   createBotUpdate,
@@ -20,7 +21,7 @@ import {
   createInvalidWorldIdProof,
   createExpiredWorldIdProof,
 } from './fixtures.js';
-import type { GateConfig } from './types.js';
+import type { GateConfig, TelegramUpdate } from './types.js';
 
 const TEST_CONFIG: GateConfig = {
   rpId: 'rp_test123',
@@ -31,15 +32,16 @@ const TEST_CONFIG: GateConfig = {
   allowTestMode: true,
 };
 
-function createGate(): {
+function createGate(clock?: FakeClock): {
   gate: AdmissionGate;
   verifier: WorldIdVerifierStub;
   store: InMemoryEnrollmentStore;
+  clock?: FakeClock;
 } {
   const verifier = new WorldIdVerifierStub();
   const store = new InMemoryEnrollmentStore();
-  const gate = new AdmissionGate(TEST_CONFIG, verifier, store);
-  return { gate, verifier, store };
+  const gate = new AdmissionGate(TEST_CONFIG, verifier, store, clock);
+  return { gate, verifier, store, clock };
 }
 
 describe('AdmissionGate', () => {
@@ -153,15 +155,16 @@ describe('AdmissionGate', () => {
     });
 
     it('rejects expired enrollment with ZERO downstream calls', async () => {
-      const { gate, verifier } = createGate();
+      const clock = new FakeClock(1000000);
+      const { gate, verifier } = createGate(clock);
       const userId = 44444;
       const nullifier = '0xvalid456';
 
       verifier.addValidNullifier(nullifier);
       const proof = createWorldIdProof({ nullifier, action: TEST_CONFIG.action });
-      await gate.enroll(userId, proof, 1);
+      await gate.enroll(userId, proof, 10);
 
-      await new Promise((resolve) => setTimeout(resolve, 2100));
+      clock.advance(11);
 
       const update = createTelegramUpdate({ userId });
       const result = await gate.checkAdmission({
@@ -331,6 +334,122 @@ describe('AdmissionGate', () => {
       const enrollResult2 = await gate.enroll(userId, proof2);
       assert.equal(enrollResult2.success, false);
       assert.match(enrollResult2.error ?? '', /already enrolled/i);
+    });
+  });
+
+  describe('malformed inputs and trust boundary', () => {
+    it('rejects malformed admission request (null)', async () => {
+      const { gate } = createGate();
+      const result = await gate.checkAdmission(null as any);
+      assert.equal(result.allowed, false);
+      assert.match(result.reason, /malformed/i);
+    });
+
+    it('rejects malformed admission request (missing update)', async () => {
+      const { gate } = createGate();
+      const result = await gate.checkAdmission({ timestamp: Date.now() } as any);
+      assert.equal(result.allowed, false);
+      assert.match(result.reason, /malformed/i);
+    });
+
+    it('rejects negative user ID', async () => {
+      const { gate } = createGate();
+      const malformedUpdate = {
+        update_id: 1,
+        message: {
+          message_id: 1,
+          from: { id: -12345, is_bot: false, first_name: 'Test' },
+          date: Math.floor(Date.now() / 1000),
+          chat: { id: -12345, type: 'private' as const },
+          text: 'hello',
+        },
+      };
+      const result = await gate.checkAdmission({
+        telegramUpdate: malformedUpdate,
+        timestamp: Date.now(),
+      });
+      assert.equal(result.allowed, false);
+      assert.match(result.reason, /invalid.*positive/i);
+    });
+
+    it('rejects zero user ID', async () => {
+      const { gate } = createGate();
+      const malformedUpdate = {
+        update_id: 1,
+        message: {
+          message_id: 1,
+          from: { id: 0, is_bot: false, first_name: 'Test' },
+          date: Math.floor(Date.now() / 1000),
+          chat: { id: 0, type: 'private' as const },
+          text: 'hello',
+        },
+      };
+      const result = await gate.checkAdmission({
+        telegramUpdate: malformedUpdate,
+        timestamp: Date.now(),
+      });
+      assert.equal(result.allowed, false);
+      assert.match(result.reason, /invalid.*positive/i);
+    });
+
+    it('rejects enrollment with negative user ID', async () => {
+      const { gate, verifier } = createGate();
+      const nullifier = '0xnegative123';
+      verifier.addValidNullifier(nullifier);
+      const proof = createWorldIdProof({ nullifier, action: TEST_CONFIG.action });
+      const result = await gate.enroll(-12345, proof);
+      assert.equal(result.success, false);
+      assert.match(result.error ?? '', /invalid.*positive/i);
+    });
+
+    it('rejects enrollment with zero user ID', async () => {
+      const { gate, verifier } = createGate();
+      const nullifier = '0xzero123';
+      verifier.addValidNullifier(nullifier);
+      const proof = createWorldIdProof({ nullifier, action: TEST_CONFIG.action });
+      const result = await gate.enroll(0, proof);
+      assert.equal(result.success, false);
+      assert.match(result.error ?? '', /invalid.*positive/i);
+    });
+
+    it('rejects edited message update type', async () => {
+      const { gate } = createGate();
+      const editedUpdate: TelegramUpdate = {
+        update_id: 1,
+        edited_message: {
+          message_id: 1,
+          from: { id: 12345, is_bot: false, first_name: 'Test' },
+          date: Math.floor(Date.now() / 1000),
+          chat: { id: 12345, type: 'private' },
+          text: 'edited',
+        },
+      };
+      const result = await gate.checkAdmission({
+        telegramUpdate: editedUpdate,
+        timestamp: Date.now(),
+      });
+      assert.equal(result.allowed, false);
+      assert.equal(result.reason, 'No enrollment found for Telegram user ID');
+    });
+
+    it('rejects sender_chat (anonymous channel admin)', async () => {
+      const { gate } = createGate();
+      const senderChatUpdate: TelegramUpdate = {
+        update_id: 1,
+        message: {
+          message_id: 1,
+          sender_chat: { id: -100123, type: 'channel', title: 'Channel' },
+          date: Math.floor(Date.now() / 1000),
+          chat: { id: -100123, type: 'channel', title: 'Channel' },
+          text: 'anonymous',
+        },
+      };
+      const result = await gate.checkAdmission({
+        telegramUpdate: senderChatUpdate,
+        timestamp: Date.now(),
+      });
+      assert.equal(result.allowed, false);
+      assert.match(result.reason, /no authenticated.*user id/i);
     });
   });
 });

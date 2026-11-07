@@ -73,28 +73,43 @@ Enrollment binds a Telegram user ID to a World ID nullifier:
 
 ### 5. Credential Types and Assurance Levels
 
-World ID 4.0 supports multiple credential identifiers:
-- `proof_of_human` - Orb verification (highest assurance)
-- `orb` - Legacy identifier for Orb verification
-- `selfie` - Selfie Check verification (lower assurance, includes sybil_score)
+World ID 4.0 supports multiple credential types:
+- **Proof of Human** (`identifier: "proof_of_human"`, `issuer_schema_id: 1`) - Orb biometric verification, highest assurance, three-year validity
+- **Proof of Presence** (`identifier: "selfie"`, `issuer_schema_id: 11`) - Device camera verification, medium assurance, includes sybil_score
 
-**Configuration option:** `requireProofOfHuman: true` restricts admission to Orb-verified credentials only.
+**Configuration option:** `requireProofOfHuman: true` (default) restricts admission to Orb-verified Proof of Human credentials only.
 
-**Reference:** https://docs.world.org/world-id/4-0-migration
+**Legacy World ID 3.0:** Used different identifiers ("orb", "face"). This starter targets v4 only and does not support v3 proofs.
+
+**References:**
+- Proof of Human: https://docs.world.org/world-id/credentials/1
+- Proof of Presence: https://docs.world.org/world-id/credentials/11
+- Core Concepts: https://docs.world.org/world-id/concepts
 
 ### 6. Nullifier Scope and Replay Protection
 
-World ID 4.0 uses action-specific nullifiers:
+**Uniqueness Proofs (Implemented in this starter):**
+
+For one-time actions, World ID generates nullifiers that are unique per (user, RP, action):
 - Each proof is tied to a specific `action` string
-- Nullifiers are unique per (user, action) pair
-- This prevents proof reuse across different applications
+- Same user + same RP + same action = same nullifier
+- This prevents proof replay for that action
+- Different actions generate different nullifiers
 - Action string must match between enrollment and admission check
 
-**Session proofs:** For returning users, World ID 4.0 supports session proofs with:
-- `session_id` - stable identifier across multiple requests
-- `session_nullifier` - per-proof replay protection
+**Reference:** https://docs.world.org/world-id/concepts
 
-This starter implements uniqueness proofs (one-time enrollment). Session proofs are not yet implemented.
+**Session Proofs (NOT implemented in this starter):**
+
+For returning users, World ID 4.0 supports session proofs with:
+- `session_id` - stable identifier across multiple requests (format: `session_<128 hex chars>`)
+- `session_nullifier` - per-proof replay protection (tuple: `[nullifier, action]`)
+- Allows multiple verifications of the same user
+- Use case: re-authentication without re-enrollment
+
+This starter implements uniqueness proofs (one-time enrollment) only. Session proofs are not implemented.
+
+**Reference:** https://docs.world.org/world-id/idkit/session-proofs
 
 ### 7. Proof Freshness and Expiration
 
@@ -182,44 +197,64 @@ The following security features are documented but not implemented:
 
 ## Integration Points
 
-### OpenClaw Gateway Integration
+### OpenClaw Gateway Integration (UNKNOWN)
 
-The admission gate should be integrated at the OpenClaw gateway level:
+**The exact integration point in OpenClaw is unknown.** OpenClaw does not document a public API for admission gates or pre-agent hooks.
 
-```typescript
-// Pseudocode - NOT IMPLEMENTED
-openclaw.on('telegram:update', async (update) => {
-  const admissionResult = await gate.checkAdmission({
-    telegramUpdate: update,
-    timestamp: Date.now(),
-  });
+Official OpenClaw Telegram documentation (https://docs.openclaw.ai/channels/telegram/) covers:
+- Bot token configuration
+- Access control via `dmPolicy` and `allowFrom`
+- Pairing flow for DM approval
+- Group allowlists and mention gating
 
-  if (!admissionResult.allowed) {
-    await telegram.sendMessage(
-      update.message.chat.id,
-      'Access denied. Please enroll with World ID.'
-    );
-    return; // NO FURTHER PROCESSING
-  }
+**Unknown:**
+- Where to inject admission logic in message processing pipeline
+- How to access authenticated updates before agent processing
+- Whether OpenClaw provides middleware or hooks for this use case
+- How to prevent downstream agent calls after rejection
 
-  // Proceed to agent processing only if admitted
-  await agent.process(update);
-});
-```
+**Possible integration approaches (all unverified):**
+1. Modify OpenClaw source code to add admission hook
+2. Wrap OpenClaw Gateway with proxy that filters updates
+3. Use existing `allowFrom` allowlist dynamically (requires syncing with enrollments)
+4. Plugin architecture (if OpenClaw supports admission plugins)
 
-### Enrollment Flow (Proposed)
+**No working integration exists in this starter.** This is a standalone admission gate that would need to be wired into OpenClaw's message processing flow.
 
-Enrollment requires a separate flow that authenticates both identities:
+### Enrollment Flow (UNIMPLEMENTED - Proposed Only)
 
-1. User visits enrollment web interface
-2. User authenticates with Telegram (OAuth or bot deep link)
-3. User authenticates with World ID (IDKit widget)
-4. Backend receives both authenticated identities
-5. Backend validates World ID proof via verification API
-6. Backend creates enrollment binding (Telegram ID + World ID nullifier)
-7. User can now message the bot
+**CRITICAL:** The `enroll()` function in this starter is a TEST-ONLY helper that accepts arbitrary parameters WITHOUT authenticating the binding between Telegram user ID and World ID proof.
 
-**UNIMPLEMENTED:** This enrollment flow does not exist in this starter.
+**Insufficiencies:**
+- Caller-supplied Telegram user ID is not authenticated
+- Proof possession does not prove Telegram account ownership
+- No challenge prevents copied proofs from being bound to different accounts
+- No session binding validates the user controls both identities
+
+**Proposed production enrollment flow:**
+
+1. User sends `/enroll` command to Telegram bot
+2. Bot generates unique nonce and enrollment challenge URL
+3. User opens URL, presented with World ID IDKit widget
+4. IDKit requests proof with:
+   - `action: "openclaw-enrollment"`
+   - `nonce: <unique-challenge-nonce>`
+   - `signal: <telegram-user-id>` (signed into proof)
+5. User completes World ID verification in World App
+6. Frontend receives proof, sends to backend with:
+   - World ID proof (contains signed signal with Telegram user ID)
+   - Nonce (for replay protection)
+   - Telegram bot session token (proves user controls Telegram account)
+7. Backend validates:
+   - World ID proof via verification API
+   - Nonce freshness and unused status
+   - Signal matches claimed Telegram user ID
+   - Telegram session token authenticity (proves account control)
+   - No existing enrollment for either identity
+8. Backend creates enrollment binding atomically
+9. User confirmed via bot message
+
+**This enrollment flow does not exist in this starter.** The `enroll()` function is unsafe for production use.
 
 ## Testing Guarantees
 

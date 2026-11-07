@@ -24,31 +24,35 @@ This admission gate sits between Telegram updates and your OpenClaw agent:
 
 World ID 4.0 provides multiple credential types with different assurance levels:
 
-### proof_of_human (Orb Verification)
+### Proof of Human (identifier: "proof_of_human")
 
-The highest assurance credential. Requires in-person verification at an Orb device:
+The highest assurance credential (issuer_schema_id: 1). Requires in-person verification at an Orb device:
 - User scans their iris at a physical Orb
 - Cryptographic proof generated that user is unique human
-- Cannot be spoofed with photos, videos, or deepfakes
+- Three-year validity period from issuance
 - Default credential required by this gate (configurable)
 
 **Assurance:** Highest. Biometric verification with liveness detection.
 
-### selfie (Selfie Check)
+**Source:** https://docs.world.org/world-id/credentials/1
 
-Lower assurance credential using face recognition:
+### Proof of Presence (identifier: "selfie")
+
+Medium-assurance credential (issuer_schema_id: 11) using device camera:
 - User takes selfie in World App
-- Face matching against previous enrollments
+- Face matching with liveness detection
 - Includes `sybil_score` risk signal (0-10, higher = more suspicious)
 - Faster enrollment, lower friction
 
-**Assurance:** Medium. Vulnerable to sophisticated presentation attacks.
+**Assurance:** Medium. Camera-based biometric credential.
 
 **Note:** Selfie Check is NOT enabled by default in this gate. Set `requireProofOfHuman: false` to accept both credential types.
 
-### orb (Legacy)
+**Source:** https://docs.world.org/world-id/credentials/11
 
-Legacy identifier for Orb verification in World ID 3.0. Still accepted but `proof_of_human` is preferred in 4.0.
+### Legacy World ID 3.0 Identifiers
+
+World ID 3.0 used different identifier names ("orb", "face"). This starter targets World ID 4.0 only. Legacy v3 proofs are not supported.
 
 **Reference:** https://docs.world.org/world-id/4-0-migration
 
@@ -116,29 +120,46 @@ World ID supports multiple environments:
 
 ## Proof Freshness and Replay Protection
 
-### expires_at_min
+### Credential Validity Period
 
-Each proof contains `expires_at_min` (Unix timestamp):
+Proof of Human credentials have a three-year validity period from issuance:
+- `genesis_issued_at` - Unix timestamp of first PoH credential (constant)
+- `expires_at` - Unix timestamp when credential expires (renewed on refresh)
+- Credentials can be renewed while Orb capture is deemed fresh
+
+**Source:** https://docs.world.org/world-id/credentials/1
+
+### expires_at_min in Proofs
+
+Each proof response contains `expires_at_min` (Unix timestamp):
 - Minimum expiration time for the proof
 - Enforced during server-side verification
-- Typically 30-90 days from proof generation
+- Derived from the credential's validity period
 
 ### Enrollment TTL
 
-Enrollments have a separate time-to-live (default 30 days):
+Enrollments have a separate time-to-live (default 30 days for testing):
 - Configurable via `enrollmentTtlSeconds`
 - Independent of proof expiration
-- Can be shorter or longer than proof validity
+- Policy decision awaiting approval
 
 **UNIMPLEMENTED:** Automatic re-verification when enrollment expires.
 
-### Nullifier Uniqueness
+### Nullifier Uniqueness (Uniqueness Proofs)
 
-World ID 4.0 nullifiers are one-time use per action:
-- Each proof generates a unique nullifier
-- Same user + same action = same nullifier
-- Prevents proof replay
+For uniqueness proofs (one-time actions):
+- Nullifier is unique per (user, RP, action) combination
+- Same user + same RP + same action = same nullifier
+- Prevents proof replay for that action
 - Enforced by World ID verification API
+
+**Source:** https://docs.world.org/world-id/concepts
+
+**Session Proofs (NOT IMPLEMENTED):**
+- `session_id` - Stable identifier across multiple requests
+- `session_nullifier` - Per-proof replay protection
+- Allows returning user verification
+- See: https://docs.world.org/world-id/idkit/session-proofs
 
 **UNIMPLEMENTED:** Persistent nullifier tracking across restarts (in-memory only).
 
@@ -280,16 +301,34 @@ The test suite proves that rejected senders cause:
 
 Run `npm test` to verify these guarantees.
 
-## OpenClaw Compatibility
+## OpenClaw Integration Status
 
-This starter is designed for OpenClaw 2026.9.8 (fc23bc8) as reported by the user. Compatibility research with current OpenClaw documentation is ongoing.
+**UNKNOWN:** OpenClaw integration is not implemented or verified. The exact hook points for admission gates in OpenClaw 2026.9.8 (fc23bc8) are unknown.
 
-**Integration points (unverified):**
-- OpenClaw gateway Telegram update handler
-- Agent bindings configuration
-- dmPolicy and allowFrom settings
+**Official OpenClaw Documentation:**
+- Main docs: https://docs.openclaw.ai/
+- Telegram setup: https://docs.openclaw.ai/channels/telegram/setup
+- Access control: https://docs.openclaw.ai/channels/telegram/access-control
 
-**No live configuration inspection was performed.**
+**Integration Requirements (from official docs):**
+- OpenClaw Gateway receives authenticated Telegram Bot API updates
+- Channel configuration via `channels.telegram` in `~/.openclaw/openclaw.json`
+- Access control via `dmPolicy` and `allowFrom` settings
+- Bot token configuration via CLI or config file
+
+**UNKNOWN Integration Points:**
+- Where to inject admission gate in OpenClaw message processing pipeline
+- How to access raw authenticated updates before agent processing
+- Whether OpenClaw provides pre-agent hooks or middleware
+- How to prevent downstream calls on rejection
+
+**No official OpenClaw API for admission gates was found in the documentation.**
+
+**Community Examples (NOT official sources):**
+- https://github.com/BigDawg013/openclaw-setup (community setup guide)
+- https://github.com/guglielmofonda/mac-mini-openclaw-guide (community Mac mini guide)
+
+These community guides show OpenClaw usage but do not document admission gate APIs.
 
 ## Security Gaps
 
