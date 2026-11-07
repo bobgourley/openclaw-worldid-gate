@@ -39,6 +39,7 @@ import type {
 } from './types.js';
 import type { Clock } from './clock.js';
 import { SystemClock } from './clock.js';
+import { validateConfig } from './config.js';
 
 export class AdmissionGate {
   private readonly metrics: GateMetrics = {
@@ -56,6 +57,13 @@ export class AdmissionGate {
     private readonly enrollmentStore: EnrollmentStore,
     clock?: Clock
   ) {
+    // Validate configuration at construction time
+    const errors = validateConfig(config);
+    if (errors.length > 0) {
+      throw new Error(
+        `AdmissionGate configuration validation failed:\n${errors.map((e) => `  - ${e}`).join('\n')}`
+      );
+    }
     this.clock = clock ?? new SystemClock();
   }
 

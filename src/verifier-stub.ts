@@ -14,6 +14,7 @@ export class WorldIdVerifierStub implements WorldIdVerifier {
   private readonly validNullifiers = new Set<string>();
   private readonly revokedNullifiers = new Set<string>();
   private simulateOutage = false;
+  private expectedAction?: string;
 
   /**
    * TEST-ONLY: Register a nullifier as valid for testing
@@ -36,6 +37,16 @@ export class WorldIdVerifierStub implements WorldIdVerifier {
     this.simulateOutage = outage;
   }
 
+  /**
+   * TEST-ONLY: Set expected action for validation
+   * 
+   * When set, the verifier checks that proof.action matches this value.
+   * This simulates the action-scoping security property of World ID proofs.
+   */
+  setExpectedAction(action: string | undefined): void {
+    this.expectedAction = action;
+  }
+
   async verify(proof: WorldIdProof): Promise<WorldIdVerifyResult> {
     if (this.simulateOutage) {
       throw new Error('Simulated World ID API outage');
@@ -46,6 +57,15 @@ export class WorldIdVerifierStub implements WorldIdVerifier {
         success: false,
         code: 'unsupported_protocol',
         detail: 'Only protocol version 4.0 is supported',
+      };
+    }
+
+    // Action-model gap validation: verify proof action matches expected action
+    if (this.expectedAction !== undefined && proof.action !== this.expectedAction) {
+      return {
+        success: false,
+        code: 'action_mismatch',
+        detail: `Proof action '${proof.action}' does not match expected action '${this.expectedAction}'`,
       };
     }
 

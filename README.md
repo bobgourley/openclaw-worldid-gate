@@ -4,7 +4,15 @@ World ID-gated Telegram bot admission control for OpenClaw. A deterministic, fai
 
 ## Status: Test-Only Starter
 
-**This is a bounded, reviewable starter for testing and development.** It is NOT production-ready. See [AGENTS.md](./AGENTS.md) for security boundaries and production requirements.
+**This is a bounded, reviewable starter for testing and development.** It is NOT production-ready.
+
+## Documentation
+
+- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Complete system architecture, small-group design, trust boundaries, and production roadmap
+- **[OPERATOR_GUIDE.md](./OPERATOR_GUIDE.md)** - Setup instructions, configuration reference, testing procedures, and troubleshooting
+- **[AGENTS.md](./AGENTS.md)** - Security boundaries, trust assumptions, and production requirements
+- **[AUDIT.md](./AUDIT.md)** - Initial code audit and safety verification
+- **[FINAL-AUDIT.md](./FINAL-AUDIT.md)** - Comprehensive security audit and integration contracts
 
 ## What This Does
 

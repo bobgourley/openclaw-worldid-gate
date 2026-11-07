@@ -1,0 +1,172 @@
+/**
+ * Config validation tests
+ */
+
+import { describe, it } from 'node:test';
+import * as assert from 'node:assert';
+import { validateConfig, CONFIG_BOUNDS, assertValidConfig } from './config.js';
+import type { GateConfig } from './types.js';
+
+describe('Config validation', () => {
+  const validConfig: GateConfig = {
+    rpId: 'rp_test123',
+    action: 'test-action',
+    verifyEndpoint: 'https://developer.world.org/api/v4/verify',
+    requireProofOfHuman: true,
+    enrollmentTtlSeconds: CONFIG_BOUNDS.enrollmentTtl.default,
+    allowTestMode: true,
+  };
+
+  it('should accept valid configuration', () => {
+    const errors = validateConfig(validConfig);
+    assert.strictEqual(errors.length, 0, `Expected no errors but got: ${errors.join(', ')}`);
+  });
+
+  it('should reject missing rpId', () => {
+    const config = { ...validConfig, rpId: '' };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('rpId')));
+  });
+
+  it('should reject rpId without rp_ prefix', () => {
+    const config = { ...validConfig, rpId: 'invalid_prefix' };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('rpId') && e.includes('rp_')));
+  });
+
+  it('should reject unconfigured rpId placeholder', () => {
+    const config = { ...validConfig, rpId: 'rp_REPLACE_WITH_YOUR_RP_ID' };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('not been configured')));
+  });
+
+  it('should reject missing action', () => {
+    const config = { ...validConfig, action: '' };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('action')));
+  });
+
+  it('should reject whitespace-only action', () => {
+    const config = { ...validConfig, action: '   ' };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('action') && e.includes('empty')));
+  });
+
+  it('should reject non-HTTPS verifyEndpoint', () => {
+    const config = { ...validConfig, verifyEndpoint: 'http://insecure.example' };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('HTTPS')));
+  });
+
+  it('should reject missing verifyEndpoint', () => {
+    const config = { ...validConfig, verifyEndpoint: '' };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('verifyEndpoint')));
+  });
+
+  it('should reject non-boolean requireProofOfHuman', () => {
+    const config = { ...validConfig, requireProofOfHuman: 'yes' as any };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('requireProofOfHuman') && e.includes('boolean')));
+  });
+
+  it('should reject negative enrollmentTtlSeconds', () => {
+    const config = { ...validConfig, enrollmentTtlSeconds: -100 };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('positive')));
+  });
+
+  it('should reject zero enrollmentTtlSeconds', () => {
+    const config = { ...validConfig, enrollmentTtlSeconds: 0 };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('positive')));
+  });
+
+  it('should reject enrollmentTtlSeconds below minimum bound', () => {
+    const config = { ...validConfig, enrollmentTtlSeconds: 30 }; // Below 60s minimum
+    const errors = validateConfig(config);
+    assert.ok(
+      errors.some((e) => e.includes('at least') && e.includes(String(CONFIG_BOUNDS.enrollmentTtl.minimum)))
+    );
+  });
+
+  it('should accept enrollmentTtlSeconds at exact minimum bound', () => {
+    const config = { ...validConfig, enrollmentTtlSeconds: CONFIG_BOUNDS.enrollmentTtl.minimum };
+    const errors = validateConfig(config);
+    assert.strictEqual(errors.length, 0, `Expected no errors but got: ${errors.join(', ')}`);
+  });
+
+  it('should accept enrollmentTtlSeconds at exact maximum bound', () => {
+    const config = { ...validConfig, enrollmentTtlSeconds: CONFIG_BOUNDS.enrollmentTtl.maximum };
+    const errors = validateConfig(config);
+    assert.strictEqual(errors.length, 0, `Expected no errors but got: ${errors.join(', ')}`);
+  });
+
+  it('should reject enrollmentTtlSeconds above maximum bound', () => {
+    const config = { ...validConfig, enrollmentTtlSeconds: CONFIG_BOUNDS.enrollmentTtl.maximum + 1 };
+    const errors = validateConfig(config);
+    assert.ok(
+      errors.some((e) => e.includes('at most') && e.includes(String(CONFIG_BOUNDS.enrollmentTtl.maximum)))
+    );
+  });
+
+  it('should reject Infinity enrollmentTtlSeconds', () => {
+    const config = { ...validConfig, enrollmentTtlSeconds: Infinity };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('finite')));
+  });
+
+  it('should reject NaN enrollmentTtlSeconds', () => {
+    const config = { ...validConfig, enrollmentTtlSeconds: NaN };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('finite')));
+  });
+
+  it('should reject non-safe-integer enrollmentTtlSeconds', () => {
+    const config = { ...validConfig, enrollmentTtlSeconds: Number.MAX_SAFE_INTEGER + 1 };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('safe integer')));
+  });
+
+  it('should reject non-number enrollmentTtlSeconds', () => {
+    const config = { ...validConfig, enrollmentTtlSeconds: '86400' as any };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('must be a number')));
+  });
+
+  it('should reject non-boolean allowTestMode', () => {
+    const config = { ...validConfig, allowTestMode: 'true' as any };
+    const errors = validateConfig(config);
+    assert.ok(errors.some((e) => e.includes('allowTestMode') && e.includes('boolean')));
+  });
+
+  it('should accept default TTL of 30 days (2592000 seconds)', () => {
+    const config = { ...validConfig, enrollmentTtlSeconds: 2592000 };
+    const errors = validateConfig(config);
+    assert.strictEqual(errors.length, 0, `Expected no errors but got: ${errors.join(', ')}`);
+  });
+
+  it('assertValidConfig should throw on invalid config', () => {
+    const config = { ...validConfig, rpId: 'invalid' };
+    assert.throws(
+      () => assertValidConfig(config),
+      (err: any) => err.message.includes('Configuration validation failed')
+    );
+  });
+
+  it('assertValidConfig should not throw on valid config', () => {
+    assert.doesNotThrow(() => assertValidConfig(validConfig));
+  });
+
+  it('should accumulate multiple errors', () => {
+    const config = {
+      ...validConfig,
+      rpId: 'invalid',
+      action: '',
+      verifyEndpoint: 'http://insecure',
+      enrollmentTtlSeconds: -1,
+    };
+    const errors = validateConfig(config);
+    assert.ok(errors.length >= 4, `Expected at least 4 errors but got ${errors.length}`);
+  });
+});

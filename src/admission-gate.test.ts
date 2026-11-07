@@ -452,4 +452,84 @@ describe('AdmissionGate', () => {
       assert.match(result.reason, /no authenticated.*user id/i);
     });
   });
+
+  describe('constructor validation', () => {
+    it('throws on invalid config at construction time', () => {
+      const invalidConfig: GateConfig = {
+        ...TEST_CONFIG,
+        rpId: 'invalid',
+        enrollmentTtlSeconds: -1,
+      };
+      const verifier = new WorldIdVerifierStub();
+      const store = new InMemoryEnrollmentStore();
+
+      assert.throws(
+        () => new AdmissionGate(invalidConfig, verifier, store),
+        (err: any) => err.message.includes('configuration validation failed')
+      );
+    });
+
+    it('throws on negative TTL at construction time', () => {
+      const invalidConfig: GateConfig = {
+        ...TEST_CONFIG,
+        enrollmentTtlSeconds: -100,
+      };
+      const verifier = new WorldIdVerifierStub();
+      const store = new InMemoryEnrollmentStore();
+
+      assert.throws(
+        () => new AdmissionGate(invalidConfig, verifier, store),
+        (err: any) => err.message.includes('positive')
+      );
+    });
+
+    it('throws on TTL below minimum bound at construction time', () => {
+      const invalidConfig: GateConfig = {
+        ...TEST_CONFIG,
+        enrollmentTtlSeconds: 30, // Below 60s minimum
+      };
+      const verifier = new WorldIdVerifierStub();
+      const store = new InMemoryEnrollmentStore();
+
+      assert.throws(
+        () => new AdmissionGate(invalidConfig, verifier, store),
+        (err: any) => err.message.includes('at least')
+      );
+    });
+
+    it('throws on TTL above maximum bound at construction time', () => {
+      const invalidConfig: GateConfig = {
+        ...TEST_CONFIG,
+        enrollmentTtlSeconds: 86400 * 365 + 1, // Above 1 year maximum
+      };
+      const verifier = new WorldIdVerifierStub();
+      const store = new InMemoryEnrollmentStore();
+
+      assert.throws(
+        () => new AdmissionGate(invalidConfig, verifier, store),
+        (err: any) => err.message.includes('at most')
+      );
+    });
+
+    it('throws on non-HTTPS verifyEndpoint at construction time', () => {
+      const invalidConfig: GateConfig = {
+        ...TEST_CONFIG,
+        verifyEndpoint: 'http://insecure.example',
+      };
+      const verifier = new WorldIdVerifierStub();
+      const store = new InMemoryEnrollmentStore();
+
+      assert.throws(
+        () => new AdmissionGate(invalidConfig, verifier, store),
+        (err: any) => err.message.includes('HTTPS')
+      );
+    });
+
+    it('accepts valid config at construction time', () => {
+      const verifier = new WorldIdVerifierStub();
+      const store = new InMemoryEnrollmentStore();
+
+      assert.doesNotThrow(() => new AdmissionGate(TEST_CONFIG, verifier, store));
+    });
+  });
 });
