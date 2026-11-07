@@ -252,21 +252,25 @@ describe('EnrollmentService Production', () => {
       );
     });
 
-    it('denies duplicate enrollment per user', async () => {
+    it('denies duplicate active enrollment per account', async () => {
       const userId = 12345;
+      const nullifier = '12345678901234567890';
       const initData = createValidInitData(userId, TEST_BOT_TOKEN);
 
       // First enrollment
       const challenge1 = await service.createChallenge(initData);
-      const idkitResult1 = createIDKitResult(
-        challenge1.signedChallenge.nonce,
-        TEST_ACTION,
-        challenge1.signedChallenge.signalHash
-      );
-      const initData1 = createValidInitData(userId, TEST_BOT_TOKEN);
-      await service.completeEnrollment({ initData: initData1, idkitResult: idkitResult1 });
+      mockClient.setResponse(challenge1.signedChallenge.nonce, {
+        success: true,
+        nullifier,
+        issuerSchemaId: 1,
+        expiresAtMin: fakeClock.nowSeconds() + 86400,
+      });
+      await service.completeEnrollment({
+        initData,
+        idkitResult: createIDKitResult(challenge1.signedChallenge.nonce, TEST_ACTION, challenge1.signedChallenge.signalHash),
+      });
 
-      // Second attempt
+      // Second attempt while still enrolled
       await assert.rejects(
         async () => {
           await service.createChallenge(initData);
@@ -409,111 +413,190 @@ describe('EnrollmentService Production', () => {
   });
 
   describe('revocation lifecycle', () => {
-    it('blocks in-flight enrollment for revoked nullifier', async () => {
+    it('blocks pre-revocation challenge from completing', async () => {
       const userId = 12345;
       const nullifier = '99999999999999999999';
 
+      // Create challenge BEFORE revocation
       const initData = createValidInitData(userId, TEST_BOT_TOKEN);
-      const challenge = await service.createChallenge(initData);
+      const oldChallenge = await service.createChallenge(initData);
 
-      mockClient.setResponse(challenge.signedChallenge.nonce, {
-        success: true,
-        nullifier,
-        issuerSchemaId: 1,
-        expiresAtMin: fakeClock.nowSeconds() + 86400,
-      });
-
-      // Revoke before enrollment (simulating prior revocation)
-      // First enroll, then revoke, then try again with different user
-      const initData1 = createValidInitData(userId, TEST_BOT_TOKEN);
-      const challenge1 = await service.createChallenge(initData1);
+      // Enroll with a different challenge first
+      const challenge1 = await service.createChallenge(initData);
       mockClient.setResponse(challenge1.signedChallenge.nonce, {
         success: true,
         nullifier,
         issuerSchemaId: 1,
         expiresAtMin: fakeClock.nowSeconds() + 86400,
       });
-      const idkitResult1 = createIDKitResult(
-        challenge1.signedChallenge.nonce,
-        TEST_ACTION,
-        challenge1.signedChallenge.signalHash
-      );
-      await service.completeEnrollment({ initData: initData1, idkitResult: idkitResult1 });
+      await service.completeEnrollment({
+        initData,
+        idkitResult: createIDKitResult(challenge1.signedChallenge.nonce, TEST_ACTION, challenge1.signedChallenge.signalHash),
+      });
 
-      // Revoke
-      await service.revokeEnrollment(nullifier);
+      // Revoke account
+      const revoked = await service.revokeEnrollment(userId);
+      assert.equal(revoked, true);
 
-      // New user tries with same nullifier (different challenge)
-      const userId2 = 67890;
-      const initData2 = createValidInitData(userId2, TEST_BOT_TOKEN);
-      const challenge2 = await service.createChallenge(initData2);
-      mockClient.setResponse(challenge2.signedChallenge.nonce, {
+      // Try to complete with old pre-revocation challenge
+      mockClient.setResponse(oldChallenge.signedChallenge.nonce, {
         success: true,
-        nullifier, // Same revoked nullifier
+        nullifier,
         issuerSchemaId: 1,
         expiresAtMin: fakeClock.nowSeconds() + 86400,
       });
 
-      const idkitResult2 = createIDKitResult(
-        challenge2.signedChallenge.nonce,
-        TEST_ACTION,
-        challenge2.signedChallenge.signalHash
-      );
-
-      const result = await service.completeEnrollment({ initData: initData2, idkitResult: idkitResult2 });
+      const result = await service.completeEnrollment({
+        initData,
+        idkitResult: createIDKitResult(oldChallenge.signedChallenge.nonce, TEST_ACTION, oldChallenge.signedChallenge.signalHash),
+      });
 
       assert.equal(result.success, false);
-      assert.match(result.error!, /revoked/i);
+      assert.match(result.error!, /predates revocation/i);
     });
 
-    it('blocks future enrollment after revocation', async () => {
+    it('allows post-revocation fresh challenge to restore account', async () => {
       const userId = 12345;
       const nullifier = '88888888888888888888';
 
-      // Enroll
-      const initData1 = createValidInitData(userId, TEST_BOT_TOKEN);
-      const challenge1 = await service.createChallenge(initData1);
+      // Initial enrollment
+      const initData = createValidInitData(userId, TEST_BOT_TOKEN);
+      const challenge1 = await service.createChallenge(initData);
       mockClient.setResponse(challenge1.signedChallenge.nonce, {
         success: true,
         nullifier,
         issuerSchemaId: 1,
         expiresAtMin: fakeClock.nowSeconds() + 86400,
       });
-      const idkitResult1 = createIDKitResult(
-        challenge1.signedChallenge.nonce,
-        TEST_ACTION,
-        challenge1.signedChallenge.signalHash
-      );
-      await service.completeEnrollment({ initData: initData1, idkitResult: idkitResult1 });
+      await service.completeEnrollment({
+        initData,
+        idkitResult: createIDKitResult(challenge1.signedChallenge.nonce, TEST_ACTION, challenge1.signedChallenge.signalHash),
+      });
 
-      // Revoke
-      const revoked = await service.revokeEnrollment(nullifier);
+      // Revoke account
+      const revoked = await service.revokeEnrollment(userId);
       assert.equal(revoked, true);
 
-      // Try to enroll again (same user, new challenge)
+      // Advance time to ensure post-revocation challenge
+      fakeClock.advance(10);
+
+      // Create fresh post-revocation challenge
+      const challenge2 = await service.createChallenge(initData);
+      mockClient.setResponse(challenge2.signedChallenge.nonce, {
+        success: true,
+        nullifier, // Same nullifier
+        issuerSchemaId: 1,
+        expiresAtMin: fakeClock.nowSeconds() + 86400,
+      });
+
+      // Should succeed: post-revocation fresh verification restores access
+      const result = await service.completeEnrollment({
+        initData,
+        idkitResult: createIDKitResult(challenge2.signedChallenge.nonce, TEST_ACTION, challenge2.signedChallenge.signalHash),
+      });
+
+      assert.equal(result.success, true);
+      assert.equal(result.telegramUserId, userId);
+
+      // Verify enrollment is active (not revoked)
+      const enrollment = await service.findEnrollment(userId);
+      assert.ok(enrollment);
+      assert.equal(enrollment.revoked, false);
+    });
+
+    it('allows multiple accounts to use same nullifier', async () => {
+      const userId1 = 12345;
       const userId2 = 67890;
+      const sharedNullifier = '77777777777777777777';
+
+      // First account enrolls
+      const initData1 = createValidInitData(userId1, TEST_BOT_TOKEN);
+      const challenge1 = await service.createChallenge(initData1);
+      mockClient.setResponse(challenge1.signedChallenge.nonce, {
+        success: true,
+        nullifier: sharedNullifier,
+        issuerSchemaId: 1,
+        expiresAtMin: fakeClock.nowSeconds() + 86400,
+      });
+      const result1 = await service.completeEnrollment({
+        initData: initData1,
+        idkitResult: createIDKitResult(challenge1.signedChallenge.nonce, TEST_ACTION, challenge1.signedChallenge.signalHash),
+      });
+      assert.equal(result1.success, true);
+
+      // Second account enrolls with SAME nullifier
       const initData2 = createValidInitData(userId2, TEST_BOT_TOKEN);
       const challenge2 = await service.createChallenge(initData2);
       mockClient.setResponse(challenge2.signedChallenge.nonce, {
         success: true,
-        nullifier, // Same revoked nullifier
+        nullifier: sharedNullifier, // Same nullifier
         issuerSchemaId: 1,
         expiresAtMin: fakeClock.nowSeconds() + 86400,
       });
-      const idkitResult2 = createIDKitResult(
-        challenge2.signedChallenge.nonce,
-        TEST_ACTION,
-        challenge2.signedChallenge.signalHash
-      );
+      const result2 = await service.completeEnrollment({
+        initData: initData2,
+        idkitResult: createIDKitResult(challenge2.signedChallenge.nonce, TEST_ACTION, challenge2.signedChallenge.signalHash),
+      });
+      assert.equal(result2.success, true);
 
-      const result = await service.completeEnrollment({ initData: initData2, idkitResult: idkitResult2 });
+      // Both accounts should be enrolled
+      const enrollment1 = await service.findEnrollment(userId1);
+      const enrollment2 = await service.findEnrollment(userId2);
+      assert.ok(enrollment1);
+      assert.ok(enrollment2);
+      assert.equal(enrollment1.nullifier, sharedNullifier);
+      assert.equal(enrollment2.nullifier, sharedNullifier);
+    });
 
-      assert.equal(result.success, false);
-      assert.match(result.error!, /revoked/i);
+    it('revokes only specific account, not others with same nullifier', async () => {
+      const userId1 = 12345;
+      const userId2 = 67890;
+      const sharedNullifier = '66666666666666666666';
+
+      // Both accounts enroll with same nullifier
+      const initData1 = createValidInitData(userId1, TEST_BOT_TOKEN);
+      const challenge1 = await service.createChallenge(initData1);
+      mockClient.setResponse(challenge1.signedChallenge.nonce, {
+        success: true,
+        nullifier: sharedNullifier,
+        issuerSchemaId: 1,
+        expiresAtMin: fakeClock.nowSeconds() + 86400,
+      });
+      await service.completeEnrollment({
+        initData: initData1,
+        idkitResult: createIDKitResult(challenge1.signedChallenge.nonce, TEST_ACTION, challenge1.signedChallenge.signalHash),
+      });
+
+      const initData2 = createValidInitData(userId2, TEST_BOT_TOKEN);
+      const challenge2 = await service.createChallenge(initData2);
+      mockClient.setResponse(challenge2.signedChallenge.nonce, {
+        success: true,
+        nullifier: sharedNullifier,
+        issuerSchemaId: 1,
+        expiresAtMin: fakeClock.nowSeconds() + 86400,
+      });
+      await service.completeEnrollment({
+        initData: initData2,
+        idkitResult: createIDKitResult(challenge2.signedChallenge.nonce, TEST_ACTION, challenge2.signedChallenge.signalHash),
+      });
+
+      // Revoke only first account
+      const revoked = await service.revokeEnrollment(userId1);
+      assert.equal(revoked, true);
+
+      // First account should be revoked
+      const enrollment1 = await service.findEnrollment(userId1);
+      assert.ok(enrollment1);
+      assert.equal(enrollment1.revoked, true);
+
+      // Second account should still be active
+      const enrollment2 = await service.findEnrollment(userId2);
+      assert.ok(enrollment2);
+      assert.equal(enrollment2.revoked, false);
     });
 
     it('returns false when revoking non-existent enrollment', async () => {
-      const revoked = await service.revokeEnrollment('nonexistent');
+      const revoked = await service.revokeEnrollment(99999);
       assert.equal(revoked, false);
     });
   });

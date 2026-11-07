@@ -28,10 +28,11 @@ This document describes the INITIAL small-group architecture for World ID-based 
   - Enrollment interface with transactional semantics
   - In-memory implementation for development (NOT for production)
   - 25 comprehensive unit tests
-- ✅ SQLite challenge and enrollment stores (`src/enrollment-store-sqlite.ts`)
-  - Durable persistence with separate database connections per store
-  - Enrollment uniqueness constraints (nullifier per-action + user+action pairs)
-  - Automatic cleanup of expired sessions/enrollments
+- ✅ SQLite challenge and enrollment stores (`src/enrollment-service-production.ts`)
+  - Durable persistence with WAL mode and schema migrations
+  - Per-account enrollment lifecycle (PRIMARY KEY: telegram_user_id, action)
+  - Multiple accounts can share same nullifier (same verified person, different Telegram accounts)
+  - Revocation with generation timestamps for post-revoke restoration
   - Restart persistence (survives process restart)
   - WAL mode for better concurrency
   - Portable to Mac Node24
@@ -779,40 +780,48 @@ See `src/config.ts` for the central user-editable configuration module.
 
 **Action-Scoped Uniqueness**:
 - World ID nullifiers are scoped to relying party + action
-- One enrollment per Telegram user per action
+- One enrollment per Telegram account per action
+- **Multiple Telegram accounts per verified person ALLOWED**: Same nullifier can enroll multiple different Telegram accounts
 - Different actions can enroll the same World ID with different nullifiers
 - **NO cross-action uniqueness**: Same nullifier from different actions are DISTINCT identities
-- Service does not and cannot enforce global uniqueness across actions
+- Service does not and cannot enforce global uniqueness across actions or accounts
 
 **Identity Binding**:
 - Challenge creation authenticates Telegram `initData` (HMAC-SHA256 with bot token)
-- Enrollment binds World ID nullifier to authenticated Telegram user ID
-- Requester cannot forge another user's enrollment (challenge scoped to requester)
+- Enrollment binds World ID nullifier to authenticated Telegram account (numeric user ID)
+- Each account must complete its own fresh account-bound signed challenge and proof
+- Requester cannot forge another account's enrollment (challenge scoped to requester)
+- Cannot transfer old grants or proofs between accounts
 
 **Data Retention**:
 - Challenge sessions: Short-lived (5 minutes default), auto-expire
-- Enrollments: Configurable TTL (30 days default), soft-expire (no auto-delete)
-- Revocations: Persisted indefinitely to block replay and future re-enrollment
-- Replay prevention: Nullifier records retained to enforce one-time proof semantics
+- Enrollments: Configurable TTL (30 days per account default), soft-expire (no auto-delete)
+- Revocations: Persisted indefinitely with generation timestamps
+- Replay prevention: Transactional challenge consumption enforced
 
-**Revocation Semantics**:
+**Revocation Semantics** (per-account lifecycle):
 - Sets `revoked = 1` flag on enrollment record (no destructive deletion)
-- Blocks in-flight completions (transaction-level recheck)
-- Blocks future enrollments until administrative restoration
+- Blocks pre-revocation challenges from completing (generation comparison)
+- Allows post-revocation fresh challenges to restore that account
+- Revoked accounts can regain access via fresh post-revoke verification (no admin prerequisite)
+- Revocation of one account does NOT revoke other accounts with same nullifier
 - Revoked enrollments remain queryable for audit
 
 ## Testing Strategy
 
-**Test Coverage** (245 tests, 0 skipped):
-- **Unit Tests** (226 tests):
+**Test Coverage** (247 tests, 0 skipped):
+- **Unit Tests** (228 tests):
   * Fail-closed admission checks (unknown, revoked, expired users)
   * Configuration validation (bounds, required fields)
   * Action-model gap validation (proof action mismatch)
-  * Enrollment lifecycle (creation, expiry, revocation)
+  * Enrollment lifecycle (creation, expiry, per-account revocation)
   * Trust boundary checks (malformed inputs, zero user ID)
   * Deterministic expiry with clock injection (no timeouts)
   * HTTP verifier strict contract validation
   * Cross-connection race conditions
+  * Multiple accounts per nullifier (same verified person, different Telegram accounts)
+  * Per-account revocation lifecycle (generation comparison)
+  * Post-revocation restoration via fresh verification
 
 - **Integration Tests** (19 tests):
   * HTTP service startup/shutdown on ephemeral localhost

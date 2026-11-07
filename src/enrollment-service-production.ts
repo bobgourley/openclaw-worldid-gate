@@ -126,6 +126,7 @@ export interface EnrollmentQuery {
   expiresAt: number;
   createdAt: string;
   revoked: boolean;
+  expired: boolean;
 }
 
 /**
@@ -201,7 +202,7 @@ export class EnrollmentService {
     const currentVersion = this.getSchemaVersion();
 
     if (currentVersion < 1) {
-      // v1: Initial schema with revocation tracking
+      // v1: Initial schema with per-account lifecycle tracking
       this.db.exec(`
         CREATE TABLE challenge_sessions (
           nonce TEXT PRIMARY KEY,
@@ -209,7 +210,8 @@ export class EnrollmentService {
           action TEXT NOT NULL,
           signal_hash TEXT NOT NULL,
           expires_at INTEGER NOT NULL,
-          created_at TEXT NOT NULL
+          created_at TEXT NOT NULL,
+          created_at_seconds INTEGER NOT NULL
         ) STRICT
       `);
 
@@ -220,21 +222,21 @@ export class EnrollmentService {
 
       this.db.exec(`
         CREATE TABLE enrollments (
-          nullifier TEXT NOT NULL,
           telegram_user_id INTEGER NOT NULL,
           action TEXT NOT NULL,
+          nullifier TEXT NOT NULL,
           expires_at INTEGER NOT NULL,
           created_at TEXT NOT NULL,
           revoked INTEGER NOT NULL DEFAULT 0,
           revoked_at TEXT,
-          PRIMARY KEY (nullifier, action),
-          UNIQUE(telegram_user_id, action)
+          revoked_at_seconds INTEGER,
+          PRIMARY KEY (telegram_user_id, action)
         ) STRICT
       `);
 
       this.db.exec(`
-        CREATE INDEX idx_enrollments_user_action
-        ON enrollments(telegram_user_id, action)
+        CREATE INDEX idx_enrollments_nullifier
+        ON enrollments(nullifier)
       `);
 
       this.db.exec(`
@@ -274,10 +276,10 @@ export class EnrollmentService {
 
     const authenticatedUserId = initDataValidation.user.id;
 
-    // Check for existing active enrollment (conservative: deny duplicate enrollment)
+    // Check for existing active enrollment
     const existingEnrollment = await this.findEnrollment(authenticatedUserId);
-    if (existingEnrollment) {
-      throw new Error('User already enrolled (policy: single enrollment per user)');
+    if (existingEnrollment && !existingEnrollment.revoked) {
+      throw new Error('User already enrolled (policy: one active enrollment per account)');
     }
 
     // Build signal binding requester to challenge
@@ -301,12 +303,13 @@ export class EnrollmentService {
       signalHash: expectedContext.signalHash,
       expiresAt,
       createdAt: this.clock.nowISO(),
+      createdAtSeconds: now,
     };
 
     try {
       const stmt = this.db.prepare(`
-        INSERT INTO challenge_sessions (nonce, telegram_user_id, action, signal_hash, expires_at, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO challenge_sessions (nonce, telegram_user_id, action, signal_hash, expires_at, created_at, created_at_seconds)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
 
       stmt.run(
@@ -315,7 +318,8 @@ export class EnrollmentService {
         session.action,
         session.signalHash,
         session.expiresAt,
-        session.createdAt
+        session.createdAt,
+        session.createdAtSeconds
       );
     } catch (error: any) {
       if (error.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
@@ -373,7 +377,7 @@ export class EnrollmentService {
 
     // Step 2: Peek challenge session (read-only, do not consume yet)
     const peekStmt = this.db.prepare(`
-      SELECT nonce, telegram_user_id, action, signal_hash, expires_at, created_at
+      SELECT nonce, telegram_user_id, action, signal_hash, expires_at, created_at, created_at_seconds
       FROM challenge_sessions
       WHERE nonce = ?
     `);
@@ -434,24 +438,31 @@ export class EnrollmentService {
       };
     }
 
-    // Step 6: Check for revoked enrollment (blocks both in-flight and future enrollment)
+    // Step 6: Check for revoked enrollment and generation comparison
+    // Per-account revocation: check (telegram_user_id, action), not nullifier
+    // Policy: revoked accounts can regain via fresh post-revoke verification
     const revokedCheck = this.db.prepare(`
-      SELECT nullifier FROM enrollments
-      WHERE nullifier = ? AND action = ? AND revoked = 1
-    `).get(verificationResult.nullifier, this.action) as any;
+      SELECT revoked, revoked_at_seconds FROM enrollments
+      WHERE telegram_user_id = ? AND action = ? AND revoked = 1
+    `).get(authenticatedUser.id, this.action) as any;
 
     if (revokedCheck) {
-      return {
-        success: false,
-        error: 'Nullifier revoked (administrative action required for restore)',
-      };
+      // Block pre-revocation challenges from completing
+      if (challengeRow.created_at_seconds <= revokedCheck.revoked_at_seconds) {
+        return {
+          success: false,
+          error: 'Challenge predates revocation (fresh verification required)',
+        };
+      }
+      // Post-revocation challenge: allow fresh verification to restore
+      // (continues to transaction below)
     }
 
     // Step 7: Atomic transaction: consume challenge + create enrollment
     const transaction = this.db.transaction(() => {
       // Re-check challenge still exists (race condition protection)
       const recheckStmt = this.db.prepare(`
-        SELECT nonce, telegram_user_id, expires_at
+        SELECT nonce, telegram_user_id, expires_at, created_at_seconds
         FROM challenge_sessions
         WHERE nonce = ?
       `);
@@ -474,17 +485,17 @@ export class EnrollmentService {
         throw new Error('Challenge account mismatch in transaction');
       }
 
-      // Re-check revocation (race protection)
-      const txRevokedCheck = this.db.prepare(`
-        SELECT nullifier FROM enrollments
-        WHERE nullifier = ? AND action = ? AND revoked = 1
-      `).get(verificationResult.nullifier, this.action) as any;
+      // Re-check for per-account revocation and generation (race protection)
+      const txAccountCheck = this.db.prepare(`
+        SELECT revoked, revoked_at_seconds FROM enrollments
+        WHERE telegram_user_id = ? AND action = ? AND revoked = 1
+      `).get(authenticatedUser.id, this.action) as any;
 
-      if (txRevokedCheck) {
-        throw new Error('Nullifier revoked during verification');
+      if (txAccountCheck && recheckRow.created_at_seconds <= txAccountCheck.revoked_at_seconds) {
+        throw new Error('Challenge predates revocation in transaction');
       }
 
-      // Create enrollment
+      // Create or restore enrollment
       const enrollmentExpiresAt = txNow + this.enrollmentTtlSeconds;
       const enrollment = {
         nullifier: verificationResult.nullifier!,
@@ -496,26 +507,28 @@ export class EnrollmentService {
       };
 
       try {
-        const insertStmt = this.db.prepare(`
-          INSERT INTO enrollments (nullifier, telegram_user_id, action, expires_at, created_at, revoked)
-          VALUES (?, ?, ?, ?, ?, ?)
+        // UPSERT: replace existing enrollment (including revoked) for this account
+        const upsertStmt = this.db.prepare(`
+          INSERT INTO enrollments (telegram_user_id, action, nullifier, expires_at, created_at, revoked, revoked_at, revoked_at_seconds)
+          VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)
+          ON CONFLICT(telegram_user_id, action) DO UPDATE SET
+            nullifier = excluded.nullifier,
+            expires_at = excluded.expires_at,
+            created_at = excluded.created_at,
+            revoked = excluded.revoked,
+            revoked_at = excluded.revoked_at,
+            revoked_at_seconds = excluded.revoked_at_seconds
         `);
 
-        insertStmt.run(
-          enrollment.nullifier,
+        upsertStmt.run(
           enrollment.telegramUserId,
           enrollment.action,
+          enrollment.nullifier,
           enrollment.expiresAt,
           enrollment.createdAt,
           enrollment.revoked
         );
       } catch (error: any) {
-        if (error.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
-          throw new Error('Enrollment nullifier already exists for action');
-        }
-        if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-          throw new Error('User already enrolled for action');
-        }
         throw error;
       }
 
@@ -562,16 +575,10 @@ export class EnrollmentService {
       return null;
     }
 
-    // Check revocation
-    if (row.revoked === 1) {
-      return null; // Revoked enrollments are not active
-    }
-
-    // Check expiry (but DO NOT delete - pending retention policy)
+    // Return enrollment record (including revoked and expired)
+    // Caller can check revoked/expiry flags
     const now = this.clock.nowSeconds();
-    if (row.expires_at <= now) {
-      return null; // Expired enrollments are not active
-    }
+    const expired = row.expires_at <= now;
 
     return {
       nullifier: row.nullifier,
@@ -580,29 +587,32 @@ export class EnrollmentService {
       expiresAt: row.expires_at,
       createdAt: row.created_at,
       revoked: row.revoked === 1,
+      expired,
     };
   }
 
   /**
-   * Revoke enrollment (administrative action, blocks future use).
+   * Revoke enrollment by Telegram account (administrative action).
    *
-   * IMPORTANT: Revocation is permanent until explicit administrative restore.
+   * Policy: Per-account revocation with fresh verification restore.
    * This operation:
-   * - Blocks in-flight enrollment completion for this nullifier
-   * - Blocks future enrollment attempts with this nullifier
+   * - Blocks in-flight pre-revocation challenges from completing
+   * - Blocks future enrollment with pre-revocation challenges
+   * - Allows post-revocation fresh challenges to restore access
    * - Does NOT delete the record (audit trail + restoration capability)
    *
-   * @param nullifier - World ID nullifier
+   * @param telegramUserId - Telegram numeric user ID
    * @returns True if enrollment found and revoked, false if not found
    */
-  async revokeEnrollment(nullifier: string): Promise<boolean> {
+  async revokeEnrollment(telegramUserId: number): Promise<boolean> {
+    const now = this.clock.nowSeconds();
     const stmt = this.db.prepare(`
       UPDATE enrollments
-      SET revoked = 1, revoked_at = ?
-      WHERE nullifier = ? AND action = ? AND revoked = 0
+      SET revoked = 1, revoked_at = ?, revoked_at_seconds = ?
+      WHERE telegram_user_id = ? AND action = ? AND revoked = 0
     `);
 
-    const result = stmt.run(this.clock.nowISO(), nullifier, this.action);
+    const result = stmt.run(this.clock.nowISO(), now, telegramUserId, this.action);
     return result.changes > 0;
   }
 
