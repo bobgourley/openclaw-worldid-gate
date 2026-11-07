@@ -65,7 +65,12 @@ describe("WorldIdVerificationClient", () => {
         ],
       };
 
-      const result = await client.verify(request);
+      const expectedContext = {
+        action: "test-action",
+        nonce: "0xabc123",
+      };
+
+      const result = await client.verify(request, expectedContext);
 
       assert.ok(!result.success);
       assert.ok(result.error?.includes("Environment mismatch"));
@@ -82,7 +87,12 @@ describe("WorldIdVerificationClient", () => {
         responses: [],
       };
 
-      const result = await client.verify(request);
+      const expectedContext = {
+        action: "test-action",
+        nonce: "0xabc123",
+      };
+
+      const result = await client.verify(request, expectedContext);
 
       assert.ok(!result.success);
       assert.ok(result.error?.includes("Unsupported protocol_version"));
@@ -99,10 +109,116 @@ describe("WorldIdVerificationClient", () => {
         responses: [],
       };
 
-      const result = await client.verify(request);
+      const expectedContext = {
+        action: "test-action",
+        nonce: "0xabc123",
+      };
+
+      const result = await client.verify(request, expectedContext);
 
       assert.ok(!result.success);
       assert.equal(result.error, "No responses in proof request");
+    });
+
+    it("rejects request with action mismatch", async () => {
+      const client = new WorldIdVerificationClient(productionConfig);
+
+      const request: WorldIdV4VerifyRequest = {
+        protocol_version: "4.0",
+        nonce: "0xabc123",
+        action: "wrong-action",
+        environment: "production",
+        responses: [
+          {
+            identifier: "proof_of_human",
+            issuer_schema_id: 1,
+            nullifier: "0x123abc",
+            expires_at_min: 1756166400,
+            proof: ["0x111"],
+            signal_hash: "0x0",
+          },
+        ],
+      };
+
+      const expectedContext = {
+        action: "expected-action",
+        nonce: "0xabc123",
+      };
+
+      const result = await client.verify(request, expectedContext);
+
+      assert.ok(!result.success);
+      assert.ok(result.error?.includes("Action mismatch"));
+    });
+
+    it("rejects request with nonce mismatch", async () => {
+      const client = new WorldIdVerificationClient(productionConfig);
+
+      const request: WorldIdV4VerifyRequest = {
+        protocol_version: "4.0",
+        nonce: "0xwrong",
+        action: "test-action",
+        environment: "production",
+        responses: [
+          {
+            identifier: "proof_of_human",
+            issuer_schema_id: 1,
+            nullifier: "0x123abc",
+            expires_at_min: 1756166400,
+            proof: ["0x111"],
+            signal_hash: "0x0",
+          },
+        ],
+      };
+
+      const expectedContext = {
+        action: "test-action",
+        nonce: "0xexpected",
+      };
+
+      const result = await client.verify(request, expectedContext);
+
+      assert.ok(!result.success);
+      assert.ok(result.error?.includes("Nonce mismatch"));
+    });
+
+    it("rejects ambiguous multi-response batch", async () => {
+      const client = new WorldIdVerificationClient(productionConfig);
+
+      const request: WorldIdV4VerifyRequest = {
+        protocol_version: "4.0",
+        nonce: "0xabc123",
+        action: "test-action",
+        environment: "production",
+        responses: [
+          {
+            identifier: "proof_of_human",
+            issuer_schema_id: 1,
+            nullifier: "0x123abc",
+            expires_at_min: 1756166400,
+            proof: ["0x111"],
+            signal_hash: "0x0",
+          },
+          {
+            identifier: "selfie",
+            issuer_schema_id: 11,
+            nullifier: "0x456def",
+            expires_at_min: 1756166400,
+            proof: ["0x222"],
+            signal_hash: "0x0",
+          },
+        ],
+      };
+
+      const expectedContext = {
+        action: "test-action",
+        nonce: "0xabc123",
+      };
+
+      const result = await client.verify(request, expectedContext);
+
+      assert.ok(!result.success);
+      assert.ok(result.error?.includes("Ambiguous multi-response batch"));
     });
 
     it("calls production endpoint for production environment", async () => {
@@ -111,13 +227,6 @@ describe("WorldIdVerificationClient", () => {
       const mockResponse: WorldIdVerifyResponse = {
         success: true,
         environment: "production",
-        results: [
-          {
-            identifier: "proof_of_human",
-            valid: true,
-            issuer_schema_id: 1,
-          },
-        ],
       };
 
       const fetchMock = mock.fn<typeof globalThis.fetch>(async (input, init) => {
@@ -153,7 +262,12 @@ describe("WorldIdVerificationClient", () => {
           ],
         };
 
-        const result = await client.verify(request);
+        const expectedContext = {
+          action: "test-action",
+          nonce: "0xabc123",
+        };
+
+        const result = await client.verify(request, expectedContext);
 
         assert.ok(result.success);
         assert.equal(result.nullifier, "0x123abc");
@@ -172,13 +286,6 @@ describe("WorldIdVerificationClient", () => {
       const mockResponse: WorldIdVerifyResponse = {
         success: true,
         environment: "staging",
-        results: [
-          {
-            identifier: "proof_of_human",
-            valid: true,
-            issuer_schema_id: 1,
-          },
-        ],
       };
 
       const fetchMock = mock.fn<typeof globalThis.fetch>(async (input, init) => {
@@ -213,7 +320,12 @@ describe("WorldIdVerificationClient", () => {
           ],
         };
 
-        const result = await client.verify(request);
+        const expectedContext = {
+          action: "staging-test",
+          nonce: "0xstaging",
+        };
+
+        const result = await client.verify(request, expectedContext);
 
         assert.ok(result.success);
         assert.equal(fetchMock.mock.callCount(), 1);
@@ -253,7 +365,12 @@ describe("WorldIdVerificationClient", () => {
           ],
         };
 
-        const result = await client.verify(request);
+        const expectedContext = {
+          action: "test",
+          nonce: "0xbad",
+        };
+
+        const result = await client.verify(request, expectedContext);
 
         assert.ok(!result.success);
         assert.ok(result.error?.includes("Developer Portal returned 400"));
@@ -300,7 +417,12 @@ describe("WorldIdVerificationClient", () => {
           ],
         };
 
-        const result = await client.verify(request);
+        const expectedContext = {
+          action: "test",
+          nonce: "0xtimeout",
+        };
+
+        const result = await client.verify(request, expectedContext);
 
         assert.ok(!result.success);
         assert.ok(result.error?.includes("timeout"));
@@ -315,7 +437,6 @@ describe("WorldIdVerificationClient", () => {
       const mockResponse: WorldIdVerifyResponse = {
         success: true,
         environment: "staging",
-        results: [],
       };
 
       const fetchMock = mock.fn<typeof globalThis.fetch>(async () => {
@@ -346,10 +467,167 @@ describe("WorldIdVerificationClient", () => {
           ],
         };
 
-        const result = await client.verify(request);
+        const expectedContext = {
+          action: "test",
+          nonce: "0xmismatch",
+        };
+
+        const result = await client.verify(request, expectedContext);
 
         assert.ok(!result.success);
         assert.ok(result.error?.includes("Response environment mismatch"));
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("rejects truthy non-boolean success value", async () => {
+      const client = new WorldIdVerificationClient(productionConfig);
+
+      const mockResponse = {
+        success: 1, // Truthy but not boolean true
+        environment: "production",
+      };
+
+      const fetchMock = mock.fn<typeof globalThis.fetch>(async () => {
+        return new Response(JSON.stringify(mockResponse), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+
+      const originalFetch = globalThis.fetch;
+      try {
+        (globalThis as any).fetch = fetchMock;
+
+        const request: WorldIdV4VerifyRequest = {
+          protocol_version: "4.0",
+          nonce: "0xtest",
+          action: "test",
+          environment: "production",
+          responses: [
+            {
+              identifier: "proof_of_human",
+              issuer_schema_id: 1,
+              nullifier: "0xtest",
+              expires_at_min: 1756166400,
+              proof: ["0x111"],
+              signal_hash: "0x0",
+            },
+          ],
+        };
+
+        const expectedContext = {
+          action: "test",
+          nonce: "0xtest",
+        };
+
+        const result = await client.verify(request, expectedContext);
+
+        assert.ok(!result.success);
+        assert.ok(result.error?.includes("Verification failed"));
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("rejects weak selfie credential when requireProofOfHuman is true", async () => {
+      const client = new WorldIdVerificationClient(productionConfig);
+
+      const mockResponse: WorldIdVerifyResponse = {
+        success: true,
+        environment: "production",
+      };
+
+      const fetchMock = mock.fn<typeof globalThis.fetch>(async () => {
+        return new Response(JSON.stringify(mockResponse), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+
+      const originalFetch = globalThis.fetch;
+      try {
+        (globalThis as any).fetch = fetchMock;
+
+        const request: WorldIdV4VerifyRequest = {
+          protocol_version: "4.0",
+          nonce: "0xtest",
+          action: "test",
+          environment: "production",
+          responses: [
+            {
+              identifier: "selfie",
+              issuer_schema_id: 11,
+              nullifier: "0xselfie",
+              expires_at_min: 1756166400,
+              proof: ["0x111"],
+              signal_hash: "0x0",
+            },
+          ],
+        };
+
+        const expectedContext = {
+          action: "test",
+          nonce: "0xtest",
+          requireProofOfHuman: true,
+        };
+
+        const result = await client.verify(request, expectedContext);
+
+        assert.ok(!result.success);
+        assert.ok(result.error?.includes("Weak credential rejected"));
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("validates signal_hash when expectedContext.signalHash is provided", async () => {
+      const client = new WorldIdVerificationClient(productionConfig);
+
+      const mockResponse: WorldIdVerifyResponse = {
+        success: true,
+        environment: "production",
+      };
+
+      const fetchMock = mock.fn<typeof globalThis.fetch>(async () => {
+        return new Response(JSON.stringify(mockResponse), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+
+      const originalFetch = globalThis.fetch;
+      try {
+        (globalThis as any).fetch = fetchMock;
+
+        const request: WorldIdV4VerifyRequest = {
+          protocol_version: "4.0",
+          nonce: "0xtest",
+          action: "test",
+          environment: "production",
+          responses: [
+            {
+              identifier: "proof_of_human",
+              issuer_schema_id: 1,
+              nullifier: "0xtest",
+              expires_at_min: 1756166400,
+              proof: ["0x111"],
+              signal_hash: "0xwrong_signal",
+            },
+          ],
+        };
+
+        const expectedContext = {
+          action: "test",
+          nonce: "0xtest",
+          signalHash: "0xexpected_signal",
+        };
+
+        const result = await client.verify(request, expectedContext);
+
+        assert.ok(!result.success);
+        assert.ok(result.error?.includes("Signal hash mismatch"));
       } finally {
         globalThis.fetch = originalFetch;
       }

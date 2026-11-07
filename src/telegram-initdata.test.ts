@@ -223,4 +223,86 @@ describe("validateTelegramInitData", () => {
     assert.ok(!resultCustom.valid);
     assert.ok(resultCustom.error?.includes("initData expired"));
   });
+
+  it("rejects duplicate query keys", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const authDate = now - 60;
+    const userData = JSON.stringify({
+      id: 123456789,
+      first_name: "Test",
+    });
+
+    // Build a query string with duplicate 'user' key
+    const params = new URLSearchParams({
+      auth_date: String(authDate),
+      user: userData,
+    });
+
+    const dataCheckPairs: string[] = [];
+    for (const [key, value] of params.entries()) {
+      dataCheckPairs.push(`${key}=${value}`);
+    }
+    dataCheckPairs.sort();
+    const dataCheckString = dataCheckPairs.join("\n");
+
+    const secretKey = createHmac("sha256", "WebAppData").update(botToken).digest();
+    const hash = createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
+
+    // Manually construct query string with duplicate key
+    const duplicateQueryString = `auth_date=${authDate}&user=${encodeURIComponent(userData)}&user=fake&hash=${hash}`;
+
+    const result = validateTelegramInitData(duplicateQueryString, config);
+
+    assert.ok(!result.valid);
+    assert.ok(result.error?.includes("Duplicate query key"));
+  });
+
+  it("accepts initData at exact freshness boundary (auth_date == now - maxAgeSeconds)", () => {
+    const now = new Date("2026-11-07T03:00:00Z");
+    const maxAgeSeconds = 3600;
+    const authDate = Math.floor(now.getTime() / 1000) - maxAgeSeconds; // Exactly at boundary
+
+    const initData = createValidInitData(authDate, 123456789);
+
+    const result = validateTelegramInitData(initData, {
+      ...config,
+      maxAgeSeconds,
+      currentTime: now,
+    });
+
+    assert.ok(result.valid, `Expected valid at boundary, got error: ${result.error}`);
+  });
+
+  it("rejects initData just past freshness boundary (auth_date == now - maxAgeSeconds - 1)", () => {
+    const now = new Date("2026-11-07T03:00:00Z");
+    const maxAgeSeconds = 3600;
+    const authDate = Math.floor(now.getTime() / 1000) - maxAgeSeconds - 1; // 1 second past boundary
+
+    const initData = createValidInitData(authDate, 123456789);
+
+    const result = validateTelegramInitData(initData, {
+      ...config,
+      maxAgeSeconds,
+      currentTime: now,
+    });
+
+    assert.ok(!result.valid);
+    assert.ok(result.error?.includes("initData expired"));
+  });
+
+  it("uses injected currentTime for deterministic testing", () => {
+    const fixedTime = new Date("2026-11-07T03:00:00Z");
+    const authDate = Math.floor(fixedTime.getTime() / 1000) - 60; // 60 seconds ago
+
+    const initData = createValidInitData(authDate, 123456789);
+
+    const result = validateTelegramInitData(initData, {
+      ...config,
+      currentTime: fixedTime,
+    });
+
+    assert.ok(result.valid);
+    assert.ok(result.authDate);
+    assert.equal(result.authDate.getTime(), authDate * 1000);
+  });
 });

@@ -20,6 +20,8 @@ export interface TelegramInitDataConfig {
   botToken: string;
   /** Maximum age of initData in seconds (default: 3600 = 1 hour) */
   maxAgeSeconds?: number;
+  /** Current time for deterministic testing (defaults to Date.now()) */
+  currentTime?: Date;
 }
 
 /**
@@ -78,6 +80,20 @@ export function validateTelegramInitData(
   }
 
   try {
+    // Reject duplicate query keys to prevent parameter pollution attacks
+    const keysSeen = new Set<string>();
+    const rawPairs = initData.split("&");
+    for (const pair of rawPairs) {
+      const key = pair.split("=")[0];
+      if (keysSeen.has(key)) {
+        return {
+          valid: false,
+          error: `Duplicate query key rejected: '${key}'`,
+        };
+      }
+      keysSeen.add(key);
+    }
+
     // Parse query string into key-value pairs
     const params = new URLSearchParams(initData);
     const receivedHash = params.get("hash");
@@ -106,7 +122,7 @@ export function validateTelegramInitData(
     }
 
     const authDate = new Date(authDateSeconds * 1000);
-    const now = Date.now();
+    const now = config.currentTime ? config.currentTime.getTime() : Date.now();
     const ageSeconds = (now - authDate.getTime()) / 1000;
 
     if (ageSeconds < 0) {

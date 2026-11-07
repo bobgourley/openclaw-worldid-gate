@@ -68,6 +68,23 @@ export interface WorldIdClientConfig {
 }
 
 /**
+ * Server-trusted expected verification context.
+ * 
+ * Backend must validate that proof context matches the server's expected challenge session,
+ * not client-supplied expectations. This prevents replay and context substitution attacks.
+ */
+export interface ExpectedVerificationContext {
+  /** Expected action string from server's challenge session */
+  action: string;
+  /** Expected nonce from server's challenge session (bound to short-lived session) */
+  nonce: string;
+  /** Expected signal hash (bound to requester identity/context, optional) */
+  signalHash?: string;
+  /** Require proof_of_human credential (issuer_schema_id: 1), reject weaker credentials (default: true) */
+  requireProofOfHuman?: boolean;
+}
+
+/**
  * World ID verification client result.
  * 
  * On success, returns nullifier and credential details from the REQUEST
@@ -121,10 +138,21 @@ export class WorldIdVerificationClient {
    * - Nullifier and credential details come from REQUEST responses[0]
    * - Backend must validate required credential (e.g., proof_of_human issuer_schema_id 1)
    *
+   * Security requirements:
+   * - Validate proof context (action/nonce/signal) against server-trusted expected values
+   * - Enforce exact boolean success === true (reject truthy non-boolean)
+   * - Enforce required credential type (proof_of_human with issuer_schema_id 1)
+   * - Reject ambiguous multi-response batches unless unambiguous single credential policy
+   * - Maintain timeout through complete response body consumption
+   *
    * @param request - Complete IDKit result forwarded from frontend
+   * @param expectedContext - Server-trusted expected verification context
    * @returns Verification result with nullifier from request or error
    */
-  async verify(request: WorldIdV4VerifyRequest): Promise<WorldIdVerificationResult> {
+  async verify(
+    request: WorldIdV4VerifyRequest,
+    expectedContext: ExpectedVerificationContext,
+  ): Promise<WorldIdVerificationResult> {
     // Pre-verification checks per official guidance
     if (request.environment !== this.config.environment) {
       return {
@@ -144,6 +172,29 @@ export class WorldIdVerificationClient {
       return {
         success: false,
         error: "No responses in proof request",
+      };
+    }
+
+    // Validate proof context against server-trusted expected values
+    if (request.action !== expectedContext.action) {
+      return {
+        success: false,
+        error: `Action mismatch: expected '${expectedContext.action}', got '${request.action}'`,
+      };
+    }
+
+    if (request.nonce !== expectedContext.nonce) {
+      return {
+        success: false,
+        error: `Nonce mismatch: expected '${expectedContext.nonce}', got '${request.nonce}'`,
+      };
+    }
+
+    // Enforce unambiguous single credential (reject multi-response batches)
+    if (request.responses.length > 1) {
+      return {
+        success: false,
+        error: `Ambiguous multi-response batch: expected single credential, got ${request.responses.length}`,
       };
     }
 
@@ -168,8 +219,6 @@ export class WorldIdVerificationClient {
         signal: controller.signal,
       });
 
-      clearTimeout(timeoutId);
-
       if (!response.ok) {
         const errorText = await response.text().catch(() => "Unknown error");
         return {
@@ -181,14 +230,18 @@ export class WorldIdVerificationClient {
       let verification: WorldIdVerifyResponse;
       try {
         verification = (await response.json()) as WorldIdVerifyResponse;
-      } catch {
+      } catch (err) {
         return {
           success: false,
-          error: "Invalid JSON in verification response",
+          error: `Invalid JSON in verification response: ${err instanceof Error ? err.message : "parse error"}`,
         };
+      } finally {
+        // Clear timeout only after complete body consumption
+        clearTimeout(timeoutId);
       }
 
-      if (!verification.success) {
+      // Require exact boolean true (reject truthy non-boolean like 1 or "true")
+      if (verification.success !== true) {
         return {
           success: false,
           error: verification.error ?? "Verification failed without error message",
@@ -228,6 +281,33 @@ export class WorldIdVerificationClient {
         };
       }
 
+      // Enforce required credential type (proof_of_human with issuer_schema_id 1)
+      const requireProofOfHuman = expectedContext.requireProofOfHuman ?? true;
+      if (requireProofOfHuman) {
+        if (firstResponse.identifier !== "proof_of_human") {
+          return {
+            success: false,
+            error: `Weak credential rejected: expected 'proof_of_human', got '${firstResponse.identifier}'`,
+          };
+        }
+        if (firstResponse.issuer_schema_id !== 1) {
+          return {
+            success: false,
+            error: `Weak credential rejected: expected issuer_schema_id 1 (proof_of_human), got ${firstResponse.issuer_schema_id}`,
+          };
+        }
+      }
+
+      // Validate signal_hash against expected value if provided
+      if (expectedContext.signalHash !== undefined) {
+        if (firstResponse.signal_hash !== expectedContext.signalHash) {
+          return {
+            success: false,
+            error: `Signal hash mismatch: expected '${expectedContext.signalHash}', got '${firstResponse.signal_hash}'`,
+          };
+        }
+      }
+
       return {
         success: true,
         nullifier: firstResponse.nullifier,
@@ -237,7 +317,6 @@ export class WorldIdVerificationClient {
         environment: verification.environment,
       };
     } catch (error) {
-      clearTimeout(timeoutId);
 
       if ((error as any)?.name === "AbortError") {
         return {

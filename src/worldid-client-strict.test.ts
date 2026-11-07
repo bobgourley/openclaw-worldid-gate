@@ -50,7 +50,12 @@ describe("WorldIdVerificationClient - Strict validation", () => {
         ],
       };
 
-      const result = await client.verify(request);
+      const expectedContext = {
+        action: "test",
+        nonce: "0xtest",
+      };
+
+      const result = await client.verify(request, expectedContext);
 
       assert.ok(!result.success);
       assert.ok(result.error?.includes("nullifier"));
@@ -95,7 +100,12 @@ describe("WorldIdVerificationClient - Strict validation", () => {
         ],
       };
 
-      const result = await client.verify(request);
+      const expectedContext = {
+        action: "test",
+        nonce: "0xtest",
+      };
+
+      const result = await client.verify(request, expectedContext);
 
       assert.ok(!result.success);
       assert.ok(result.error?.includes("issuer_schema_id"));
@@ -135,10 +145,15 @@ describe("WorldIdVerificationClient - Strict validation", () => {
         ],
       };
 
-      const result = await client.verify(request);
+      const expectedContext = {
+        action: "test",
+        nonce: "0xtest",
+      };
+
+      const result = await client.verify(request, expectedContext);
 
       assert.ok(!result.success);
-      assert.equal(result.error, "Invalid JSON in verification response");
+      assert.ok(result.error?.includes("Invalid JSON in verification response"));
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -181,7 +196,12 @@ describe("WorldIdVerificationClient - Strict validation", () => {
         ],
       };
 
-      const result = await client.verify(request);
+      const expectedContext = {
+        action: "test-action",
+        nonce: "0xabc123",
+      };
+
+      const result = await client.verify(request, expectedContext);
 
       assert.ok(result.success);
       // Credential details come from REQUEST, not response
