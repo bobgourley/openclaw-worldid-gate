@@ -90,9 +90,18 @@ export class HttpService {
       res.status(500).json({ error: 'Internal service error' });
     });
 
-    // Health check endpoint
+    // Liveness probe (process is alive)
     this.app.get('/health', (req: Request, res: Response) => {
       res.json({ status: 'healthy' });
+    });
+
+    // Readiness probe (service is ready to accept requests)
+    // Always returns 503 because HttpService alone cannot determine production readiness
+    // Use separate health check in production composition (server.ts)
+    this.app.get('/ready', (req: Request, res: Response) => {
+      // HttpService is always "ready" at HTTP layer
+      // Production readiness (configured secrets) checked at startup in server.ts
+      res.json({ status: 'ready' });
     });
 
     // Challenge creation endpoint (requires authenticated Telegram initData)

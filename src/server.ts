@@ -31,46 +31,68 @@ const config = {
   httpPort: parseInt(process.env.HTTP_PORT || '3000', 10),
 };
 
-// Production readiness check
-function checkProductionReadiness(): void {
+// Production readiness check (fail-closed)
+function checkProductionReadiness(): { ready: boolean; issues: string[] } {
   const issues: string[] = [];
 
   if (config.worldIdAppId === 'app_unconfigured_testing_only') {
-    issues.push('WORLDID_APP_ID not configured (using unconfigured default)');
+    issues.push('WORLDID_APP_ID not configured');
   }
 
   if (config.worldIdRpId === 'rp_unconfigured_test') {
-    issues.push('WORLDID_RP_ID not configured (using unconfigured default)');
+    issues.push('WORLDID_RP_ID not configured');
   }
 
   if (config.worldIdSigningKey === '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef') {
-    issues.push('WORLDID_SIGNING_KEY_HEX not configured (using throwaway test key)');
+    issues.push('WORLDID_SIGNING_KEY_HEX not configured (throwaway test key)');
   }
 
   if (config.telegramBotToken === 'unconfigured_test_token') {
-    issues.push('TELEGRAM_BOT_TOKEN not configured (using unconfigured default)');
+    issues.push('TELEGRAM_BOT_TOKEN not configured');
   }
 
   if (config.action === 'unconfigured-test-action') {
-    issues.push('WORLDID_ACTION not configured (using unconfigured default)');
+    issues.push('WORLDID_ACTION not configured');
   }
 
-  if (issues.length > 0) {
-    console.warn('WARNING: Service running with unconfigured defaults');
-    console.warn('This configuration is NOT suitable for production use');
-    console.warn('');
-    console.warn('Missing configuration:');
-    issues.forEach(issue => console.warn(`  - ${issue}`));
-    console.warn('');
-    console.warn('Set environment variables:');
-    console.warn('  WORLDID_APP_ID, WORLDID_RP_ID, WORLDID_SIGNING_KEY_HEX,');
-    console.warn('  TELEGRAM_BOT_TOKEN, WORLDID_ACTION');
-    console.warn('');
+  const ready = issues.length === 0;
+
+  return { ready, issues };
+}
+
+let serviceReady = false;
+
+function getServiceStatus(): { status: 'healthy' | 'starting' | 'not_ready'; ready: boolean; issues?: string[] } {
+  if (serviceReady) {
+    return { status: 'healthy', ready: true };
   }
+
+  const { ready, issues } = checkProductionReadiness();
+  
+  if (!ready) {
+    return { status: 'not_ready', ready: false, issues };
+  }
+
+  return { status: 'starting', ready: false };
 }
 
 async function main(): Promise<void> {
-  checkProductionReadiness();
+  const { ready, issues } = checkProductionReadiness();
+
+  if (!ready) {
+    console.error('FATAL: Service cannot start with unconfigured secrets');
+    console.error('');
+    console.error('Missing required configuration:');
+    issues.forEach(issue => console.error(`  - ${issue}`));
+    console.error('');
+    console.error('Set environment variables:');
+    console.error('  WORLDID_APP_ID, WORLDID_RP_ID, WORLDID_SIGNING_KEY_HEX,');
+    console.error('  TELEGRAM_BOT_TOKEN, WORLDID_ACTION');
+    console.error('');
+    console.error('This service CANNOT grant enrollment without proper World ID configuration.');
+    console.error('Refusing to start in unsafe configuration.');
+    process.exit(1);
+  }
 
   console.log('Starting enrollment service...');
   console.log(`Database: ${config.databasePath}`);
@@ -117,10 +139,15 @@ async function main(): Promise<void> {
   // Start server
   await httpService.start();
 
+  // Mark service as ready after successful startup
+  serviceReady = true;
+  console.log('Service ready: All configuration validated, accepting requests');
+
   // Graceful shutdown
   const shutdown = async () => {
     console.log('');
     console.log('Shutting down...');
+    serviceReady = false;
     await httpService.stop();
     enrollmentService.close();
     process.exit(0);

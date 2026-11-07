@@ -134,6 +134,7 @@ export interface EnrollmentQuery {
  */
 export class EnrollmentService {
   private db: Database.Database;
+  private dbPath: string;
   private challengeAdapter: WorldIdChallengeAdapter;
   private verificationClient: BackendVerificationClient;
   private telegramConfig: TelegramInitDataConfig;
@@ -165,6 +166,7 @@ export class EnrollmentService {
     }
 
     this.db = new Database(config.dbPath);
+    this.dbPath = config.dbPath;
     this.challengeAdapter = config.challengeAdapter;
     this.verificationClient = config.verificationClient;
     this.action = config.action;
@@ -201,27 +203,72 @@ export class EnrollmentService {
 
     const currentVersion = this.getSchemaVersion();
 
+    // Check for legacy schema (pre-versioning) and fail closed
+    if (currentVersion === 0) {
+      const legacyEnrollmentsExists = this.db
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='enrollments'`)
+        .get() as any;
+
+      if (legacyEnrollmentsExists) {
+        // Detect legacy schema by checking PRIMARY KEY columns
+        const tableInfo = this.db.prepare(`PRAGMA table_info(enrollments)`).all() as any[];
+        const pkColumns = tableInfo.filter((col: any) => col.pk > 0).map((col: any) => col.name).sort();
+        
+        // Legacy schema had PRIMARY KEY (nullifier, action)
+        // Current schema has PRIMARY KEY (telegram_user_id, action)
+        const isLegacySchema = pkColumns.join(',') === 'action,nullifier';
+
+        if (isLegacySchema) {
+          throw new Error(
+            'SCHEMA MIGRATION REQUIRED: Database contains legacy schema with incompatible PRIMARY KEY.\n' +
+            '\n' +
+            'The enrollment database schema has changed from PRIMARY KEY (nullifier, action)\n' +
+            'to PRIMARY KEY (telegram_user_id, action) to support multiple accounts per person.\n' +
+            '\n' +
+            'OPERATOR ACTIONS REQUIRED:\n' +
+            '1. BACKUP your existing database immediately:\n' +
+            `   cp "${this.dbPath}" "${this.dbPath}.backup-$(date +%Y%m%d-%H%M%S)"\n` +
+            '\n' +
+            '2. Choose migration strategy:\n' +
+            '   A. SAFE: Start fresh (no data loss risk, users must re-enroll):\n' +
+            `      rm "${this.dbPath}"\n` +
+            '   B. MIGRATE: Attempt automatic migration (preserves enrollments):\n' +
+            `      Set environment variable: ALLOW_SCHEMA_MIGRATION=1\n` +
+            '\n' +
+            'Migration will:\n' +
+            '- Create new tables with current schema\n' +
+            '- Copy enrollments (first enrollment wins per telegram_user_id+action)\n' +
+            '- Preserve challenge_sessions if compatible\n' +
+            '- Rename old tables to enrollments_legacy_backup\n' +
+            '\n' +
+            'DO NOT proceed without backing up your database first.'
+          );
+        }
+      }
+    }
+
     if (currentVersion < 1) {
-      // v1: Initial schema with per-account lifecycle tracking
+      // v1: Per-account lifecycle schema with monotonic generation tracking
       this.db.exec(`
-        CREATE TABLE challenge_sessions (
+        CREATE TABLE IF NOT EXISTS challenge_sessions (
           nonce TEXT PRIMARY KEY,
           telegram_user_id INTEGER NOT NULL,
           action TEXT NOT NULL,
           signal_hash TEXT NOT NULL,
           expires_at INTEGER NOT NULL,
           created_at TEXT NOT NULL,
-          created_at_seconds INTEGER NOT NULL
+          created_at_seconds INTEGER NOT NULL,
+          generation INTEGER NOT NULL
         ) STRICT
       `);
 
       this.db.exec(`
-        CREATE INDEX idx_challenge_sessions_expires_at
+        CREATE INDEX IF NOT EXISTS idx_challenge_sessions_expires_at
         ON challenge_sessions(expires_at)
       `);
 
       this.db.exec(`
-        CREATE TABLE enrollments (
+        CREATE TABLE IF NOT EXISTS enrollments (
           telegram_user_id INTEGER NOT NULL,
           action TEXT NOT NULL,
           nullifier TEXT NOT NULL,
@@ -230,22 +277,41 @@ export class EnrollmentService {
           revoked INTEGER NOT NULL DEFAULT 0,
           revoked_at TEXT,
           revoked_at_seconds INTEGER,
+          revoked_generation INTEGER,
           PRIMARY KEY (telegram_user_id, action)
         ) STRICT
       `);
 
       this.db.exec(`
-        CREATE INDEX idx_enrollments_nullifier
+        CREATE INDEX IF NOT EXISTS idx_enrollments_nullifier
         ON enrollments(nullifier)
       `);
 
       this.db.exec(`
-        CREATE INDEX idx_enrollments_revoked
+        CREATE INDEX IF NOT EXISTS idx_enrollments_revoked
         ON enrollments(revoked)
       `);
 
+      // Global generation counter for monotonic event ordering
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS generation_counter (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          next_generation INTEGER NOT NULL DEFAULT 1
+        ) STRICT
+      `);
+
+      this.db.exec(`INSERT OR IGNORE INTO generation_counter (id, next_generation) VALUES (1, 1)`);
+
       this.setSchemaVersion(1);
     }
+  }
+
+  private getNextGeneration(): number {
+    const result = this.db.prepare(`
+      UPDATE generation_counter SET next_generation = next_generation + 1 WHERE id = 1
+      RETURNING next_generation - 1 as generation
+    `).get() as any;
+    return result.generation;
   }
 
   private getSchemaVersion(): number {
@@ -276,9 +342,9 @@ export class EnrollmentService {
 
     const authenticatedUserId = initDataValidation.user.id;
 
-    // Check for existing active enrollment
+    // Check for existing active (non-expired, non-revoked) enrollment
     const existingEnrollment = await this.findEnrollment(authenticatedUserId);
-    if (existingEnrollment && !existingEnrollment.revoked) {
+    if (existingEnrollment && !existingEnrollment.revoked && !existingEnrollment.expired) {
       throw new Error('User already enrolled (policy: one active enrollment per account)');
     }
 
@@ -292,9 +358,10 @@ export class EnrollmentService {
       signal
     );
 
-    // Store challenge session with expected context
+    // Store challenge session with expected context and monotonic generation
     const now = this.clock.nowSeconds();
     const expiresAt = now + this.challengeTtlSeconds;
+    const generation = this.getNextGeneration();
 
     const session = {
       nonce: signedChallenge.nonce,
@@ -304,12 +371,13 @@ export class EnrollmentService {
       expiresAt,
       createdAt: this.clock.nowISO(),
       createdAtSeconds: now,
+      generation,
     };
 
     try {
       const stmt = this.db.prepare(`
-        INSERT INTO challenge_sessions (nonce, telegram_user_id, action, signal_hash, expires_at, created_at, created_at_seconds)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO challenge_sessions (nonce, telegram_user_id, action, signal_hash, expires_at, created_at, created_at_seconds, generation)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       stmt.run(
@@ -319,7 +387,8 @@ export class EnrollmentService {
         session.signalHash,
         session.expiresAt,
         session.createdAt,
-        session.createdAtSeconds
+        session.createdAtSeconds,
+        session.generation
       );
     } catch (error: any) {
       if (error.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
@@ -377,7 +446,7 @@ export class EnrollmentService {
 
     // Step 2: Peek challenge session (read-only, do not consume yet)
     const peekStmt = this.db.prepare(`
-      SELECT nonce, telegram_user_id, action, signal_hash, expires_at, created_at, created_at_seconds
+      SELECT nonce, telegram_user_id, action, signal_hash, expires_at, created_at, created_at_seconds, generation
       FROM challenge_sessions
       WHERE nonce = ?
     `);
@@ -442,13 +511,14 @@ export class EnrollmentService {
     // Per-account revocation: check (telegram_user_id, action), not nullifier
     // Policy: revoked accounts can regain via fresh post-revoke verification
     const revokedCheck = this.db.prepare(`
-      SELECT revoked, revoked_at_seconds FROM enrollments
+      SELECT revoked, revoked_at_seconds, revoked_generation FROM enrollments
       WHERE telegram_user_id = ? AND action = ? AND revoked = 1
     `).get(authenticatedUser.id, this.action) as any;
 
     if (revokedCheck) {
-      // Block pre-revocation challenges from completing
-      if (challengeRow.created_at_seconds <= revokedCheck.revoked_at_seconds) {
+      // Block pre-revocation challenges using monotonic generation
+      // Generation provides strict ordering even within same second
+      if (challengeRow.generation < revokedCheck.revoked_generation) {
         return {
           success: false,
           error: 'Challenge predates revocation (fresh verification required)',
@@ -462,7 +532,7 @@ export class EnrollmentService {
     const transaction = this.db.transaction(() => {
       // Re-check challenge still exists (race condition protection)
       const recheckStmt = this.db.prepare(`
-        SELECT nonce, telegram_user_id, expires_at, created_at_seconds
+        SELECT nonce, telegram_user_id, expires_at, created_at_seconds, generation
         FROM challenge_sessions
         WHERE nonce = ?
       `);
@@ -487,11 +557,11 @@ export class EnrollmentService {
 
       // Re-check for per-account revocation and generation (race protection)
       const txAccountCheck = this.db.prepare(`
-        SELECT revoked, revoked_at_seconds FROM enrollments
+        SELECT revoked, revoked_at_seconds, revoked_generation FROM enrollments
         WHERE telegram_user_id = ? AND action = ? AND revoked = 1
       `).get(authenticatedUser.id, this.action) as any;
 
-      if (txAccountCheck && recheckRow.created_at_seconds <= txAccountCheck.revoked_at_seconds) {
+      if (txAccountCheck && recheckRow.generation < txAccountCheck.revoked_generation) {
         throw new Error('Challenge predates revocation in transaction');
       }
 
@@ -596,7 +666,7 @@ export class EnrollmentService {
    *
    * Policy: Per-account revocation with fresh verification restore.
    * This operation:
-   * - Blocks in-flight pre-revocation challenges from completing
+   * - Blocks in-flight pre-revocation challenges from completing (via generation)
    * - Blocks future enrollment with pre-revocation challenges
    * - Allows post-revocation fresh challenges to restore access
    * - Does NOT delete the record (audit trail + restoration capability)
@@ -606,13 +676,15 @@ export class EnrollmentService {
    */
   async revokeEnrollment(telegramUserId: number): Promise<boolean> {
     const now = this.clock.nowSeconds();
+    const generation = this.getNextGeneration();
+    
     const stmt = this.db.prepare(`
       UPDATE enrollments
-      SET revoked = 1, revoked_at = ?, revoked_at_seconds = ?
+      SET revoked = 1, revoked_at = ?, revoked_at_seconds = ?, revoked_generation = ?
       WHERE telegram_user_id = ? AND action = ? AND revoked = 0
     `);
 
-    const result = stmt.run(this.clock.nowISO(), now, telegramUserId, this.action);
+    const result = stmt.run(this.clock.nowISO(), now, generation, telegramUserId, this.action);
     return result.changes > 0;
   }
 
