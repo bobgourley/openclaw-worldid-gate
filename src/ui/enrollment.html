@@ -256,13 +256,35 @@
         // Import locally bundled IDKit Core SDK (from installed @worldcoin/idkit-core)
         const { IDKit, proofOfHuman } = await import('/idkit-bundle.js');
         
-        // Extract RP context from session (signed by backend)
+        // Validate required fields from session (fail-closed, no synthetic fallbacks)
+        if (!session.rpId) {
+          showError('Invalid session: missing RP ID. Please request a new verification.');
+          return;
+        }
+        if (!session.signedChallenge.nonce) {
+          showError('Invalid session: missing nonce. Please request a new verification.');
+          return;
+        }
+        if (!session.signedChallenge.createdAt) {
+          showError('Invalid session: missing timestamp. Please request a new verification.');
+          return;
+        }
+        if (!session.signedChallenge.expiresAt) {
+          showError('Invalid session: missing expiry. Please request a new verification.');
+          return;
+        }
+        if (!session.signedChallenge.signature) {
+          showError('Invalid session: missing signature. Please request a new verification.');
+          return;
+        }
+        
+        // Extract RP context from session (signed by backend, no fallbacks)
         const rp_context = {
-          rp_id: session.rpId || 'rp_test',
+          rp_id: session.rpId,
           nonce: session.signedChallenge.nonce,
-          created_at: session.signedChallenge.createdAt || Math.floor(Date.now() / 1000),
-          expires_at: session.signedChallenge.expiresAt || Math.floor(Date.now() / 1000) + 300,
-          signature: session.signedChallenge.signature || '0x0000000000000000000000000000000000000000000000000000000000000000',
+          created_at: session.signedChallenge.createdAt,
+          expires_at: session.signedChallenge.expiresAt,
+          signature: session.signedChallenge.signature,
         };
         
         // Create verification request using official IDKit API
