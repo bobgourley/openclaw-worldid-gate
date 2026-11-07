@@ -112,6 +112,8 @@ describe('OpenClaw Integration', () => {
         telegramAccountId: 'test-account',
         timeoutSeconds: 5,
         maxOutputBytes: 1024 * 1024,
+          profile: 'worldid-e2e',
+        profile: 'worldid-e2e',
       },
       allowedGroupId: -1001234567890,
     });
@@ -513,6 +515,8 @@ exit 0
           telegramAccountId: 'test-account',
           timeoutSeconds: 5,
           maxOutputBytes: 1024 * 1024,
+          profile: 'worldid-e2e',
+          profile: 'worldid-e2e',
         },
         allowedGroupId: -1001234567890,
       });
@@ -618,6 +622,7 @@ exit 0
           telegramAccountId: 'test-account',
           timeoutSeconds: 5,
           maxOutputBytes: 1024 * 1024,
+          profile: 'worldid-e2e',
         },
         allowedGroupId: -1001234567890,
       });
@@ -669,6 +674,7 @@ exit 0
           telegramAccountId: 'test-account',
           timeoutSeconds: 1,
           maxOutputBytes: 1024 * 1024,
+          profile: 'worldid-e2e',
         },
         allowedGroupId: -1001234567890,
       });
@@ -721,6 +727,7 @@ exit 0
           telegramAccountId: 'test-account',
           timeoutSeconds: 5,
           maxOutputBytes: 1024 * 1024,
+          profile: 'worldid-e2e',
         },
         allowedGroupId: -1001234567890,
       });
@@ -773,6 +780,7 @@ exit 0
           telegramAccountId: 'test-account',
           timeoutSeconds: 5,
           maxOutputBytes: 1024 * 1024,
+          profile: 'worldid-e2e',
         },
         allowedGroupId: -1001234567890,
       });
@@ -825,6 +833,7 @@ exit 0
           telegramAccountId: 'test-account',
           timeoutSeconds: 5,
           maxOutputBytes: 1024 * 1024,
+          profile: 'worldid-e2e',
         },
         allowedGroupId: -1001234567890,
       });
@@ -854,6 +863,319 @@ exit 0
       assert.ok(mockTransport.sentMessages[0].text.includes('failed'));
 
       await unlink(missingPayloadsCliPath).catch(() => {});
+    });
+  });
+
+  describe('Pre-spawn admission checks', () => {
+    test('prevents execution when enrollment revoked during preparation', async () => {
+      // Create CLI with counter
+      const prepCounterFile = join(tmpdir(), `prep-counter-${randomBytes(8).toString('hex')}.txt`);
+      await writeFile(prepCounterFile, '0', 'utf8');
+
+      const prepDelayCliPath = join(tmpdir(), `prep-delay-openclaw-${randomBytes(8).toString('hex')}.sh`);
+      await writeFile(
+        prepDelayCliPath,
+        `#!/bin/bash
+count=$(cat ${prepCounterFile})
+count=$((count + 1))
+echo $count > ${prepCounterFile}
+echo '{"status":"ok","result":{"payloads":[{"text":"Should not see this"}]}}'
+exit 0
+`,
+        { mode: 0o755 }
+      );
+      await chmod(prepDelayCliPath, 0o755);
+
+      // Wrap enrollment service to add delay before findEnrollment
+      const originalFind = enrollmentService.findEnrollment.bind(enrollmentService);
+      let callCount = 0;
+      enrollmentService.findEnrollment = async (userId: number) => {
+        callCount++;
+        if (callCount === 1) {
+          // Add delay on first call to allow revocation to happen
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        return await originalFind(userId);
+      };
+
+      const prepDelayBotHandler = new TelegramBotHandler({
+        botToken: 'test_bot_token',
+        enrollmentService,
+        transport: mockTransport,
+        enrollmentBaseUrl: 'http://localhost:3000',
+        webhookSecret: 'test_webhook_secret',
+        openclawConfig: {
+          openclawBin: prepDelayCliPath,
+          agentId: 'test-agent',
+          telegramAccountId: 'test-account',
+          timeoutSeconds: 5,
+          maxOutputBytes: 1024 * 1024,
+          profile: 'worldid-e2e',
+        },
+        allowedGroupId: -1001234567890,
+      });
+
+      await enrollmentService.directEnroll({
+        telegramUserId: 88889,
+        nullifier: 'test_nullifier_88889',
+        credential: { credential_type: 'proof_of_human' } as any,
+      });
+
+      const update = {
+        update_id: 888,
+        message: {
+          message_id: 888,
+          from: { id: 88889, is_bot: false, first_name: 'Test' },
+          chat: { id: -1001234567890, type: 'group' as const },
+          date: Math.floor(Date.now() / 1000),
+          text: '/ask test',
+        },
+      };
+
+      mockTransport.reset();
+
+      // Start dispatch in background, then revoke enrollment before check runs
+      const dispatchPromise = prepDelayBotHandler.handleUpdate(update);
+      
+      // Revoke enrollment during async delay
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await enrollmentService.revokeEnrollment(88889);
+      
+      await dispatchPromise;
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      // Restore original findEnrollment
+      enrollmentService.findEnrollment = originalFind;
+
+      // Check that CLI was NOT invoked
+      const finalCount = parseInt(await fs.readFile(prepCounterFile, 'utf8'), 10);
+      assert.strictEqual(finalCount, 0, 'CLI should not be invoked when enrollment revoked during prep');
+
+      // Should send revoked message
+      assert.strictEqual(mockTransport.sentMessages.length, 1);
+      assert.ok(mockTransport.sentMessages[0].text.includes('revoked'));
+
+      await unlink(prepCounterFile).catch(() => {});
+      await unlink(prepDelayCliPath).catch(() => {});
+    });
+
+    test('preserves no-reexecution after spawn even if reply fails', async () => {
+      const replyCounterFile = join(tmpdir(), `reply-counter-${randomBytes(8).toString('hex')}.txt`);
+      await writeFile(replyCounterFile, '0', 'utf8');
+
+      const replyTestCliPath = join(tmpdir(), `reply-test-openclaw-${randomBytes(8).toString('hex')}.sh`);
+      await writeFile(
+        replyTestCliPath,
+        `#!/bin/bash
+count=$(cat ${replyCounterFile})
+count=$((count + 1))
+echo $count > ${replyCounterFile}
+echo '{"status":"ok","result":{"payloads":[{"text":"Response"}]}}'
+exit 0
+`,
+        { mode: 0o755 }
+      );
+      await chmod(replyTestCliPath, 0o755);
+
+      // Create transport that fails on first delivery
+      let deliveryAttempts = 0;
+      const failingTransport: TelegramBotTransport = {
+        async sendMessage(chatId: number, text: string, options?: any): Promise<void> {
+          deliveryAttempts++;
+          if (deliveryAttempts === 1) {
+            throw new Error('Simulated delivery failure');
+          }
+        },
+      };
+
+      const replyTestBotHandler = new TelegramBotHandler({
+        botToken: 'test_bot_token',
+        enrollmentService,
+        transport: failingTransport,
+        enrollmentBaseUrl: 'http://localhost:3000',
+        webhookSecret: 'test_webhook_secret',
+        openclawConfig: {
+          openclawBin: replyTestCliPath,
+          agentId: 'test-agent',
+          telegramAccountId: 'test-account',
+          timeoutSeconds: 5,
+          maxOutputBytes: 1024 * 1024,
+          profile: 'worldid-e2e',
+        },
+        allowedGroupId: -1001234567890,
+      });
+
+      await enrollmentService.directEnroll({
+        telegramUserId: 99991,
+        nullifier: 'test_nullifier_99991',
+        credential: { credential_type: 'proof_of_human' } as any,
+      });
+
+      const update = {
+        update_id: 9991,
+        message: {
+          message_id: 9991,
+          from: { id: 99991, is_bot: false, first_name: 'Test' },
+          chat: { id: -1001234567890, type: 'group' as const },
+          date: Math.floor(Date.now() / 1000),
+          text: '/ask test',
+        },
+      };
+
+      // First attempt - spawn succeeds, reply fails
+      await replyTestBotHandler.handleUpdate(update).catch(() => {});
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      const countAfterFirst = parseInt(await fs.readFile(replyCounterFile, 'utf8'), 10);
+      assert.strictEqual(countAfterFirst, 1, 'CLI invoked on first attempt');
+
+      // Retry with same update_id - should be suppressed despite reply failure
+      await replyTestBotHandler.handleUpdate(update).catch(() => {});
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      const countAfterRetry = parseInt(await fs.readFile(replyCounterFile, 'utf8'), 10);
+      assert.strictEqual(countAfterRetry, 1, 'CLI should not be re-invoked after spawn, even if reply failed');
+
+      await unlink(replyCounterFile).catch(() => {});
+      await unlink(replyTestCliPath).catch(() => {});
+    });
+  });
+
+  describe('Configuration validation', () => {
+    test('rejects missing profile', () => {
+      assert.throws(() => {
+        new TelegramBotHandler({
+          botToken: 'test_bot_token',
+          enrollmentService,
+          transport: mockTransport,
+          enrollmentBaseUrl: 'http://localhost:3000',
+          webhookSecret: 'test_webhook_secret',
+          openclawConfig: {
+            openclawBin: fakeCliPath,
+            agentId: 'test-agent',
+            telegramAccountId: 'test-account',
+            timeoutSeconds: 5,
+            maxOutputBytes: 1024 * 1024,
+            profile: '',
+          },
+          allowedGroupId: -1001234567890,
+        });
+      }, /Dedicated profile required/);
+    });
+
+    test('rejects invalid timeout', () => {
+      assert.throws(() => {
+        new TelegramBotHandler({
+          botToken: 'test_bot_token',
+          enrollmentService,
+          transport: mockTransport,
+          enrollmentBaseUrl: 'http://localhost:3000',
+          webhookSecret: 'test_webhook_secret',
+          openclawConfig: {
+            openclawBin: fakeCliPath,
+            agentId: 'test-agent',
+            telegramAccountId: 'test-account',
+            timeoutSeconds: 700,
+            maxOutputBytes: 1024 * 1024,
+            profile: 'worldid-e2e',
+          },
+          allowedGroupId: -1001234567890,
+        });
+      }, /Timeout must be between 1 and 600/);
+    });
+
+    test('rejects invalid group ID format', () => {
+      assert.throws(() => {
+        new TelegramBotHandler({
+          botToken: 'test_bot_token',
+          enrollmentService,
+          transport: mockTransport,
+          enrollmentBaseUrl: 'http://localhost:3000',
+          webhookSecret: 'test_webhook_secret',
+          openclawConfig: {
+            openclawBin: fakeCliPath,
+            agentId: 'test-agent',
+            telegramAccountId: 'test-account',
+            timeoutSeconds: 5,
+            maxOutputBytes: 1024 * 1024,
+            profile: 'worldid-e2e',
+          },
+          allowedGroupId: 12345,
+        });
+      }, /must be negative integer/);
+    });
+
+    test('default OFF - no OpenClaw config allows construction', () => {
+      const noOpenClawHandler = new TelegramBotHandler({
+        botToken: 'test_bot_token',
+        enrollmentService,
+        transport: mockTransport,
+        enrollmentBaseUrl: 'http://localhost:3000',
+        webhookSecret: 'test_webhook_secret',
+      });
+      assert.ok(noOpenClawHandler);
+    });
+  });
+
+  describe('Subprocess timeout handling', () => {
+    test('handles CLI timeout with proper cleanup', async () => {
+      // Simple sleep that should timeout
+      const timeoutCliPath = join(tmpdir(), `timeout-openclaw-${randomBytes(8).toString('hex')}.sh`);
+      await writeFile(
+        timeoutCliPath,
+        `#!/bin/bash
+sleep 100
+echo '{"status":"ok","result":{"payloads":[{"text":"Never reached"}]}}'
+exit 0
+`,
+        { mode: 0o755 }
+      );
+      await chmod(timeoutCliPath, 0o755);
+
+      const timeoutBotHandler = new TelegramBotHandler({
+        botToken: 'test_bot_token',
+        enrollmentService,
+        transport: mockTransport,
+        enrollmentBaseUrl: 'http://localhost:3000',
+        webhookSecret: 'test_webhook_secret',
+        openclawConfig: {
+          openclawBin: timeoutCliPath,
+          agentId: 'test-agent',
+          telegramAccountId: 'test-account',
+          timeoutSeconds: 1,
+          maxOutputBytes: 1024 * 1024,
+          profile: 'worldid-e2e',
+        },
+        allowedGroupId: -1001234567890,
+      });
+
+      await enrollmentService.directEnroll({
+        telegramUserId: 77771,
+        nullifier: 'test_nullifier_77771',
+        credential: { credential_type: 'proof_of_human' } as any,
+      });
+
+      const update = {
+        update_id: 7771,
+        message: {
+          message_id: 7771,
+          from: { id: 77771, is_bot: false, first_name: 'Test' },
+          chat: { id: -1001234567890, type: 'group' as const },
+          date: Math.floor(Date.now() / 1000),
+          text: '/ask test',
+        },
+      };
+
+      mockTransport.reset();
+      await timeoutBotHandler.handleUpdate(update);
+
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      // Should report timeout
+      assert.strictEqual(mockTransport.sentMessages.length, 1);
+      assert.ok(mockTransport.sentMessages[0].text.includes('timed out'));
+
+      await unlink(timeoutCliPath).catch(() => {});
     });
   });
 

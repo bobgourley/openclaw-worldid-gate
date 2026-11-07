@@ -119,6 +119,15 @@ export class TelegramBotHandler {
       if (!this.allowedGroupId) {
         throw new Error('Allowed group ID required when OpenClaw integration enabled');
       }
+      if (!this.openclawConfig.profile || this.openclawConfig.profile.trim() === '') {
+        throw new Error('Dedicated profile required when OpenClaw integration enabled');
+      }
+      if (this.openclawConfig.timeoutSeconds < 1 || this.openclawConfig.timeoutSeconds > 600) {
+        throw new Error('Timeout must be between 1 and 600 seconds');
+      }
+      if (!Number.isInteger(this.allowedGroupId) || this.allowedGroupId >= 0) {
+        throw new Error('Allowed group ID must be negative integer (Telegram group format)');
+      }
     }
   }
 
@@ -273,43 +282,63 @@ export class TelegramBotHandler {
         }
       }
 
+      let spawnAttempted = false;
+
       try {
-        // Fresh enrollment check (admission boundary - checked immediately before spawn)
-        const enrollment = await this.enrollmentService.findEnrollment(userId);
-        
-        if (!enrollment) {
-          await this.transport.sendMessage(
-            chatId,
-            '❌ World ID verification required.\n\nUse /verify to start verification.'
-          );
-          return;
-        }
-
-        if (enrollment.revoked) {
-          await this.transport.sendMessage(
-            chatId,
-            '❌ Your verification has been revoked.\n\nPlease contact support.'
-          );
-          return;
-        }
-
-        if (enrollment.expired) {
-          await this.transport.sendMessage(
-            chatId,
-            '❌ Your verification has expired.\n\nUse /verify to renew.'
-          );
-          return;
-        }
-
-        // Dispatch to OpenClaw CLI
+        // Dispatch to OpenClaw CLI with fresh enrollment check before spawn
         const result = await dispatchToOpenClaw(this.openclawConfig, {
           telegramUserId: userId,
           chatId: chatId,
           text: query,
+          preSpawnCheck: async () => {
+            // Fresh enrollment check AFTER file prep, BEFORE spawn
+            const enrollment = await this.enrollmentService.findEnrollment(userId);
+            
+            if (!enrollment) {
+              return { allowed: false, reason: 'World ID verification required' };
+            }
+
+            if (enrollment.revoked) {
+              return { allowed: false, reason: 'Enrollment revoked' };
+            }
+
+            if (enrollment.expired) {
+              return { allowed: false, reason: 'Enrollment expired' };
+            }
+
+            spawnAttempted = true;
+            return { allowed: true };
+          },
         });
 
+        // Handle result
+        if (result.error && !spawnAttempted) {
+          // Admission rejected before spawn - allow retry
+          this.recentDeliveries.delete(deliveryKey);
+          
+          if (result.error.includes('verification required')) {
+            await this.transport.sendMessage(
+              chatId,
+              '❌ World ID verification required.\n\nUse /verify to start verification.'
+            );
+          } else if (result.error.includes('revoked')) {
+            await this.transport.sendMessage(
+              chatId,
+              '❌ Your verification has been revoked.\n\nPlease contact support.'
+            );
+          } else if (result.error.includes('expired')) {
+            await this.transport.sendMessage(
+              chatId,
+              '❌ Your verification has expired.\n\nUse /verify to renew.'
+            );
+          } else {
+            await this.transport.sendMessage(chatId, '❌ Request failed.');
+          }
+          return;
+        }
+
+        // Spawn was attempted - preserve reservation even if delivery fails
         if (result.success && result.response) {
-          // Send bounded model response to same chat
           const responseText = result.response.slice(0, 4096);
           await this.transport.sendMessage(chatId, responseText);
         } else if (result.timeout) {
@@ -319,8 +348,10 @@ export class TelegramBotHandler {
           console.error('OpenClaw dispatch error:', result.error);
         }
       } catch (error) {
-        // On failure, remove reservation to allow retry
-        this.recentDeliveries.delete(deliveryKey);
+        // Remove reservation only if spawn was not attempted
+        if (!spawnAttempted) {
+          this.recentDeliveries.delete(deliveryKey);
+        }
         throw error;
       }
 

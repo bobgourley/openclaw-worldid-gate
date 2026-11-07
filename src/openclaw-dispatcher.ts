@@ -54,8 +54,8 @@ export interface OpenClawDispatchConfig {
   timeoutSeconds: number;
   /** Maximum output size in bytes */
   maxOutputBytes: number;
-  /** Optional --profile flag for isolated config */
-  profile?: string;
+  /** Required --profile flag for isolated config */
+  profile: string;
 }
 
 export interface DispatchRequest {
@@ -65,6 +65,8 @@ export interface DispatchRequest {
   chatId: number;
   /** Message text */
   text: string;
+  /** Pre-spawn admission check (called after file prep, before spawn) */
+  preSpawnCheck?: () => Promise<{ allowed: boolean; reason?: string }>;
 }
 
 export interface DispatchResult {
@@ -101,6 +103,17 @@ export async function dispatchToOpenClaw(
     await writeFile(messageFile, request.text, { encoding: 'utf8', mode: 0o600 });
     await chmod(messageFile, 0o600); // Ensure restricted even if writeFile mode failed
 
+    // Fresh admission check AFTER async file prep, BEFORE spawn
+    if (request.preSpawnCheck) {
+      const checkResult = await request.preSpawnCheck();
+      if (!checkResult.allowed) {
+        return {
+          success: false,
+          error: checkResult.reason || 'Pre-spawn admission check failed',
+        };
+      }
+    }
+
     const sessionKey = buildSessionKey(
       config.telegramAccountId,
       request.chatId,
@@ -109,6 +122,7 @@ export async function dispatchToOpenClaw(
 
     // Build args array (no shell interpolation)
     const args = [
+      '--profile', config.profile,
       'agent',
       '--agent', config.agentId,
       '--message-file', messageFile,
@@ -117,10 +131,6 @@ export async function dispatchToOpenClaw(
       '--timeout', config.timeoutSeconds.toString(),
       // --deliver defaults to false (no outbound routing)
     ];
-
-    if (config.profile) {
-      args.unshift('--profile', config.profile);
-    }
 
     // Spawn process with bounded execution
     const child = spawn(config.openclawBin, args, {
@@ -151,17 +161,34 @@ export async function dispatchToOpenClaw(
       }
     });
 
-    // Wait for process completion
+    // Wait for process completion and stdout close
     const exitCode = await new Promise<number | null>((resolve) => {
       const cleanup = () => {
         if (timeoutHandle) clearTimeout(timeoutHandle);
         if (sigkillHandle) clearTimeout(sigkillHandle);
       };
 
+      let exitReceived = false;
+      let stdoutClosed = false;
+      let finalExitCode: number | null = null;
+
+      const checkComplete = () => {
+        if (exitReceived && stdoutClosed) {
+          cleanup();
+          resolve(finalExitCode);
+        }
+      };
+
       child.on('exit', (code) => {
         processExited = true;
-        cleanup();
-        resolve(code);
+        exitReceived = true;
+        finalExitCode = code;
+        checkComplete();
+      });
+
+      child.stdout.on('close', () => {
+        stdoutClosed = true;
+        checkComplete();
       });
 
       child.on('error', (err) => {

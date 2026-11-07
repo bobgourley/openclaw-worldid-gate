@@ -159,6 +159,14 @@ async function main(): Promise<void> {
       console.error('FATAL: OPENCLAW_ALLOWED_GROUP required when OPENCLAW_ENABLED=true');
       process.exit(1);
     }
+    if (!config.openclawProfile) {
+      console.error('FATAL: OPENCLAW_PROFILE required when OPENCLAW_ENABLED=true (dedicated isolated profile)');
+      process.exit(1);
+    }
+    if (config.openclawTimeout < 1 || config.openclawTimeout > 600) {
+      console.error('FATAL: OPENCLAW_TIMEOUT must be between 1 and 600 seconds');
+      process.exit(1);
+    }
     
     openclawConfig = {
       openclawBin: config.openclawBin,
@@ -172,7 +180,7 @@ async function main(): Promise<void> {
     console.log('OpenClaw integration enabled:');
     console.log(`  Agent: ${config.openclawAgent}`);
     console.log(`  Allowed group: ${config.openclawAllowedGroupId}`);
-    console.log(`  Profile: ${config.openclawProfile || '(default)'}`);
+    console.log(`  Profile: ${config.openclawProfile}`);
   }
   
   const telegramBotHandler = new TelegramBotHandler({
