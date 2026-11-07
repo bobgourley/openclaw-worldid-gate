@@ -9,6 +9,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createHmac } from 'node:crypto';
+import Database from 'better-sqlite3';
 import {
   EnrollmentService,
   SystemClock,
@@ -658,6 +659,254 @@ describe('EnrollmentService Production', () => {
 
       // Should not throw (no CREATE TABLE conflict)
       service2.close();
+    });
+
+    it('detects legacy database with incompatible schema (PRIMARY KEY (nullifier, action)) on enrollment attempt', async () => {
+      service.close();
+
+      const legacyDbPath = testDbPath + '.legacy';
+      
+      // Clean up any existing legacy database
+      if (fs.existsSync(legacyDbPath)) {
+        fs.unlinkSync(legacyDbPath);
+      }
+      
+      // Create legacy schema database
+      const legacyDb = new Database(legacyDbPath);
+      
+      legacyDb.exec(`
+        CREATE TABLE IF NOT EXISTS enrollments (
+          telegram_user_id INTEGER NOT NULL,
+          nullifier TEXT NOT NULL,
+          action TEXT NOT NULL,
+          issuer_schema_id INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL,
+          enrolled_at INTEGER NOT NULL,
+          revoked INTEGER NOT NULL DEFAULT 0,
+          revoked_at INTEGER,
+          revoked_generation INTEGER,
+          PRIMARY KEY (nullifier, action)
+        ) STRICT;
+      `);
+      
+      legacyDb.exec(`
+        CREATE TABLE IF NOT EXISTS challenge_sessions (
+          challenge_nonce TEXT PRIMARY KEY,
+          signal_hash TEXT NOT NULL,
+          telegram_user_id INTEGER NOT NULL,
+          telegram_signature_timestamp INTEGER NOT NULL,
+          telegram_signature_original_data TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          consumed INTEGER NOT NULL DEFAULT 0,
+          generation INTEGER NOT NULL
+        ) STRICT;
+      `);
+      
+      legacyDb.exec(`
+        CREATE TABLE IF NOT EXISTS generation_counter (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          next_generation INTEGER NOT NULL
+        ) STRICT;
+      `);
+      
+      legacyDb.exec(`INSERT OR REPLACE INTO generation_counter (id, next_generation) VALUES (1, 1);`);
+      
+      legacyDb.close();
+
+      // Attempting to open service with legacy schema should fail with migration error
+      assert.throws(
+        () => {
+          new EnrollmentService({
+            dbPath: legacyDbPath,
+            challengeAdapter: adapter,
+            verificationClient: mockClient,
+            telegramBotToken: TEST_BOT_TOKEN,
+            action: TEST_ACTION,
+            clock: fakeClock,
+          });
+        },
+        (err: Error) => {
+          const message = err.message;
+          return message.includes('SCHEMA MIGRATION REQUIRED') &&
+                 message.includes('PRIMARY KEY (nullifier, action)') &&
+                 message.includes('PRIMARY KEY (telegram_user_id, action)') &&
+                 message.includes('OPERATOR ACTIONS REQUIRED');
+        },
+        'Service constructor should detect legacy schema and throw migration error'
+      );
+
+      // Clean up
+      fs.unlinkSync(legacyDbPath);
+    });
+  });
+
+  describe('revocation and renewal lifecycle', () => {
+    it('allows fresh enrollment after revocation with monotonic generation check', async () => {
+      const userId = 11111;
+      const nullifier = '0xmonotonic_test';
+      const initData = createValidInitData(userId, TEST_BOT_TOKEN);
+
+      // Initial enrollment
+      const challenge1 = await service.createChallenge(initData);
+      mockClient.setResponse(challenge1.signedChallenge.nonce, {
+        success: true,
+        nullifier,
+        issuerSchemaId: 1,
+        expiresAtMin: fakeClock.nowSeconds() + 86400,
+      });
+
+      const idkitResult1 = createIDKitResult(
+        challenge1.signedChallenge.nonce,
+        TEST_ACTION,
+        challenge1.signedChallenge.signalHash
+      );
+      const result1 = await service.completeEnrollment({ initData, idkitResult: idkitResult1 });
+      assert.equal(result1.success, true);
+
+      // Revoke the enrollment
+      const revokeResult = await service.revokeEnrollment(userId);
+      assert.equal(revokeResult, true);
+
+      // Advance time by 1 second (same-second test)
+      fakeClock.advance(1);
+
+      // Create new challenge AFTER revocation (higher generation)
+      const initData2 = createValidInitData(userId, TEST_BOT_TOKEN);
+      const challenge2 = await service.createChallenge(initData2);
+
+      // Complete enrollment with post-revoke challenge
+      mockClient.setResponse(challenge2.signedChallenge.nonce, {
+        success: true,
+        nullifier,
+        issuerSchemaId: 1,
+        expiresAtMin: fakeClock.nowSeconds() + 86400,
+      });
+
+      const idkitResult2 = createIDKitResult(
+        challenge2.signedChallenge.nonce,
+        TEST_ACTION,
+        challenge2.signedChallenge.signalHash
+      );
+      const result2 = await service.completeEnrollment({ initData: initData2, idkitResult: idkitResult2 });
+      
+      assert.equal(result2.success, true, 'Post-revoke enrollment should succeed');
+    });
+
+    it('rejects challenge created before revocation (monotonic generation)', async () => {
+      const userId = 22222;
+      const nullifier = '0xpre_revoke_challenge';
+      const initData = createValidInitData(userId, TEST_BOT_TOKEN);
+      
+      // Create challenge BEFORE revocation
+      const oldChallenge = await service.createChallenge(initData);
+
+      // Create initial enrollment (different nullifier to avoid duplicate detection)
+      const initialNullifier = '0xinitial_enrollment';
+      const challenge1 = await service.createChallenge(initData);
+      mockClient.setResponse(challenge1.signedChallenge.nonce, {
+        success: true,
+        nullifier: initialNullifier,
+        issuerSchemaId: 1,
+        expiresAtMin: fakeClock.nowSeconds() + 86400,
+      });
+
+      const idkitResult1 = createIDKitResult(
+        challenge1.signedChallenge.nonce,
+        TEST_ACTION,
+        challenge1.signedChallenge.signalHash
+      );
+      await service.completeEnrollment({ initData, idkitResult: idkitResult1 });
+
+      // Revoke the enrollment
+      await service.revokeEnrollment(userId);
+
+      // Attempt to use pre-revoke challenge (should fail)
+      mockClient.setResponse(oldChallenge.signedChallenge.nonce, {
+        success: true,
+        nullifier,
+        issuerSchemaId: 1,
+        expiresAtMin: fakeClock.nowSeconds() + 86400,
+      });
+
+      const idkitResult = createIDKitResult(
+        oldChallenge.signedChallenge.nonce,
+        TEST_ACTION,
+        oldChallenge.signedChallenge.signalHash
+      );
+      const result = await service.completeEnrollment({ initData, idkitResult });
+      
+      assert.equal(result.success, false);
+      assert.match(result.error!, /predates revocation|revoked|stale challenge/i);
+    });
+
+    it('allows renewal of expired enrollment (exact expiry boundary test)', async () => {
+      // Create service with minimum enrollment TTL (86400 seconds = 1 day) for testing expiry
+      const shortTtlDbPath = testDbPath + '.shortttl';
+      const shortTtlService = new EnrollmentService({
+        dbPath: shortTtlDbPath,
+        challengeAdapter: adapter,
+        verificationClient: mockClient,
+        telegramBotToken: TEST_BOT_TOKEN,
+        action: TEST_ACTION,
+        challengeTtlSeconds: 300,
+        enrollmentTtlSeconds: 86400, // Minimum TTL (1 day)
+        clock: fakeClock,
+      });
+
+      try {
+        const userId = 33333;
+        const nullifier = '0xexpired_renewal';
+        const initData = createValidInitData(userId, TEST_BOT_TOKEN);
+
+        // Initial enrollment with 1 day TTL
+        const challenge1 = await shortTtlService.createChallenge(initData);
+        mockClient.setResponse(challenge1.signedChallenge.nonce, {
+          success: true,
+          nullifier,
+          issuerSchemaId: 1,
+          expiresAtMin: fakeClock.nowSeconds() + 86400,
+        });
+
+        const idkitResult1 = createIDKitResult(
+          challenge1.signedChallenge.nonce,
+          TEST_ACTION,
+          challenge1.signedChallenge.signalHash
+        );
+        const result1 = await shortTtlService.completeEnrollment({ initData, idkitResult: idkitResult1 });
+        assert.equal(result1.success, true);
+
+        // Advance time past enrollment TTL (1 day + 1 second)
+        fakeClock.advance(86401);
+
+        // Create new challenge for renewal (should succeed for expired enrollment)
+        const initData2 = createValidInitData(userId, TEST_BOT_TOKEN);
+        const challenge2 = await shortTtlService.createChallenge(initData2);
+
+        // Complete renewal
+        mockClient.setResponse(challenge2.signedChallenge.nonce, {
+          success: true,
+          nullifier,
+          issuerSchemaId: 1,
+          expiresAtMin: fakeClock.nowSeconds() + 86400,
+        });
+
+        const idkitResult2 = createIDKitResult(
+          challenge2.signedChallenge.nonce,
+          TEST_ACTION,
+          challenge2.signedChallenge.signalHash
+        );
+        const renewResult = await shortTtlService.completeEnrollment({ 
+          initData: initData2, 
+          idkitResult: idkitResult2 
+        });
+        
+        assert.equal(renewResult.success, true, 'Expired enrollment renewal should succeed');
+      } finally {
+        shortTtlService.close();
+        if (fs.existsSync(shortTtlDbPath)) {
+          fs.unlinkSync(shortTtlDbPath);
+        }
+      }
     });
   });
 });

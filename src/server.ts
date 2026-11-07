@@ -112,6 +112,7 @@ async function main(): Promise<void> {
   // Create HTTP verifier
   const verifier = new WorldIdHttpVerifier({
     appId: config.worldIdAppId,
+    rpId: config.worldIdRpId,
     environment: config.worldIdEnvironment,
     timeoutMs: 10000,
   });

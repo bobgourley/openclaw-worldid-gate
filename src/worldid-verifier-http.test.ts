@@ -10,6 +10,7 @@ import { WorldIdHttpVerifier } from './worldid-verifier-http.js';
 import type { IDKitResult, ExpectedVerificationContext } from './worldid-types.js';
 
 const TEST_APP_ID = 'app_test1234567890abcdef1234567890';
+const TEST_RP_ID = 'rp_test1234567890abcdef';
 
 describe('WorldIdHttpVerifier', () => {
   describe('constructor validation', () => {
@@ -18,10 +19,24 @@ describe('WorldIdHttpVerifier', () => {
         () => {
           new WorldIdHttpVerifier({
             appId: 'invalid' as any,
+            rpId: TEST_RP_ID,
             environment: 'production',
           });
         },
         /invalid appId/i
+      );
+    });
+
+    it('rejects invalid RP ID', () => {
+      assert.throws(
+        () => {
+          new WorldIdHttpVerifier({
+            appId: TEST_APP_ID,
+            rpId: 'invalid' as any,
+            environment: 'production',
+          });
+        },
+        /invalid rpId/i
       );
     });
 
@@ -30,6 +45,7 @@ describe('WorldIdHttpVerifier', () => {
         () => {
           new WorldIdHttpVerifier({
             appId: TEST_APP_ID,
+            rpId: TEST_RP_ID,
             environment: 'invalid' as any,
           });
         },
@@ -42,6 +58,7 @@ describe('WorldIdHttpVerifier', () => {
         () => {
           new WorldIdHttpVerifier({
             appId: TEST_APP_ID,
+            rpId: TEST_RP_ID,
             environment: 'production',
             timeoutMs: 99,
           });
@@ -55,6 +72,7 @@ describe('WorldIdHttpVerifier', () => {
         () => {
           new WorldIdHttpVerifier({
             appId: TEST_APP_ID,
+            rpId: TEST_RP_ID,
             environment: 'production',
             timeoutMs: 60001,
           });
@@ -68,6 +86,7 @@ describe('WorldIdHttpVerifier', () => {
     it('rejects null idkitResult', async () => {
       const verifier = new WorldIdHttpVerifier({
         appId: TEST_APP_ID,
+        rpId: TEST_RP_ID,
         environment: 'staging',
       });
 
@@ -87,6 +106,7 @@ describe('WorldIdHttpVerifier', () => {
     it('rejects unsupported protocol version', async () => {
       const verifier = new WorldIdHttpVerifier({
         appId: TEST_APP_ID,
+        rpId: TEST_RP_ID,
         environment: 'staging',
       });
 
@@ -113,6 +133,7 @@ describe('WorldIdHttpVerifier', () => {
     it('rejects environment mismatch', async () => {
       const verifier = new WorldIdHttpVerifier({
         appId: TEST_APP_ID,
+        rpId: TEST_RP_ID,
         environment: 'production',
       });
 
@@ -123,7 +144,7 @@ describe('WorldIdHttpVerifier', () => {
         responses: [{
           identifier: 'proof_of_human',
           proof: ['1', '2', '3', '4', '5'],
-          nullifier: '123',
+          nullifier: '0x0000000000000000000000000000000000000000000000000000000000000123',
           issuer_schema_id: 1,
           expires_at_min: 0,
         }],
@@ -145,6 +166,7 @@ describe('WorldIdHttpVerifier', () => {
     it('rejects empty responses array', async () => {
       const verifier = new WorldIdHttpVerifier({
         appId: TEST_APP_ID,
+        rpId: TEST_RP_ID,
         environment: 'staging',
       });
 
@@ -171,6 +193,7 @@ describe('WorldIdHttpVerifier', () => {
     it('rejects multi-response batch', async () => {
       const verifier = new WorldIdHttpVerifier({
         appId: TEST_APP_ID,
+        rpId: TEST_RP_ID,
         environment: 'staging',
       });
 
@@ -182,14 +205,14 @@ describe('WorldIdHttpVerifier', () => {
           {
             identifier: 'proof_of_human',
             proof: ['1', '2', '3', '4', '5'],
-            nullifier: '123',
+            nullifier: '0x0000000000000000000000000000000000000000000000000000000000000123',
             issuer_schema_id: 1,
             expires_at_min: 0,
           },
           {
             identifier: 'selfie',
             proof: ['6', '7', '8', '9', '10'],
-            nullifier: '456',
+            nullifier: '0x0000000000000000000000000000000000000000000000000000000000000456',
             issuer_schema_id: 11,
             expires_at_min: 0,
           },
@@ -212,6 +235,7 @@ describe('WorldIdHttpVerifier', () => {
     it('rejects action mismatch', async () => {
       const verifier = new WorldIdHttpVerifier({
         appId: TEST_APP_ID,
+        rpId: TEST_RP_ID,
         environment: 'staging',
       });
 
@@ -222,7 +246,7 @@ describe('WorldIdHttpVerifier', () => {
         responses: [{
           identifier: 'proof_of_human',
           proof: ['1', '2', '3', '4', '5'],
-          nullifier: '123',
+          nullifier: '0x0000000000000000000000000000000000000000000000000000000000000123',
           issuer_schema_id: 1,
           expires_at_min: 0,
         }],
@@ -244,6 +268,7 @@ describe('WorldIdHttpVerifier', () => {
     it('rejects nonce mismatch', async () => {
       const verifier = new WorldIdHttpVerifier({
         appId: TEST_APP_ID,
+        rpId: TEST_RP_ID,
         environment: 'staging',
       });
 
@@ -254,7 +279,7 @@ describe('WorldIdHttpVerifier', () => {
         responses: [{
           identifier: 'proof_of_human',
           proof: ['1', '2', '3', '4', '5'],
-          nullifier: '123',
+          nullifier: '0x0000000000000000000000000000000000000000000000000000000000000123',
           issuer_schema_id: 1,
           expires_at_min: 0,
         }],
@@ -276,6 +301,7 @@ describe('WorldIdHttpVerifier', () => {
     it('rejects signal hash mismatch', async () => {
       const verifier = new WorldIdHttpVerifier({
         appId: TEST_APP_ID,
+        rpId: TEST_RP_ID,
         environment: 'staging',
       });
 
@@ -309,6 +335,7 @@ describe('WorldIdHttpVerifier', () => {
     it('rejects weak credential when proof_of_human required', async () => {
       const verifier = new WorldIdHttpVerifier({
         appId: TEST_APP_ID,
+        rpId: TEST_RP_ID,
         environment: 'staging',
       });
 
@@ -320,7 +347,7 @@ describe('WorldIdHttpVerifier', () => {
           identifier: 'selfie',
           signal_hash: '0x456', // Match expected
           proof: ['1', '2', '3', '4', '5'],
-          nullifier: '123',
+          nullifier: '0x0000000000000000000000000000000000000000000000000000000000000123',
           issuer_schema_id: 11, // Not proof_of_human
           expires_at_min: 0,
         }],

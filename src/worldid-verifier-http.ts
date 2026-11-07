@@ -11,16 +11,19 @@ import type {
   IDKitResult,
   BackendVerificationResult,
   ExpectedVerificationContext,
-  DeveloperPortalVerifyRequest,
-  DeveloperPortalVerifyResponse,
+  V4VerifyRequest,
+  V4VerifyResponse,
 } from './worldid-types.js';
 
 /**
  * HTTP verification client configuration.
  */
 export interface WorldIdHttpVerifierConfig {
-  /** App ID for Developer Portal (e.g., "app_b466e1f63a70a695b6d990d261e31b6a") */
+  /** App ID (for constructing RpId, e.g., "app_b466e1f63a70a695b6d990d261e31b6a") */
   appId: `app_${string}`;
+
+  /** RP ID for v4 API (e.g., "rp_223416a2a76673a1") */
+  rpId: `rp_${string}`;
 
   /** Expected environment */
   environment: 'production' | 'staging';
@@ -39,6 +42,7 @@ export interface WorldIdHttpVerifierConfig {
  */
 export class WorldIdHttpVerifier {
   private readonly appId: string;
+  private readonly rpId: string;
   private readonly environment: string;
   private readonly timeoutMs: number;
   private readonly baseUrl: string;
@@ -47,6 +51,11 @@ export class WorldIdHttpVerifier {
     // Validate app ID
     if (!config.appId || !config.appId.startsWith('app_')) {
       throw new Error('Invalid appId: must start with "app_"');
+    }
+
+    // Validate RP ID
+    if (!config.rpId || !config.rpId.startsWith('rp_')) {
+      throw new Error('Invalid rpId: must start with "rp_"');
     }
 
     // Validate environment
@@ -61,6 +70,7 @@ export class WorldIdHttpVerifier {
     }
 
     this.appId = config.appId;
+    this.rpId = config.rpId;
     this.environment = config.environment;
     this.timeoutMs = timeout;
 
@@ -69,11 +79,13 @@ export class WorldIdHttpVerifier {
   }
 
   /**
-   * Verify World ID proof via Developer Portal API.
+   * Verify World ID proof via v4 Developer Portal API.
    *
-   * Forwards IDKitResult intact to real API, validates response strictly.
+   * Forwards IDKitResult as-is per official documentation.
+   * Source: https://docs.world.org/world-id/idkit/integrate.md
+   * Source: https://docs.world.org/api-reference/developer-portal/verify.md
    *
-   * @param idkitResult - IDKit result from World App (forwarded intact)
+   * @param idkitResult - IDKit result from World App (forwarded as-is)
    * @param expectedContext - Server-trusted expected context
    * @returns Verification result
    */
@@ -101,6 +113,7 @@ export class WorldIdHttpVerifier {
       return { success: false, error: 'Invalid idkitResult: responses array required' };
     }
 
+    // Conservative policy: single credential response only
     if (idkitResult.responses.length > 1) {
       return { success: false, error: 'Ambiguous multi-response batch (policy: single credential)' };
     }
@@ -142,18 +155,19 @@ export class WorldIdHttpVerifier {
       }
     }
 
-    // Build Developer Portal API request
-    const verifyRequest: DeveloperPortalVerifyRequest = {
-      action: idkitResult.action,
-      nullifier_hash: this.formatNullifierForAPI(response.nullifier),
-      merkle_root: this.extractMerkleRoot(response.proof),
-      proof: this.formatProofForAPI(response.proof),
-      credential_type: response.identifier,
-      signal_hash: response.signal_hash,
-    };
+    // Validate nullifier format (0x-prefixed hex)
+    if (!response.nullifier || !response.nullifier.startsWith('0x')) {
+      return {
+        success: false,
+        error: 'Invalid nullifier: expected 0x-prefixed hex string',
+      };
+    }
 
-    // Call Developer Portal API
-    const endpoint = `${this.baseUrl}/api/v2/verify/${this.appId}`;
+    // Forward IDKit result as-is to v4 API (no field remapping required)
+    const verifyRequest: V4VerifyRequest = idkitResult;
+
+    // Call v4 Developer Portal API
+    const endpoint = `${this.baseUrl}/api/v4/verify/${this.rpId}`;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -172,7 +186,7 @@ export class WorldIdHttpVerifier {
 
       // Read response body completely (bounded timeout)
       const responseText = await apiResponse.text();
-      let apiResult: DeveloperPortalVerifyResponse;
+      let apiResult: V4VerifyResponse;
 
       try {
         apiResult = JSON.parse(responseText);
@@ -185,18 +199,63 @@ export class WorldIdHttpVerifier {
         return { success: false, error: 'Developer Portal returned invalid response' };
       }
 
-      // Strict boolean validation (not truthy)
+      // Validate top-level success (enum true)
       if (apiResult.success !== true) {
         return {
           success: false,
-          error: apiResult.detail || apiResult.code || 'Verification failed',
+          error: 'Verification failed (top-level success not true)',
         };
       }
 
-      // Success: return nullifier from original request (not API response)
+      // Validate results array exists
+      if (!Array.isArray(apiResult.results) || apiResult.results.length === 0) {
+        return {
+          success: false,
+          error: 'Verification response missing results array',
+        };
+      }
+
+      // Find matching credential result
+      const credentialResult = apiResult.results.find(r => r.identifier === response.identifier);
+
+      if (!credentialResult) {
+        return {
+          success: false,
+          error: `Credential result not found for identifier: ${response.identifier}`,
+        };
+      }
+
+      // REQUIRED: Check per-credential success
+      if (credentialResult.success !== true) {
+        return {
+          success: false,
+          error: credentialResult.detail || credentialResult.code || 'Credential verification failed',
+        };
+      }
+
+      // Validate nullifier format (0x-prefixed hex)
+      if (!credentialResult.nullifier || !credentialResult.nullifier.startsWith('0x')) {
+        return {
+          success: false,
+          error: 'Invalid nullifier format in response: expected 0x-prefixed hex',
+        };
+      }
+
+      // Verify nullifier consistency (normalized numerical value)
+      const requestNullifier = BigInt(response.nullifier);
+      const responseNullifier = BigInt(credentialResult.nullifier);
+
+      if (requestNullifier !== responseNullifier) {
+        return {
+          success: false,
+          error: 'Nullifier mismatch between request and response',
+        };
+      }
+
+      // Success: return verified nullifier (0x-prefixed hex from response)
       return {
         success: true,
-        nullifier: response.nullifier,
+        nullifier: credentialResult.nullifier,
         issuerSchemaId: response.issuer_schema_id,
         expiresAtMin: response.expires_at_min,
       };
@@ -209,44 +268,5 @@ export class WorldIdHttpVerifier {
 
       return { success: false, error: 'Verification service unavailable' };
     }
-  }
-
-  /**
-   * Format nullifier for Developer Portal API (canonical format: nil_<64-hex>).
-   */
-  private formatNullifierForAPI(nullifier: string): string {
-    // IDKitResult contains decimal string, API expects nil_<hex>
-    const nullifierBigInt = BigInt(nullifier);
-    const nullifierHex = nullifierBigInt.toString(16).padStart(64, '0');
-    return `nil_${nullifierHex}`;
-  }
-
-  /**
-   * Extract Merkle root from proof array (5th element, decimal string).
-   */
-  private extractMerkleRoot(proof: string[]): string {
-    if (proof.length < 5) {
-      throw new Error('Invalid proof: expected at least 5 elements');
-    }
-    // Convert decimal string to 0x-prefixed hex
-    const merkleRootBigInt = BigInt(proof[4]);
-    return '0x' + merkleRootBigInt.toString(16).padStart(64, '0');
-  }
-
-  /**
-   * Format Groth16 proof for Developer Portal API (first 4 elements, 0x-prefixed hex).
-   */
-  private formatProofForAPI(proof: string[]): string {
-    if (proof.length < 4) {
-      throw new Error('Invalid proof: expected at least 4 elements');
-    }
-
-    // Concatenate first 4 elements as hex
-    const proofElements = proof.slice(0, 4).map(element => {
-      const elementBigInt = BigInt(element);
-      return elementBigInt.toString(16).padStart(64, '0');
-    });
-
-    return '0x' + proofElements.join('');
   }
 }

@@ -46,6 +46,7 @@ export interface FrontendIDKitConfig {
 /**
  * V4 Credential Response Item (from World App).
  * Matches @worldcoin/idkit-core ResponseItemV4.
+ * Nullifiers are 0x-prefixed hex strings per official documentation.
  */
 export interface WorldIdV4CredentialResponse {
   /** Credential identifier (e.g., "proof_of_human") */
@@ -54,7 +55,7 @@ export interface WorldIdV4CredentialResponse {
   signal_hash?: string;
   /** Encoded Groth16 proof (first 4 elements) + Merkle root (5th element) as decimal strings */
   proof: string[];
-  /** RP-scoped nullifier (decimal string) */
+  /** RP-scoped nullifier (0x-prefixed hex string representing 256-bit integer) */
   nullifier: string;
   /** Credential issuer schema ID (1=proof_of_human, 11=selfie) */
   issuer_schema_id: number;
@@ -86,45 +87,42 @@ export interface IDKitResult {
 }
 
 /**
- * Developer Portal API verification request body.
- * Sent by backend to https://developer.worldcoin.org/api/v2/verify/{app_id}
+ * V4 Developer Portal API verification request.
+ * Forward complete IDKit result as-is to POST https://developer.world.org/api/v4/verify/{rp_id}
+ * Source: https://docs.world.org/world-id/idkit/integrate.md
+ * Source: https://docs.world.org/api-reference/developer-portal/verify.md
  */
-export interface DeveloperPortalVerifyRequest {
-  /** Action identifier */
-  action: string;
-  /** Nullifier in canonical format (nil_<64-hex>) */
-  nullifier_hash: string;
-  /** Merkle root (0x-prefixed hex, extracted from proof[4]) */
-  merkle_root: string;
-  /** Groth16 proof (0x-prefixed hex, first 4 elements from proof array) */
-  proof: string;
-  /** Credential type identifier */
-  credential_type: string;
-  /** Signal hash (0x-prefixed hex, optional) */
-  signal_hash?: string;
-}
+export type V4VerifyRequest = IDKitResult;
 
 /**
- * Developer Portal API verification response.
- * Official response from World verification service.
+ * V4 Developer Portal API credential verification result.
+ * Per-credential result from verification response.
  */
-export interface DeveloperPortalVerifyResponse {
-  /** Verification success (MUST be exact boolean true) */
+export interface V4VerifyCredentialResult {
+  /** Credential identifier (e.g., "proof_of_human") */
+  identifier: string;
+  /** Verification success for this credential (MUST check this) */
   success: boolean;
-  /** Action identifier (echoed back) */
-  action: string;
-  /** Nullifier in canonical format (echoed back) */
-  nullifier_hash: string;
-  /** Timestamp when proof was created (ISO 8601 string) */
-  created_at: string;
-  /** Credential type (echoed back) */
-  credential_type: string;
+  /** Nullifier (0x-prefixed hex string representing 256-bit integer) */
+  nullifier: string;
   /** Error code (present on failure) */
   code?: string;
   /** Error detail (present on failure) */
   detail?: string;
-  /** Error attribute (present on failure) */
-  attribute?: string | null;
+}
+
+/**
+ * V4 Developer Portal API verification response.
+ * Response from POST https://developer.world.org/api/v4/verify/{rp_id}
+ * Source: https://docs.world.org/api-reference/developer-portal/verify.md
+ */
+export interface V4VerifyResponse {
+  /** Top-level success (enum true when at least one proof verified) */
+  success: true;
+  /** Per-credential verification results */
+  results: V4VerifyCredentialResult[];
+  /** Environment (production/staging/sandbox) */
+  environment: string;
 }
 
 /**
@@ -147,7 +145,7 @@ export interface ExpectedVerificationContext {
  */
 export interface BackendVerificationResult {
   success: boolean;
-  /** Nullifier (decimal string from IDKitResult) */
+  /** Nullifier (0x-prefixed hex string from verified credential) */
   nullifier?: string;
   /** Issuer schema ID */
   issuerSchemaId?: number;
