@@ -168,6 +168,20 @@ export class HttpService {
         }
       });
 
+      // IDKit bundle route (locally bundled from installed @worldcoin/idkit-core)
+      this.app.get('/idkit-bundle.js', (req: Request, res: Response) => {
+        try {
+          const bundlePath = join(__dirname, 'ui', 'idkit-bundle.js');
+          const bundle = readFileSync(bundlePath, 'utf-8');
+          res.setHeader('Content-Type', 'application/javascript');
+          res.setHeader('Cache-Control', 'public, max-age=3600');
+          res.send(bundle);
+        } catch (error) {
+          console.error('IDKit bundle serving error:', error);
+          res.status(500).send('/* IDKit bundle unavailable */');
+        }
+      });
+
       // Session info API (for UI initialization)
       this.app.get('/api/enrollment/session/:sessionId', async (req: Request, res: Response) => {
         try {

@@ -253,8 +253,8 @@
       showStatus('Connecting to World App...', 'loading');
       
       try {
-        // Import official IDKit Core SDK (v4.6.0)
-        const { IDKit, proofOfHuman } = await import('https://cdn.jsdelivr.net/npm/@worldcoin/idkit-core@4.6.0/+esm');
+        // Import locally bundled IDKit Core SDK (from installed @worldcoin/idkit-core)
+        const { IDKit, proofOfHuman } = await import('/idkit-bundle.js');
         
         // Extract RP context from session (signed by backend)
         const rp_context = {
