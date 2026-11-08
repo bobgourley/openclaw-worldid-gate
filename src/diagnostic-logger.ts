@@ -358,17 +358,46 @@ export class DiagnosticLogger {
    * THROWS on failure (called only in constructor/safeInitialize)
    */
   private initializeLogDirectory(): void {
-    if (!existsSync(this.config.logDir)) {
-      mkdirSync(this.config.logDir, { recursive: true, mode: 0o700 });
-    } else {
-      // Validate existing directory (permissions, not a symlink)
-      const stats = lstatSync(this.config.logDir);
-      if (stats.isSymbolicLink()) {
-        throw new Error(`Log directory is a symlink: ${this.config.logDir}`);
+    const { resolve } = require('node:path');
+    
+    // Resolve to absolute path
+    const absPath = resolve(this.config.logDir);
+    
+    // Check ancestor path components for symlinks
+    const pathComponents = absPath.split('/').filter((c: string) => c);
+    let checkPath = '/';
+    for (const component of pathComponents.slice(0, -1)) {
+      checkPath = join(checkPath, component);
+      if (existsSync(checkPath)) {
+        const stats = lstatSync(checkPath);
+        if (stats.isSymbolicLink()) {
+          throw new Error(`Ancestor path contains symlink: ${checkPath}`);
+        }
       }
-      if (!stats.isDirectory()) {
-        throw new Error(`Log directory path exists but is not a directory: ${this.config.logDir}`);
-      }
+    }
+    
+    if (!existsSync(absPath)) {
+      mkdirSync(absPath, { recursive: true, mode: 0o700 });
+    }
+    
+    // Validate existing directory
+    const stats = lstatSync(absPath);
+    if (stats.isSymbolicLink()) {
+      throw new Error(`Log directory is a symlink: ${absPath}`);
+    }
+    if (!stats.isDirectory()) {
+      throw new Error(`Log directory path exists but is not a directory: ${absPath}`);
+    }
+    
+    // Validate ownership (must be same as process)
+    if (process.getuid && stats.uid !== process.getuid()) {
+      throw new Error(`Log directory owned by different user: ${absPath} (uid=${stats.uid}, expected=${process.getuid()})`);
+    }
+    
+    // Validate permissions (must be 0700)
+    const mode = stats.mode & 0o777;
+    if (mode !== 0o700) {
+      throw new Error(`Log directory permissions incorrect: ${absPath} (mode=${mode.toString(8)}, expected=700)`);
     }
   }
   
@@ -408,21 +437,35 @@ export class DiagnosticLogger {
    * THROWS on failure (called only in controlled contexts)
    */
   private createLogFile(): string {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `diagnostic-${timestamp}.ndjson`;
+    const { openSync, closeSync, fstatSync } = require('node:fs');
+    const { O_CREAT, O_EXCL, O_WRONLY } = require('node:fs').constants;
+    
+    // Use monotonic counter for uniqueness instead of timestamp to avoid truncation
+    const counter = Date.now().toString(36) + Math.random().toString(36).substring(2, 10);
+    const filename = `diagnostic-${counter}.ndjson`;
     const filepath = join(this.config.logDir, filename);
     
-    // Validate path is not a symlink (if it somehow already exists)
-    if (existsSync(filepath)) {
-      const stats = lstatSync(filepath);
-      if (stats.isSymbolicLink()) {
-        throw new Error(`Log file path is a symlink: ${filepath}`);
+    // Exclusive creation with O_EXCL | O_CREAT | O_WRONLY
+    // Note: O_NOFOLLOW not available in Node.js fs constants, but O_EXCL provides exclusive creation
+    let fd: number;
+    try {
+      fd = openSync(filepath, O_CREAT | O_EXCL | O_WRONLY, 0o600);
+    } catch (error: any) {
+      if (error.code === 'EEXIST') {
+        // Collision unlikely but retry with new counter
+        return this.createLogFile();
       }
+      throw error;
     }
     
-    // Create empty file with mode 0600
-    writeFileSync(filepath, '', { mode: 0o600 });
+    // Verify file ownership and inode
+    const stats = fstatSync(fd);
+    if (process.getuid && stats.uid !== process.getuid()) {
+      closeSync(fd);
+      throw new Error(`Log file owned by different user: ${filepath}`);
+    }
     
+    closeSync(fd);
     return filepath;
   }
   

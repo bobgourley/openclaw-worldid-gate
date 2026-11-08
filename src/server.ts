@@ -44,8 +44,10 @@ const config = {
   openclawAccountId: process.env.OPENCLAW_ACCOUNT_ID || 'default',
   
   // Diagnostic logging (OPTIONAL)
+  // Note: Default path assumes deployment user has dedicated log directory
+  // DIAGNOSTIC_LOG_DIR must be set explicitly for production use
   diagnosticLogEnabled: process.env.DIAGNOSTIC_LOG_ENABLED === 'true',
-  diagnosticLogDir: process.env.DIAGNOSTIC_LOG_DIR || '/tmp/enrollment-logs',
+  diagnosticLogDir: process.env.DIAGNOSTIC_LOG_DIR || '',  // No default, must be explicit
 };
 
 // Production readiness check (fail-closed)
@@ -127,6 +129,12 @@ async function main(): Promise<void> {
   console.log('');
 
   // Create diagnostic logger
+  if (config.diagnosticLogEnabled && !config.diagnosticLogDir) {
+    console.error('DIAGNOSTIC_LOG_ENABLED=true requires DIAGNOSTIC_LOG_DIR to be set');
+    console.error('Example: DIAGNOSTIC_LOG_DIR=/var/log/enrollment-service');
+    process.exit(1);
+  }
+  
   const diagnosticLogger = createDiagnosticLogger({
     logDir: config.diagnosticLogDir,
     maxFileSizeBytes: 10 * 1024 * 1024, // 10MB

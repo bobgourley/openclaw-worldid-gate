@@ -774,12 +774,31 @@
       return days > 0 ? `in ${days} days` : 'soon';
     }
     
+    // Store current connector URI for regeneration on viewport changes
+    let currentConnectorURI = null;
+    
     // Handle dynamic viewport changes (resize, orientation, visualViewport)
-    function handleViewportChange() {
-      // Force layout recalculation on viewport changes
-      // No-op function, but ensures CSS media queries and dvh units re-evaluate
-      document.body.offsetHeight; // Trigger layout
+    async function handleViewportChange() {
+      // If QR code is displayed, regenerate at new viewport size
+      const qrCodeEl = document.getElementById('qrCode');
+      const connectorDisplay = document.getElementById('connectorDisplay');
+      
+      if (currentConnectorURI && qrCodeEl && connectorDisplay && !connectorDisplay.classList.contains('hidden')) {
+        try {
+          // Regenerate QR at responsive size for new viewport
+          await generateQRCode(currentConnectorURI, qrCodeEl);
+        } catch (error) {
+          console.error('QR regeneration failed on viewport change:', error);
+        }
+      }
     }
+    
+    // Wrap generateQRCode to track current URI
+    const originalGenerateQRCode = generateQRCode;
+    window.generateQRCode = async function(text, container) {
+      currentConnectorURI = text;
+      return originalGenerateQRCode(text, container);
+    };
     
     // Register viewport change handlers
     if ('visualViewport' in window && window.visualViewport) {
