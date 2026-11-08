@@ -1139,4 +1139,75 @@ export class EnrollmentService {
 
     transaction();
   }
+
+  /**
+   * Verify returning user with session proof (World ID 4.0 session proofs).
+   * 
+   * NOT YET IMPLEMENTED - Requires:
+   * 1. Load saved session_id from enrollment
+   * 2. Generate RP challenge WITHOUT action (session-only)
+   * 3. Accept IDKitResultSession (no action, contains session_nullifier tuple)
+   * 4. Verify session_id matches saved enrollment
+   * 5. Extract session_nullifier tuple [nullifier, action] from response
+   * 6. Check replay: query session_nullifier_claims
+   * 7. Record claim after successful verification
+   * 
+   * TODO: Implement full session verification flow
+   */
+  async verifySession(params: {
+    initData: string;
+  }): Promise<CompleteEnrollmentResult> {
+    // Authenticate Telegram initData
+    const initDataValidation = validateTelegramInitData(params.initData, this.telegramConfig);
+    if (!initDataValidation.valid || !initDataValidation.user) {
+      return {
+        success: false,
+        error: `Telegram initData validation failed: ${initDataValidation.error}`,
+      };
+    }
+
+    const authenticatedUserId = initDataValidation.user.id;
+
+    // Load existing enrollment with session
+    const enrollment = await this.findEnrollment(authenticatedUserId);
+    if (!enrollment) {
+      return {
+        success: false,
+        error: 'No enrollment found for user',
+      };
+    }
+
+    if (enrollment.revoked) {
+      return {
+        success: false,
+        error: 'Enrollment has been revoked',
+      };
+    }
+
+    if (enrollment.expired) {
+      return {
+        success: false,
+        error: 'Enrollment has expired',
+      };
+    }
+
+    if (!enrollment.sessionId) {
+      return {
+        success: false,
+        error: 'No session ID found (enrollment does not support returning user verification)',
+      };
+    }
+
+    // TODO: Implement remaining steps:
+    // - Generate challenge WITHOUT action (session-only RP signature)
+    // - Accept IDKitResultSession with session_nullifier tuple
+    // - Verify session proof
+    // - Check and record session_nullifier claim for replay protection
+    // - Return success with session verification
+
+    return {
+      success: false,
+      error: 'Session verification not yet implemented (TODO)',
+    };
+  }
 }
