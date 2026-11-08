@@ -215,55 +215,63 @@ test.describe('Layout Assertions with Screenshots', () => {
     
     await expect(verifyButton).toBeVisible({ timeout: 10000 });
     
-    // Instead of clicking and waiting for real verification, inject mock QR for layout testing
-    await page.evaluate(() => {
-      // Simulate QR code display
+    // Generate real QR code using production generateQRCode function
+    const testConnectorURI = 'wc:test-connector-320x568@2?relay-protocol=irn&symKey=abcdef1234567890';
+    
+    await page.evaluate(async (connectorURI) => {
       const connectorDisplay = document.getElementById('connectorDisplay');
       const qrCodeEl = document.getElementById('qrCode');
       const connectorLink = document.getElementById('connectorLink');
       
-      if (connectorDisplay && qrCodeEl && connectorLink) {
-        // Create mock QR canvas
-        const canvas = document.createElement('canvas');
-        canvas.width = 200;
-        canvas.height = 200;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          // Draw mock QR pattern
-          ctx.fillStyle = '#000000';
-          ctx.fillRect(0, 0, 200, 200);
-          ctx.fillStyle = '#FFFFFF';
-          for (let i = 0; i < 10; i++) {
-            for (let j = 0; j < 10; j++) {
-              if ((i + j) % 2 === 0) {
-                ctx.fillRect(i * 20, j * 20, 20, 20);
-              }
-            }
-          }
-        }
-        qrCodeEl.appendChild(canvas);
+      if (connectorDisplay && qrCodeEl && connectorLink && (window as any).generateQRCode) {
+        // Call production generateQRCode function
+        await (window as any).generateQRCode(connectorURI, qrCodeEl);
         
-        // Set mock connector URI
-        connectorLink.href = 'wc:test-connector-uri@2?relay-protocol=irn&symKey=abcdef';
+        connectorLink.href = connectorURI;
         connectorLink.textContent = 'Or tap to open on this device';
-        
-        // Show the connector display
         connectorDisplay.classList.remove('hidden');
+        document.getElementById('verifyButton')?.classList.add('hidden');
         
-        // Hide button
-        const buttonEl = document.getElementById('verifyButton');
-        if (buttonEl) buttonEl.classList.add('hidden');
-        
-        // Update status
         const statusEl = document.getElementById('status');
         if (statusEl) {
           statusEl.textContent = 'Scan QR code with World App on your phone';
           statusEl.className = 'success';
         }
       }
+    }, testConnectorURI);
+    
+    await page.waitForTimeout(500); // Let QR generation complete
+    
+    // Verify QR code can be decoded back to original connectorURI
+    const decodedURI = await page.evaluate(() => {
+      const qrCodeEl = document.getElementById('qrCode');
+      const canvas = qrCodeEl?.querySelector('canvas');
+      if (!canvas) return null;
+      
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      
+      // jsQR is available in browser context via CDN or bundle
+      // For testing, we'll extract imageData and decode in Node
+      return {
+        data: Array.from(imageData.data),
+        width: imageData.width,
+        height: imageData.height
+      };
     });
     
-    await page.waitForTimeout(500); // Let layout settle
+    if (decodedURI) {
+      const imageData = {
+        data: new Uint8ClampedArray(decodedURI.data),
+        width: decodedURI.width,
+        height: decodedURI.height
+      };
+      const code = jsQR(imageData.data, imageData.width, imageData.height);
+      expect(code).not.toBeNull();
+      expect(code?.data).toBe(testConnectorURI);
+    }
 
     await page.screenshot({
       path: '/opt/cursor/artifacts/layout-after-320x568.png',
@@ -311,27 +319,14 @@ test.describe('Layout Assertions with Screenshots', () => {
 
     await expect(page.locator('#verifyButton')).toBeVisible({ timeout: 5000 });
     
-    await page.evaluate(() => {
+    const testConnectorURI2 = 'wc:test-connector-844x390@2?relay-protocol=irn&symKey=fedcba9876543210';
+    await page.evaluate(async (connectorURI) => {
       const connectorDisplay = document.getElementById('connectorDisplay');
       const qrCodeEl = document.getElementById('qrCode');
       const connectorLink = document.getElementById('connectorLink');
-      if (connectorDisplay && qrCodeEl && connectorLink) {
-        const canvas = document.createElement('canvas');
-        canvas.width = 200;
-        canvas.height = 200;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.fillStyle = '#000000';
-          ctx.fillRect(0, 0, 200, 200);
-          ctx.fillStyle = '#FFFFFF';
-          for (let i = 0; i < 10; i++) {
-            for (let j = 0; j < 10; j++) {
-              if ((i + j) % 2 === 0) ctx.fillRect(i * 20, j * 20, 20, 20);
-            }
-          }
-        }
-        qrCodeEl.appendChild(canvas);
-        connectorLink.href = 'wc:test-connector-uri@2?relay-protocol=irn&symKey=abcdef';
+      if (connectorDisplay && qrCodeEl && connectorLink && (window as any).generateQRCode) {
+        await (window as any).generateQRCode(connectorURI, qrCodeEl);
+        connectorLink.href = connectorURI;
         connectorLink.textContent = 'Or tap to open on this device';
         connectorDisplay.classList.remove('hidden');
         document.getElementById('verifyButton')?.classList.add('hidden');
@@ -341,7 +336,8 @@ test.describe('Layout Assertions with Screenshots', () => {
           statusEl.className = 'success';
         }
       }
-    });
+    }, testConnectorURI2);
+    await page.waitForTimeout(500);
     await page.waitForTimeout(500);
 
     await page.screenshot({
@@ -378,27 +374,14 @@ test.describe('Layout Assertions with Screenshots', () => {
     await page.waitForTimeout(1000);
     await page.screenshot({ path: '/opt/cursor/artifacts/layout-before-667x375.png', fullPage: false });
     await expect(page.locator('#verifyButton')).toBeVisible({ timeout: 5000 });
-    await page.evaluate(() => {
+    const testConnectorURI3 = 'wc:test-connector-667x375@2?relay-protocol=irn&symKey=abc1234567890def';
+    await page.evaluate(async (connectorURI) => {
       const connectorDisplay = document.getElementById('connectorDisplay');
       const qrCodeEl = document.getElementById('qrCode');
       const connectorLink = document.getElementById('connectorLink');
-      if (connectorDisplay && qrCodeEl && connectorLink) {
-        const canvas = document.createElement('canvas');
-        canvas.width = 180;
-        canvas.height = 180;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.fillStyle = '#000000';
-          ctx.fillRect(0, 0, 180, 180);
-          ctx.fillStyle = '#FFFFFF';
-          for (let i = 0; i < 9; i++) {
-            for (let j = 0; j < 9; j++) {
-              if ((i + j) % 2 === 0) ctx.fillRect(i * 20, j * 20, 20, 20);
-            }
-          }
-        }
-        qrCodeEl.appendChild(canvas);
-        connectorLink.href = 'wc:test@2';
+      if (connectorDisplay && qrCodeEl && connectorLink && (window as any).generateQRCode) {
+        await (window as any).generateQRCode(connectorURI, qrCodeEl);
+        connectorLink.href = connectorURI;
         connectorLink.textContent = 'Or tap to open on this device';
         connectorDisplay.classList.remove('hidden');
         document.getElementById('verifyButton')?.classList.add('hidden');
@@ -408,7 +391,8 @@ test.describe('Layout Assertions with Screenshots', () => {
           statusEl.className = 'success';
         }
       }
-    });
+    }, testConnectorURI3);
+    await page.waitForTimeout(500);
     await page.waitForTimeout(500);
     await page.screenshot({ path: '/opt/cursor/artifacts/layout-after-667x375.png', fullPage: false });
     const metrics = await captureLayoutMetrics(page, '667x375');
@@ -441,27 +425,14 @@ test.describe('Layout Assertions with Screenshots', () => {
     await page.waitForTimeout(1000);
     await page.screenshot({ path: '/opt/cursor/artifacts/layout-before-1280x800.png', fullPage: false });
     await expect(page.locator('#verifyButton')).toBeVisible({ timeout: 5000 });
-    await page.evaluate(() => {
+    const testConnectorURI4 = 'wc:test-connector-1280x800@2?relay-protocol=irn&symKey=1234567890abcdef';
+    await page.evaluate(async (connectorURI) => {
       const connectorDisplay = document.getElementById('connectorDisplay');
       const qrCodeEl = document.getElementById('qrCode');
       const connectorLink = document.getElementById('connectorLink');
-      if (connectorDisplay && qrCodeEl && connectorLink) {
-        const canvas = document.createElement('canvas');
-        canvas.width = 250;
-        canvas.height = 250;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.fillStyle = '#000000';
-          ctx.fillRect(0, 0, 250, 250);
-          ctx.fillStyle = '#FFFFFF';
-          for (let i = 0; i < 12; i++) {
-            for (let j = 0; j < 12; j++) {
-              if ((i + j) % 2 === 0) ctx.fillRect(i * 20, j * 20, 20, 20);
-            }
-          }
-        }
-        qrCodeEl.appendChild(canvas);
-        connectorLink.href = 'wc:test@2';
+      if (connectorDisplay && qrCodeEl && connectorLink && (window as any).generateQRCode) {
+        await (window as any).generateQRCode(connectorURI, qrCodeEl);
+        connectorLink.href = connectorURI;
         connectorLink.textContent = 'Or tap to open on this device';
         connectorDisplay.classList.remove('hidden');
         document.getElementById('verifyButton')?.classList.add('hidden');
@@ -471,7 +442,8 @@ test.describe('Layout Assertions with Screenshots', () => {
           statusEl.className = 'success';
         }
       }
-    });
+    }, testConnectorURI4);
+    await page.waitForTimeout(500);
     await page.waitForTimeout(500);
     await page.screenshot({ path: '/opt/cursor/artifacts/layout-after-1280x800.png', fullPage: false });
     const metrics = await captureLayoutMetrics(page, '1280x800');
@@ -480,5 +452,129 @@ test.describe('Layout Assertions with Screenshots', () => {
     expect(metrics.connectorLink!.y + metrics.connectorLink!.height).toBeLessThanOrEqual(800);
     expect(metrics.qrCode).not.toBeNull();
     expect(metrics.qrCode!.width).toBeLessThanOrEqual(300);
+  });
+
+  test('orientation transition: portrait to landscape maintains strict fit', async ({ page }) => {
+    const sessionId = `test-orientation-${Date.now()}`;
+    
+    // Start in portrait (375x667 - iPhone 8)
+    await page.setViewportSize({ width: 375, height: 667 });
+    await page.goto(`${BASE_URL}/enrollment?session=${sessionId}`);
+    await page.waitForSelector('h1');
+    await expect(page.locator('#verifyButton')).toBeVisible({ timeout: 5000 });
+    
+    const testConnectorURI = 'wc:test-orientation@2?relay-protocol=irn&symKey=orientation1234567890';
+    await page.evaluate(async (connectorURI) => {
+      const connectorDisplay = document.getElementById('connectorDisplay');
+      const qrCodeEl = document.getElementById('qrCode');
+      const connectorLink = document.getElementById('connectorLink');
+      if (connectorDisplay && qrCodeEl && connectorLink && (window as any).generateQRCode) {
+        await (window as any).generateQRCode(connectorURI, qrCodeEl);
+        connectorLink.href = connectorURI;
+        connectorLink.textContent = 'Or tap to open on this device';
+        connectorDisplay.classList.remove('hidden');
+        document.getElementById('verifyButton')?.classList.add('hidden');
+        const statusEl = document.getElementById('status');
+        if (statusEl) {
+          statusEl.textContent = 'Scan QR code with World App';
+          statusEl.className = 'success';
+        }
+      }
+    }, testConnectorURI);
+    await page.waitForTimeout(500);
+    
+    await page.screenshot({ path: '/opt/cursor/artifacts/orientation-portrait-375x667.png', fullPage: false });
+    const portraitMetrics = await captureLayoutMetrics(page, 'portrait-375x667');
+    
+    // Assert strict fit in portrait
+    const portraitContainer = await page.evaluate(() => {
+      const container = document.querySelector('.container') as HTMLElement;
+      return container ? {
+        scrollHeight: container.scrollHeight,
+        clientHeight: container.clientHeight
+      } : null;
+    });
+    expect(portraitContainer).not.toBeNull();
+    expect(portraitContainer!.scrollHeight).toBeLessThanOrEqual(portraitContainer!.clientHeight);
+    expect(portraitMetrics.connectorLink!.y + portraitMetrics.connectorLink!.height).toBeLessThanOrEqual(667);
+    
+    // Rotate to landscape (667x375)
+    await page.setViewportSize({ width: 667, height: 375 });
+    await page.evaluate(() => {
+      // Trigger orientationchange event
+      window.dispatchEvent(new Event('orientationchange'));
+      window.dispatchEvent(new Event('resize'));
+    });
+    await page.waitForTimeout(500); // Let layout recalculate
+    
+    await page.screenshot({ path: '/opt/cursor/artifacts/orientation-landscape-667x375.png', fullPage: false });
+    const landscapeMetrics = await captureLayoutMetrics(page, 'landscape-667x375');
+    
+    // Assert strict fit in landscape
+    const landscapeContainer = await page.evaluate(() => {
+      const container = document.querySelector('.container') as HTMLElement;
+      return container ? {
+        scrollHeight: container.scrollHeight,
+        clientHeight: container.clientHeight
+      } : null;
+    });
+    expect(landscapeContainer).not.toBeNull();
+    expect(landscapeContainer!.scrollHeight).toBeLessThanOrEqual(landscapeContainer!.clientHeight);
+    expect(landscapeMetrics.connectorLink).not.toBeNull();
+    expect(landscapeMetrics.qrCode).not.toBeNull();
+  });
+
+  test('viewport shrink transition maintains accessibility', async ({ page }) => {
+    const sessionId = `test-viewport-shrink-${Date.now()}`;
+    
+    // Start at comfortable size (414x896 - iPhone 11)
+    await page.setViewportSize({ width: 414, height: 896 });
+    await page.goto(`${BASE_URL}/enrollment?session=${sessionId}`);
+    await page.waitForSelector('h1');
+    await expect(page.locator('#verifyButton')).toBeVisible({ timeout: 5000 });
+    
+    const testConnectorURI = 'wc:test-shrink@2?relay-protocol=irn&symKey=shrink1234567890abcd';
+    await page.evaluate(async (connectorURI) => {
+      const connectorDisplay = document.getElementById('connectorDisplay');
+      const qrCodeEl = document.getElementById('qrCode');
+      const connectorLink = document.getElementById('connectorLink');
+      if (connectorDisplay && qrCodeEl && connectorLink && (window as any).generateQRCode) {
+        await (window as any).generateQRCode(connectorURI, qrCodeEl);
+        connectorLink.href = connectorURI;
+        connectorLink.textContent = 'Or tap to open on this device';
+        connectorDisplay.classList.remove('hidden');
+        document.getElementById('verifyButton')?.classList.add('hidden');
+        const statusEl = document.getElementById('status');
+        if (statusEl) {
+          statusEl.textContent = 'Scan QR code with World App';
+          statusEl.className = 'success';
+        }
+      }
+    }, testConnectorURI);
+    await page.waitForTimeout(500);
+    
+    await page.screenshot({ path: '/opt/cursor/artifacts/viewport-before-414x896.png', fullPage: false });
+    const beforeMetrics = await captureLayoutMetrics(page, 'before-414x896');
+    expect(beforeMetrics.connectorLink!.y + beforeMetrics.connectorLink!.height).toBeLessThanOrEqual(896);
+    
+    // Shrink viewport dramatically (320x480 - very constrained)
+    await page.setViewportSize({ width: 320, height: 480 });
+    await page.evaluate(() => {
+      if ('visualViewport' in window && window.visualViewport) {
+        window.dispatchEvent(new Event('resize'));
+      }
+      window.dispatchEvent(new Event('resize'));
+    });
+    await page.waitForTimeout(500); // Let layout adapt
+    
+    await page.screenshot({ path: '/opt/cursor/artifacts/viewport-after-320x480.png', fullPage: false });
+    const afterMetrics = await captureLayoutMetrics(page, 'after-320x480');
+    
+    // Assert all elements still accessible (no overflow)
+    expect(afterMetrics.scroll.scrollWidth).toBeLessThanOrEqual(320 + 2);
+    expect(afterMetrics.connectorLink).not.toBeNull();
+    expect(afterMetrics.qrCode).not.toBeNull();
+    // Content must fit within visible viewport
+    expect(afterMetrics.connectorLink!.y + afterMetrics.connectorLink!.height).toBeLessThanOrEqual(480);
   });
 });
