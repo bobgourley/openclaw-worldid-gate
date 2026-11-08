@@ -85,6 +85,7 @@ export interface OpenClawIntegrationConfig {
     enabled: boolean;
     tagText: string; // Max 16 characters, no emoji (Telegram API limit)
     requireAdminPermission: 'can_manage_tags'; // Required bot administrator right
+    targetChatId: number | string; // Telegram chat ID or @username for tag operations
   };
 
   /**
@@ -158,9 +159,10 @@ export const openclawIntegrationConfig: OpenClawIntegrationConfig = {
     hmacSecret: process.env.ENROLLMENT_LINK_HMAC_SECRET || '',
   },
   memberTags: {
-    enabled: false,
-    tagText: 'Human Verified', // 14 chars (including space)
+    enabled: false, // Enable after bot admin setup with can_manage_tags
+    tagText: 'Human Verified', // 14 chars (including space), no emoji
     requireAdminPermission: 'can_manage_tags',
+    targetChatId: '', // Telegram chat ID or @username (e.g., '@finntalkgroup')
   },
   selectedGroupIds: {
     enabled: false,

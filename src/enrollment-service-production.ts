@@ -23,6 +23,7 @@ import type {
   BackendVerificationResult,
   ExpectedVerificationContext,
 } from './worldid-types.js';
+import type { MemberTagManager } from './member-tag-manager.js';
 
 /**
  * Clock interface for deterministic testing.
@@ -85,6 +86,15 @@ export interface EnrollmentServiceConfig {
 
   /** Clock for deterministic testing (default: SystemClock) */
   clock?: Clock;
+
+  /**
+   * OPTIONAL: Member tag manager for display-only Telegram labels.
+   * 
+   * If provided, applies "Human Verified" tag after successful enrollment.
+   * Tag operations are fail-safe and never affect enrollment outcome.
+   * Tags are display-only UX, NOT access control mechanism.
+   */
+  memberTagManager?: MemberTagManager;
 }
 
 /**
@@ -142,6 +152,7 @@ export class EnrollmentService {
   private challengeTtlSeconds: number;
   private enrollmentTtlSeconds: number;
   private clock: Clock;
+  private memberTagManager?: MemberTagManager;
 
   constructor(config: EnrollmentServiceConfig) {
     // Validate stable action scope
@@ -173,6 +184,7 @@ export class EnrollmentService {
     this.challengeTtlSeconds = challengeTtl;
     this.enrollmentTtlSeconds = enrollmentTtl;
     this.clock = config.clock ?? new SystemClock();
+    this.memberTagManager = config.memberTagManager;
 
     this.telegramConfig = {
       botToken: config.telegramBotToken,
@@ -609,21 +621,33 @@ export class EnrollmentService {
     });
 
     // Execute transaction
+    let enrollment;
     try {
-      const enrollment = transaction();
-
-      return {
-        success: true,
-        telegramUserId: enrollment.telegramUserId,
-        nullifier: enrollment.nullifier,
-        expiresAt: enrollment.expiresAt,
-      };
+      enrollment = transaction();
     } catch (error) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Transaction failed',
       };
     }
+
+    // DISPLAY-ONLY: Apply member tag after immutable enrollment succeeds
+    // Tag operations are best-effort and NEVER affect enrollment outcome
+    // Access control is independent of tag status (enforced at admission gate)
+    if (this.memberTagManager) {
+      // Non-blocking tag application (failure logged internally)
+      this.memberTagManager.applyTagToMember(enrollment.telegramUserId).catch(error => {
+        // Tag failure is logged but does not affect enrollment
+        console.error('[MemberTag] Failed to apply tag (enrollment still valid):', error);
+      });
+    }
+
+    return {
+      success: true,
+      telegramUserId: enrollment.telegramUserId,
+      nullifier: enrollment.nullifier,
+      expiresAt: enrollment.expiresAt,
+    };
   }
 
   /**
@@ -685,7 +709,17 @@ export class EnrollmentService {
     `);
 
     const result = stmt.run(this.clock.nowISO(), now, generation, telegramUserId, this.action);
-    return result.changes > 0;
+    const wasRevoked = result.changes > 0;
+
+    // DISPLAY-ONLY: Remove member tag after revocation
+    // Tag removal is best-effort and does not affect revocation
+    if (wasRevoked && this.memberTagManager) {
+      this.memberTagManager.removeTagFromMember(telegramUserId).catch(error => {
+        console.error('[MemberTag] Failed to remove tag after revocation:', error);
+      });
+    }
+
+    return wasRevoked;
   }
 
   /**
