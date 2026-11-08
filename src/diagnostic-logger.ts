@@ -1,44 +1,61 @@
 /**
  * Privacy-Safe Diagnostic Logger for World ID Enrollment
  * 
- * Logs only allowlisted fields for operational diagnostics.
+ * Logs only allowlisted stages and error categories for operational diagnostics.
  * NO PII, credentials, proofs, nullifiers, or session identifiers.
+ * NON-THROWING: All public methods guarantee no exceptions reach caller.
  * 
  * @module diagnostic-logger
  */
 
-import { writeFileSync, appendFileSync, existsSync, mkdirSync, statSync, readdirSync, unlinkSync } from 'node:fs';
+import { writeFileSync, appendFileSync, existsSync, mkdirSync, statSync, readdirSync, unlinkSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 /**
- * Privacy-safe diagnostic log entry categories
+ * Strict allowlist: permitted stages (admission lifecycle phases)
  */
-export type DiagnosticCategory =
-  | 'challenge_issued'
-  | 'challenge_expired'
-  | 'challenge_not_found'
-  | 'sdk_poll_timeout'
-  | 'callback_received'
-  | 'initdata_validation_failed'
-  | 'initdata_validation_success'
-  | 'proof_validation_started'
-  | 'proof_validation_success'
-  | 'proof_validation_failed'
-  | 'upstream_verify_started'
-  | 'upstream_verify_success'
-  | 'upstream_verify_failed'
-  | 'upstream_verify_timeout'
-  | 'fence_rejected'
-  | 'ownership_rejected'
-  | 'duplicate_enrollment_rejected'
-  | 'revoke_started'
-  | 'revoke_success'
-  | 'revoke_failed'
-  | 'revoke_not_found'
-  | 'completion_accepted'
-  | 'completion_rejected'
-  | 'unknown_error';
+const ALLOWED_STAGES = [
+  'challenge_issued',
+  'challenge_expired',
+  'challenge_not_found',
+  'callback_received',
+  'initdata_validation_failed',
+  'initdata_validation_success',
+  'upstream_verify_started',
+  'upstream_verify_success',
+  'upstream_verify_failed',
+  'fence_rejected',
+  'ownership_rejected',
+  'enrollment_complete',
+  'enrollment_rejected',
+  'revoke_success',
+  'revoke_not_found',
+  'admission_granted',
+  'admission_rejected',
+] as const;
+
+type AllowedStage = typeof ALLOWED_STAGES[number];
+
+/**
+ * Strict allowlist: permitted error categories
+ */
+const ALLOWED_ERROR_CATEGORIES = [
+  'webhook_invalid',
+  'init_data_invalid',
+  'challenge_not_found_error',
+  'challenge_expired_error',
+  'proof_error',
+  'verification_api_error',
+  'signature_error',
+  'network_timeout',
+  'fence_check_fail',
+  'ownership_check_fail',
+  'database_error',
+  'unknown_error',
+] as const;
+
+type AllowedErrorCategory = typeof ALLOWED_ERROR_CATEGORIES[number];
 
 /**
  * Diagnostic log entry (privacy-safe fields only)
@@ -50,36 +67,18 @@ export interface DiagnosticLogEntry {
   /** Random correlation ID (NOT derived from user/session/proof) */
   correlationId: string;
   
-  /** Stage or operation */
-  stage: DiagnosticCategory;
+  /** Stage or operation (must be in ALLOWED_STAGES) */
+  stage: AllowedStage;
   
   /** Result: 'success' | 'failure' | 'in_progress' */
   result: 'success' | 'failure' | 'in_progress';
   
-  /** Safe error category (no stack traces, no raw errors) */
-  errorCategory?: string;
-  
-  /** SDK/protocol version */
-  version?: string;
+  /** Safe error category (must be in ALLOWED_ERROR_CATEGORIES if present) */
+  errorCategory?: AllowedErrorCategory;
   
   /** Duration in milliseconds */
   durationMs?: number;
 }
-
-/**
- * Sanitized error categories (no raw error messages)
- */
-export type SafeErrorCategory =
-  | 'network_error'
-  | 'timeout_error'
-  | 'validation_error'
-  | 'proof_error'
-  | 'signature_error'
-  | 'timestamp_error'
-  | 'nullifier_error'
-  | 'credential_error'
-  | 'database_error'
-  | 'unknown_error';
 
 /**
  * Configuration for diagnostic logger
@@ -94,7 +93,7 @@ export interface DiagnosticLoggerConfig {
   /** Max number of log files to retain (default: 10) */
   maxFiles?: number;
   
-  /** Enable logging (default: true) */
+  /** Enable logging (default: false, must be explicitly enabled) */
   enabled?: boolean;
 }
 
@@ -110,105 +109,63 @@ export interface DiagnosticLoggerConfig {
  * - NO raw error messages or stack traces
  * - Correlation IDs are random, NOT derived from identity
  * - Files are mode 0600, directory is mode 0700
- * - Logging failures must not crash security transactions
+ * - Symlink protection via lstatSync
+ * - NON-THROWING: Logging failures must never crash security transactions
  */
 export class DiagnosticLogger {
   private config: Required<DiagnosticLoggerConfig>;
   private currentLogFile: string;
+  private initFailed: boolean = false;
   
   constructor(config: DiagnosticLoggerConfig) {
     this.config = {
       logDir: config.logDir,
       maxFileSizeBytes: config.maxFileSizeBytes ?? 10 * 1024 * 1024, // 10MB
       maxFiles: config.maxFiles ?? 10,
-      enabled: config.enabled ?? true,
+      enabled: config.enabled ?? false, // Disabled by default
     };
     
+    this.currentLogFile = '';
+    
     if (this.config.enabled) {
-      this.initializeLogDirectory();
-      this.currentLogFile = this.createLogFile();
-    } else {
-      this.currentLogFile = '';
+      try {
+        this.safeInitialize();
+      } catch (error) {
+        this.initFailed = true;
+        this.fallbackToStderr('initialization_failed', undefined, error);
+      }
     }
+  }
+  
+  /**
+   * Safe initialization (non-throwing wrapper for constructor logic)
+   */
+  private safeInitialize(): void {
+    this.initializeLogDirectory();
+    this.cleanupOldLogFilesOnStartup();
+    this.currentLogFile = this.createLogFile();
   }
   
   /**
    * Generate a random correlation ID (NOT derived from user/session/proof)
+   * NON-THROWING: Returns fallback on error.
    */
   generateCorrelationId(): string {
-    return randomBytes(16).toString('hex');
+    try {
+      return randomBytes(16).toString('hex');
+    } catch {
+      return `fallback-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+    }
   }
   
   /**
-   * Map exception to safe error category (no raw error text)
-   */
-  sanitizeError(error: unknown): SafeErrorCategory {
-    if (!error) return 'unknown_error';
-    
-    const errorStr = String(error).toLowerCase();
-    
-    // Network errors
-    if (errorStr.includes('econnrefused') || 
-        errorStr.includes('enotfound') || 
-        errorStr.includes('network') ||
-        errorStr.includes('fetch')) {
-      return 'network_error';
-    }
-    
-    // Timeout errors
-    if (errorStr.includes('timeout') || errorStr.includes('etimedout')) {
-      return 'timeout_error';
-    }
-    
-    // Validation errors
-    if (errorStr.includes('validation') || 
-        errorStr.includes('invalid') || 
-        errorStr.includes('malformed')) {
-      return 'validation_error';
-    }
-    
-    // Proof/cryptography errors
-    if (errorStr.includes('proof') || 
-        errorStr.includes('verify') || 
-        errorStr.includes('signature')) {
-      return 'proof_error';
-    }
-    
-    // Timestamp errors
-    if (errorStr.includes('timestamp') || 
-        errorStr.includes('expired') ||
-        errorStr.includes('clock')) {
-      return 'timestamp_error';
-    }
-    
-    // Nullifier errors
-    if (errorStr.includes('nullifier') || errorStr.includes('replay')) {
-      return 'nullifier_error';
-    }
-    
-    // Credential errors
-    if (errorStr.includes('credential') || errorStr.includes('unavailable')) {
-      return 'credential_error';
-    }
-    
-    // Database errors
-    if (errorStr.includes('database') || 
-        errorStr.includes('sqlite') ||
-        errorStr.includes('constraint')) {
-      return 'database_error';
-    }
-    
-    return 'unknown_error';
-  }
-  
-  /**
-   * Log a diagnostic entry (safe logging that never crashes)
+   * Log a diagnostic entry (NON-THROWING: safe logging that never crashes)
    */
   log(entry: DiagnosticLogEntry): void {
-    if (!this.config.enabled) return;
+    if (!this.config.enabled || this.initFailed) return;
     
     try {
-      // Validate entry has no forbidden fields
+      // Validate stage and errorCategory against strict allowlists
       this.validateEntry(entry);
       
       // Check if rotation needed
@@ -220,9 +177,39 @@ export class DiagnosticLogger {
       const logLine = JSON.stringify(entry) + '\n';
       appendFileSync(this.currentLogFile, logLine, { mode: 0o600 });
     } catch (error) {
-      // Logging failure must not crash security transactions
-      // Log to stderr but continue
-      console.error('Diagnostic logging failed (non-fatal):', error);
+      // Fallback to sanitized stderr (no raw error details)
+      this.fallbackToStderr(entry.stage, entry.errorCategory, error);
+    }
+  }
+  
+  /**
+   * Validate entry against strict allowlists (throws on invalid)
+   */
+  private validateEntry(entry: DiagnosticLogEntry): void {
+    if (!ALLOWED_STAGES.includes(entry.stage)) {
+      throw new Error(`Invalid stage: '${entry.stage}' not in allowlist`);
+    }
+
+    if (entry.errorCategory !== undefined && !ALLOWED_ERROR_CATEGORIES.includes(entry.errorCategory)) {
+      throw new Error(`Invalid errorCategory: '${entry.errorCategory}' not in allowlist`);
+    }
+  }
+  
+  /**
+   * Fallback to sanitized stderr when primary logging fails.
+   * Emits ONLY stage and errorCategory, no metadata or error details.
+   */
+  private fallbackToStderr(stage: string, errorCategory: string | undefined, _err: unknown): void {
+    try {
+      const fallbackEntry = {
+        timestamp: new Date().toISOString(),
+        stage,
+        ...(errorCategory && { errorCategory }),
+        fallback: true,
+      };
+      process.stderr.write(JSON.stringify(fallbackEntry) + '\n');
+    } catch {
+      // Ultimate fallback: silent failure (logging must never crash admission)
     }
   }
   
@@ -235,7 +222,20 @@ export class DiagnosticLogger {
       correlationId,
       stage: 'challenge_issued',
       result: 'success',
-      durationMs: expiresInSeconds * 1000, // Log TTL as duration
+      durationMs: expiresInSeconds * 1000,
+    });
+  }
+  
+  /**
+   * Log challenge expiry check
+   */
+  logChallengeExpired(correlationId: string): void {
+    this.log({
+      timestamp: new Date().toISOString(),
+      correlationId,
+      stage: 'challenge_expired',
+      result: 'failure',
+      errorCategory: 'challenge_expired_error',
     });
   }
   
@@ -279,37 +279,63 @@ export class DiagnosticLogger {
   /**
    * Log upstream verification failure
    */
-  logUpstreamVerifyFailed(correlationId: string, error: unknown, durationMs: number): void {
+  logUpstreamVerifyFailed(correlationId: string, errorCategory: AllowedErrorCategory, durationMs: number): void {
     this.log({
       timestamp: new Date().toISOString(),
       correlationId,
       stage: 'upstream_verify_failed',
       result: 'failure',
-      errorCategory: this.sanitizeError(error),
+      errorCategory,
       durationMs,
     });
   }
   
   /**
-   * Log completion accepted
+   * Log fence rejection
    */
-  logCompletionAccepted(correlationId: string): void {
+  logFenceRejected(correlationId: string): void {
     this.log({
       timestamp: new Date().toISOString(),
       correlationId,
-      stage: 'completion_accepted',
+      stage: 'fence_rejected',
+      result: 'failure',
+      errorCategory: 'fence_check_fail',
+    });
+  }
+  
+  /**
+   * Log ownership rejection (nullifier already claimed by another account)
+   */
+  logOwnershipRejected(correlationId: string): void {
+    this.log({
+      timestamp: new Date().toISOString(),
+      correlationId,
+      stage: 'ownership_rejected',
+      result: 'failure',
+      errorCategory: 'ownership_check_fail',
+    });
+  }
+  
+  /**
+   * Log enrollment completion
+   */
+  logEnrollmentComplete(correlationId: string): void {
+    this.log({
+      timestamp: new Date().toISOString(),
+      correlationId,
+      stage: 'enrollment_complete',
       result: 'success',
     });
   }
   
   /**
-   * Log completion rejected
+   * Log enrollment rejection
    */
-  logCompletionRejected(correlationId: string, errorCategory: SafeErrorCategory): void {
+  logEnrollmentRejected(correlationId: string, errorCategory: AllowedErrorCategory): void {
     this.log({
       timestamp: new Date().toISOString(),
       correlationId,
-      stage: 'completion_rejected',
+      stage: 'enrollment_rejected',
       result: 'failure',
       errorCategory,
     });
@@ -318,32 +344,81 @@ export class DiagnosticLogger {
   /**
    * Log revoke transaction
    */
-  logRevoke(correlationId: string, success: boolean, error?: unknown): void {
+  logRevoke(correlationId: string, success: boolean): void {
     this.log({
       timestamp: new Date().toISOString(),
       correlationId,
-      stage: success ? 'revoke_success' : 'revoke_failed',
+      stage: success ? 'revoke_success' : 'revoke_not_found',
       result: success ? 'success' : 'failure',
-      errorCategory: error ? this.sanitizeError(error) : undefined,
     });
   }
   
   /**
    * Initialize log directory with secure permissions
+   * THROWS on failure (called only in constructor/safeInitialize)
    */
   private initializeLogDirectory(): void {
     if (!existsSync(this.config.logDir)) {
       mkdirSync(this.config.logDir, { recursive: true, mode: 0o700 });
+    } else {
+      // Validate existing directory (permissions, not a symlink)
+      const stats = lstatSync(this.config.logDir);
+      if (stats.isSymbolicLink()) {
+        throw new Error(`Log directory is a symlink: ${this.config.logDir}`);
+      }
+      if (!stats.isDirectory()) {
+        throw new Error(`Log directory path exists but is not a directory: ${this.config.logDir}`);
+      }
+    }
+  }
+  
+  /**
+   * Cleanup old log files on startup (enforce maxFiles before creating new file)
+   * THROWS on failure (called only in constructor/safeInitialize)
+   */
+  private cleanupOldLogFilesOnStartup(): void {
+    const files = readdirSync(this.config.logDir)
+      .filter(f => f.startsWith('diagnostic-') && f.endsWith('.ndjson'))
+      .map(f => {
+        const path = join(this.config.logDir, f);
+        const stats = lstatSync(path);
+        
+        // Skip symlinks
+        if (stats.isSymbolicLink()) {
+          return null;
+        }
+        
+        return {
+          name: f,
+          path,
+          mtime: stats.mtime.getTime(),
+        };
+      })
+      .filter(f => f !== null)
+      .sort((a, b) => b!.mtime - a!.mtime); // Newest first
+    
+    // Remove files beyond retention limit
+    for (let i = this.config.maxFiles - 1; i < files.length; i++) {
+      unlinkSync(files[i]!.path);
     }
   }
   
   /**
    * Create new log file with secure permissions
+   * THROWS on failure (called only in controlled contexts)
    */
   private createLogFile(): string {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `diagnostic-${timestamp}.ndjson`;
     const filepath = join(this.config.logDir, filename);
+    
+    // Validate path is not a symlink (if it somehow already exists)
+    if (existsSync(filepath)) {
+      const stats = lstatSync(filepath);
+      if (stats.isSymbolicLink()) {
+        throw new Error(`Log file path is a symlink: ${filepath}`);
+      }
+    }
     
     // Create empty file with mode 0600
     writeFileSync(filepath, '', { mode: 0o600 });
@@ -353,6 +428,7 @@ export class DiagnosticLogger {
   
   /**
    * Check if log file needs rotation
+   * NON-THROWING: Returns true on error (triggers rotation)
    */
   private needsRotation(): boolean {
     try {
@@ -365,64 +441,45 @@ export class DiagnosticLogger {
   
   /**
    * Rotate log file and clean up old files
+   * NON-THROWING: Failures are caught and logged to stderr
    */
   private rotateLogFile(): void {
-    this.currentLogFile = this.createLogFile();
-    this.cleanupOldLogFiles();
-  }
-  
-  /**
-   * Remove oldest log files beyond retention limit
-   */
-  private cleanupOldLogFiles(): void {
     try {
-      const files = readdirSync(this.config.logDir)
-        .filter(f => f.startsWith('diagnostic-') && f.endsWith('.ndjson'))
-        .map(f => ({
-          name: f,
-          path: join(this.config.logDir, f),
-          mtime: statSync(join(this.config.logDir, f)).mtime.getTime(),
-        }))
-        .sort((a, b) => b.mtime - a.mtime); // Newest first
-      
-      // Remove files beyond retention limit
-      for (let i = this.config.maxFiles; i < files.length; i++) {
-        unlinkSync(files[i].path);
-      }
+      this.currentLogFile = this.createLogFile();
+      this.cleanupOldLogFiles();
     } catch (error) {
-      // Cleanup failure is non-fatal
-      console.error('Log cleanup failed (non-fatal):', error);
+      this.fallbackToStderr('log_rotation_failed', undefined, error);
     }
   }
   
   /**
-   * Validate entry has no forbidden fields (privacy fence)
+   * Remove oldest log files beyond retention limit
+   * THROWS on failure (called only in rotateLogFile, which is nonthrowing)
    */
-  private validateEntry(entry: DiagnosticLogEntry): void {
-    const entryStr = JSON.stringify(entry).toLowerCase();
+  private cleanupOldLogFiles(): void {
+    const files = readdirSync(this.config.logDir)
+      .filter(f => f.startsWith('diagnostic-') && f.endsWith('.ndjson'))
+      .map(f => {
+        const path = join(this.config.logDir, f);
+        const stats = lstatSync(path);
+        
+        // Skip symlinks
+        if (stats.isSymbolicLink()) {
+          return null;
+        }
+        
+        return {
+          name: f,
+          path,
+          mtime: stats.mtime.getTime(),
+        };
+      })
+      .filter(f => f !== null)
+      .sort((a, b) => b!.mtime - a!.mtime); // Newest first
     
-    // Forbidden patterns (partial list for demonstration)
-    const forbiddenPatterns = [
-      'initdata',
-      'user_id',
-      'chat_id',
-      'nullifier',
-      'proof',
-      'signature',
-      'session_id',
-      'nonce',
-      'connector',
-      'telegram',
-      'password',
-      'token',
-      'secret',
-      'key',
-    ];
-    
-    for (const pattern of forbiddenPatterns) {
-      if (entryStr.includes(pattern)) {
-        throw new Error(`Forbidden pattern detected in log entry: ${pattern}`);
-      }
+    // Remove files beyond retention limit
+    for (let i = this.config.maxFiles; i < files.length; i++) {
+      unlinkSync(files[i]!.path);
     }
   }
 }

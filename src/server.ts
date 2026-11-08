@@ -11,6 +11,7 @@ import { WorldIdChallengeAdapter } from './worldid-challenge-adapter.js';
 import { WorldIdHttpVerifier } from './worldid-verifier-http.js';
 import { HttpService } from './http-service.js';
 import { TelegramBotHandler, TelegramHttpTransport } from './telegram-bot-handler.js';
+import { createDiagnosticLogger } from './diagnostic-logger.js';
 
 // Configuration from environment (with unconfigured defaults for local testing)
 const config = {
@@ -41,6 +42,10 @@ const config = {
   openclawTimeout: parseInt(process.env.OPENCLAW_TIMEOUT || '30', 10),
   openclawAllowedGroupId: process.env.OPENCLAW_ALLOWED_GROUP ? parseInt(process.env.OPENCLAW_ALLOWED_GROUP, 10) : undefined,
   openclawAccountId: process.env.OPENCLAW_ACCOUNT_ID || 'default',
+  
+  // Diagnostic logging (OPTIONAL)
+  diagnosticLogEnabled: process.env.DIAGNOSTIC_LOG_ENABLED === 'true',
+  diagnosticLogDir: process.env.DIAGNOSTIC_LOG_DIR || '/tmp/enrollment-logs',
 };
 
 // Production readiness check (fail-closed)
@@ -115,7 +120,19 @@ async function main(): Promise<void> {
   console.log(`Database: ${config.databasePath}`);
   console.log(`Action scope: ${config.action}`);
   console.log(`Environment: ${config.worldIdEnvironment}`);
+  console.log(`Diagnostic Logging: ${config.diagnosticLogEnabled ? 'enabled' : 'disabled'}`);
+  if (config.diagnosticLogEnabled) {
+    console.log(`  Log directory: ${config.diagnosticLogDir}`);
+  }
   console.log('');
+
+  // Create diagnostic logger
+  const diagnosticLogger = createDiagnosticLogger({
+    logDir: config.diagnosticLogDir,
+    maxFileSizeBytes: 10 * 1024 * 1024, // 10MB
+    maxFiles: 10,
+    enabled: config.diagnosticLogEnabled,
+  });
 
   // Create challenge adapter
   const challengeAdapter = new WorldIdChallengeAdapter({
@@ -143,6 +160,7 @@ async function main(): Promise<void> {
     action: config.action,
     challengeTtlSeconds: 300,
     enrollmentTtlSeconds: 2592000, // 30 days
+    diagnosticLogger,
   });
 
   // Create Telegram bot handler

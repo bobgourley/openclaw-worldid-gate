@@ -105,23 +105,26 @@ This corrected review examines official World ID 4.0 documentation to determine 
 
 ### 3. Revoke Implementation (Corrected Understanding)
 
-**Actual 83ebbaa Implementation**:
+**Actual 83ebbaa SQLite Implementation** (`src/enrollment-service-production.ts` lines 928-934):
 
 ```typescript
-// In enrollment-store.ts line 299-304
-async revoke(telegramUserId: number): Promise<void> {
-  const nullifier = this.telegramUserIdToNullifier.get(telegramUserId);
-  if (nullifier) {
-    this.revokedNullifiers.add(nullifier);  // ADDS to set, doesn't delete
-  }
-}
+// 2. Update enrollment if exists (mark revoked with generation)
+const enrollmentStmt = this.db.prepare(`
+  UPDATE enrollments
+  SET revoked = 1, revoked_at = ?, revoked_at_seconds = ?, revoked_generation = ?
+  WHERE telegram_user_id = ? AND action = ? AND revoked = 0
+`);
+
+const enrollmentResult = enrollmentStmt.run(this.clock.nowISO(), now, generation, telegramUserId, this.action);
+const hadEnrollment = enrollmentResult.changes > 0;
 ```
 
 **What This Actually Does**:
-- PRESERVES enrollment row with immutable claims
-- ADDS nullifier to revoked set
-- Does NOT delete binding
-- Maintains durable fence preventing ownership transfer
+- PRESERVES enrollment row (uses UPDATE, not DELETE)
+- Sets `revoked = 1` flag
+- Records revocation timestamp and generation
+- Maintains nullifier binding in the row
+- Generation fence prevents pre-revocation challenge completion
 
 **Previous Error**: Stated it "deletes binding" - incorrect.
 

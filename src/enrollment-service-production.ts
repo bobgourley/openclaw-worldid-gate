@@ -543,6 +543,12 @@ export class EnrollmentService {
       expiresAt,
     };
 
+    // Log successful challenge issuance
+    if (this.diagnosticLogger) {
+      const correlationId = this.diagnosticLogger.generateCorrelationId();
+      this.diagnosticLogger.logChallengeIssued(correlationId, this.challengeTtlSeconds);
+    }
+
     return {
       signedChallenge: serviceChallenge,
     };
@@ -611,6 +617,9 @@ export class EnrollmentService {
     const now = this.clock.nowSeconds();
     if (challengeRow.expires_at <= now) {
       // Expired: DO NOT delete (pending retention policy)
+      if (correlationId) {
+        this.diagnosticLogger?.logChallengeExpired(correlationId);
+      }
       return {
         success: false,
         error: 'Challenge session expired',
@@ -651,12 +660,19 @@ export class EnrollmentService {
       if (correlationId && verificationResult.success) {
         this.diagnosticLogger?.logUpstreamVerifySuccess(correlationId, verifyDuration);
       } else if (correlationId && !verificationResult.success) {
-        this.diagnosticLogger?.logUpstreamVerifyFailed(correlationId, new Error('Proof verification failed'), verifyDuration);
+        this.diagnosticLogger?.logUpstreamVerifyFailed(correlationId, 'proof_error', verifyDuration);
       }
     } catch (error) {
       const verifyDuration = Date.now() - verifyStart;
       if (correlationId) {
-        this.diagnosticLogger?.logUpstreamVerifyFailed(correlationId, error, verifyDuration);
+        // Categorize network/timeout errors vs. proof errors
+        const errorStr = String(error).toLowerCase();
+        const errorCategory = errorStr.includes('timeout') || errorStr.includes('etimedout')
+          ? 'network_timeout'
+          : errorStr.includes('network') || errorStr.includes('econnrefused')
+            ? 'verification_api_error'
+            : 'unknown_error';
+        this.diagnosticLogger?.logUpstreamVerifyFailed(correlationId, errorCategory, verifyDuration);
       }
       // Network/service errors do not consume challenge
       return {
@@ -667,7 +683,7 @@ export class EnrollmentService {
 
     if (!verificationResult.success || !verificationResult.nullifier) {
       if (correlationId) {
-        this.diagnosticLogger?.logCompletionRejected(correlationId, 'proof_error');
+        this.diagnosticLogger?.logEnrollmentRejected(correlationId, 'proof_error');
       }
       return {
         success: false,
@@ -687,6 +703,9 @@ export class EnrollmentService {
       // Block pre-revocation challenges using monotonic generation
       // Generation provides strict ordering even within same second
       if (challengeRow.generation < revokedCheck.revoked_generation) {
+        if (correlationId) {
+          this.diagnosticLogger?.logFenceRejected(correlationId);
+        }
         return {
           success: false,
           error: 'Challenge predates revocation (fresh verification required)',
@@ -731,6 +750,9 @@ export class EnrollmentService {
       `).get(authenticatedUser.id, this.action) as any;
 
       if (fenceCheck && recheckRow.generation < fenceCheck.fence_generation) {
+        if (correlationId) {
+          this.diagnosticLogger?.logFenceRejected(correlationId);
+        }
         throw new Error('Challenge predates revocation fence (fresh verification required)');
       }
 
@@ -752,6 +774,9 @@ export class EnrollmentService {
       `).get(verificationResult.nullifier, this.action) as any;
 
       if (nullifierOwnerCheck && nullifierOwnerCheck.telegram_user_id !== authenticatedUser.id) {
+        if (correlationId) {
+          this.diagnosticLogger?.logOwnershipRejected(correlationId);
+        }
         throw new Error('Nullifier permanently bound to different account (immutable one-human binding)');
       }
 
@@ -847,7 +872,7 @@ export class EnrollmentService {
 
     // Log successful completion
     if (correlationId) {
-      this.diagnosticLogger?.logCompletionAccepted(correlationId);
+      this.diagnosticLogger?.logEnrollmentComplete(correlationId);
     }
 
     return {
@@ -946,6 +971,12 @@ export class EnrollmentService {
     });
 
     const hadEnrollment = transaction();
+
+    // Log revocation outcome
+    if (this.diagnosticLogger) {
+      const correlationId = this.diagnosticLogger.generateCorrelationId();
+      this.diagnosticLogger.logRevoke(correlationId, hadEnrollment);
+    }
 
     // DISPLAY-ONLY: Remove member tag after revocation (best-effort, non-blocking)
     if (hadEnrollment && this.memberTagManager) {
