@@ -204,12 +204,12 @@
         <span class="diag-value" id="diagRpIdMatch">-</span>
       </div>
       <div class="diag-row">
-        <span class="diag-label">Nonce Present:</span>
-        <span class="diag-value" id="diagNoncePresent">-</span>
+        <span class="diag-label">Nonce Match:</span>
+        <span class="diag-value" id="diagNonceMatch">-</span>
       </div>
       <div class="diag-row">
-        <span class="diag-label">Signature Present:</span>
-        <span class="diag-value" id="diagSignaturePresent">-</span>
+        <span class="diag-label">Signature Match:</span>
+        <span class="diag-value" id="diagSignatureMatch">-</span>
       </div>
       <div class="diag-row">
         <span class="diag-label">CreatedAt Match:</span>
@@ -477,10 +477,67 @@
             await handleProofError(result.error, idkitRequest, session);
           }
         } catch (pollError) {
-          // Poll threw error - still show diagnostics with generic error code
+          // Poll threw error - extract canonical error code if present
           console.error('Verification request failed');
+          
+          // SECURITY: Strict primitive allowlist extraction with descriptor-safe reads
+          function extractCanonicalError(error) {
+            if (!error) return 'unknown_error';
+            
+            // Try descriptor-safe reads
+            let errorCode = null;
+            let errorMessage = null;
+            
+            try {
+              const codeDesc = Object.getOwnPropertyDescriptor(error, 'code');
+              if (codeDesc && !codeDesc.get && typeof codeDesc.value === 'string') {
+                errorCode = codeDesc.value;
+              }
+            } catch (e) {
+              // Descriptor read failed
+            }
+            
+            if (!errorCode) {
+              try {
+                const messageDesc = Object.getOwnPropertyDescriptor(error, 'message');
+                if (messageDesc && !messageDesc.get && typeof messageDesc.value === 'string') {
+                  errorMessage = messageDesc.value;
+                }
+              } catch (e) {
+                // Descriptor read failed
+              }
+            }
+            
+            // Allowlist of canonical error codes
+            const canonicalErrors = [
+              'user_rejected', 'verification_rejected', 'credential_unavailable',
+              'feature_unavailable', 'world_id_4_not_available', 'world_id_3_not_available',
+              'malformed_request', 'invalid_network', 'inclusion_proof_pending',
+              'inclusion_proof_failed', 'unexpected_response', 'connection_failed',
+              'max_verifications_reached', 'failed_by_host_app', 'user_presence_failed',
+              'invalid_rp_signature', 'nullifier_replayed', 'duplicate_nonce',
+              'unknown_rp', 'inactive_rp', 'timestamp_too_old', 'timestamp_too_far_in_future',
+              'invalid_timestamp', 'rp_signature_expired', 'identity_attributes_not_matched',
+              'generic_error', 'invalid_rp_id_format', 'timeout', 'cancelled'
+            ];
+            
+            // Check errorCode first
+            if (errorCode && canonicalErrors.includes(errorCode)) {
+              return errorCode;
+            }
+            
+            // Check errorMessage (some errors pass code in message)
+            if (errorMessage && canonicalErrors.includes(errorMessage)) {
+              return errorMessage;
+            }
+            
+            // Fallback to unknown_error
+            return 'unknown_error';
+          }
+          
+          const extractedError = extractCanonicalError(pollError);
           showError('Unable to connect to World App. Please try again.');
-          await showDiagnostics('connection_failed', idkitRequest, session);
+          await showDiagnostics(extractedError, idkitRequest, session);
           buttonEl.disabled = false;
         }
         
@@ -597,9 +654,14 @@
         // Descriptor-safe reads (no getter execution)
         function safeGet(obj, key) {
           if (!obj || typeof obj !== 'object') return undefined;
-          const desc = Object.getOwnPropertyDescriptor(obj, key);
-          if (!desc || desc.get) return undefined; // Skip getters
-          return desc.value;
+          try {
+            const desc = Object.getOwnPropertyDescriptor(obj, key);
+            if (!desc || desc.get) return undefined; // Skip getters
+            return desc.value;
+          } catch (e) {
+            // Descriptor/proxy threw - return undefined
+            return undefined;
+          }
         }
         
         // Extract safe fields for comparison
@@ -610,6 +672,19 @@
         const expectedSignature = session.signedChallenge.signature;
         const sessionCreatedAt = session.signedChallenge.createdAt;
         const sessionExpiresAt = session.signedChallenge.expiresAt;
+        
+        // Validate timestamps are finite SAFE bounded integers BEFORE any checks
+        const createdAtSafe = typeof sessionCreatedAt === 'number' 
+          && Number.isFinite(sessionCreatedAt)
+          && Number.isSafeInteger(sessionCreatedAt)
+          && sessionCreatedAt >= 0
+          && sessionCreatedAt <= 2147483647; // Max int32 (year 2038)
+        
+        const expiresAtSafe = typeof sessionExpiresAt === 'number'
+          && Number.isFinite(sessionExpiresAt)
+          && Number.isSafeInteger(sessionExpiresAt)
+          && sessionExpiresAt >= 0
+          && sessionExpiresAt <= 2147483647;
         
         // Compute canonical action hash if bundle export available
         let expectedActionHash = null;
@@ -632,10 +707,15 @@
         const reportTransport = safeGet(debugReport, 'transport');
         const reportPayload = safeGet(debugReport, 'request_payload');
         
-        // Sanitize version and transport with strict allowlist
-        const safeVersion = (typeof reportVersion === 'string' && allowedVersions.includes(reportVersion)) 
-          ? reportVersion 
-          : 'unknown';
+        // Sanitize version: use static known bundle version 4.6.0 if report missing
+        let safeVersion = 'unknown';
+        if (typeof reportVersion === 'string' && allowedVersions.includes(reportVersion)) {
+          safeVersion = reportVersion;
+        } else if (!debugReport) {
+          // Known bundle version (built with idkit-core@4.6.0)
+          safeVersion = '4.6.0';
+        }
+        
         const safeTransport = (typeof reportTransport === 'string' && allowedTransports.includes(reportTransport))
           ? reportTransport
           : 'unknown';
@@ -652,6 +732,15 @@
         const prCreatedAt = safeGet(proofRequest, 'created_at');
         const prExpiresAt = safeGet(proofRequest, 'expires_at');
         const prActionHash = safeGet(proofRequest, 'action');
+        
+        // Validate proof_request timestamps are also safe
+        const prCreatedAtSafe = typeof prCreatedAt === 'number'
+          && Number.isFinite(prCreatedAt)
+          && Number.isSafeInteger(prCreatedAt);
+        
+        const prExpiresAtSafe = typeof prExpiresAt === 'number'
+          && Number.isFinite(prExpiresAt)
+          && Number.isSafeInteger(prExpiresAt);
         
         // Tri-state checks: PASS/FAIL/UNKNOWN
         function triState(hasData, isMatch) {
@@ -677,47 +766,47 @@
           prRpId === expectedRpId
         );
         
-        // Nonce check (presence + equality)
+        // Nonce Match (presence + equality)
         const nonceState = triState(
           typeof prNonce === 'string' && prNonce.length > 0,
           prNonce === expectedNonce
         );
         
-        // Signature check (presence + equality)
+        // Signature Match (presence + equality)
         const signatureState = triState(
           typeof prSignature === 'string' && prSignature.length > 0,
           prSignature === expectedSignature
         );
         
-        // Canonical action hash check
+        // Canonical action hash check (UNKNOWN honest when hashAction unavailable)
         const actionState = triState(
           expectedActionHash !== null && typeof prActionHash === 'string',
           prActionHash === expectedActionHash
         );
         
-        // Signed timestamp checks
+        // Signed timestamp checks (only if both sides safe)
         const createdAtState = triState(
-          typeof prCreatedAt === 'number',
+          createdAtSafe && prCreatedAtSafe,
           prCreatedAt === sessionCreatedAt
         );
         
         const expiresAtState = triState(
-          typeof prExpiresAt === 'number',
+          expiresAtSafe && prExpiresAtSafe,
           prExpiresAt === sessionExpiresAt
         );
         
-        // Timestamp validity (now within [created, expires])
+        // Timestamp validity (only if safe timestamps, valid order, now within range)
         const now = Math.floor(Date.now() / 1000);
         const timestampValidState = triState(
-          typeof sessionCreatedAt === 'number' && typeof sessionExpiresAt === 'number',
+          createdAtSafe && expiresAtSafe && sessionCreatedAt <= sessionExpiresAt,
           now >= sessionCreatedAt && now <= sessionExpiresAt
         );
         
-        // Finite bounded TTL (guard against Infinity/NaN)
+        // Finite bounded TTL (only if safe timestamps, valid order)
         let safeTtl = 'unknown';
-        if (typeof sessionExpiresAt === 'number' && typeof sessionCreatedAt === 'number') {
+        if (createdAtSafe && expiresAtSafe) {
           const ttl = sessionExpiresAt - sessionCreatedAt;
-          if (Number.isFinite(ttl) && ttl >= 0 && ttl <= 86400) { // Max 24 hours
+          if (ttl >= 0 && ttl <= 86400) { // Max 24 hours, already finite via safe check
             safeTtl = ttl + 's';
           } else {
             safeTtl = 'invalid';
@@ -746,13 +835,13 @@
         rpIdMatchEl.textContent = rpIdState.text;
         rpIdMatchEl.className = 'diag-value ' + rpIdState.className;
         
-        const noncePresentEl = document.getElementById('diagNoncePresent');
-        noncePresentEl.textContent = nonceState.text;
-        noncePresentEl.className = 'diag-value ' + nonceState.className;
+        const nonceMatchEl = document.getElementById('diagNonceMatch');
+        nonceMatchEl.textContent = nonceState.text;
+        nonceMatchEl.className = 'diag-value ' + nonceState.className;
         
-        const signaturePresentEl = document.getElementById('diagSignaturePresent');
-        signaturePresentEl.textContent = signatureState.text;
-        signaturePresentEl.className = 'diag-value ' + signatureState.className;
+        const signatureMatchEl = document.getElementById('diagSignatureMatch');
+        signatureMatchEl.textContent = signatureState.text;
+        signatureMatchEl.className = 'diag-value ' + signatureState.className;
         
         const createdAtEl = document.getElementById('diagCreatedAtMatch');
         createdAtEl.textContent = createdAtState.text;
@@ -772,8 +861,26 @@
         diagnosticsEl.classList.add('visible');
         
       } catch (error) {
+        // Descriptor/proxy errors - show static UNKNOWN panel
         console.error('Diagnostics generation failed');
-        // Fail silently - don't expose diagnostic errors to user
+        try {
+          document.getElementById('diagErrorCode').textContent = errorCode;
+          document.getElementById('diagSdkVersion').textContent = '4.6.0';
+          document.getElementById('diagTransport').textContent = 'unknown';
+          document.getElementById('diagEnvMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagActionMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagAppIdMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagRpIdMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagNonceMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagSignatureMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagCreatedAtMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagExpiresAtMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagTimestampValid').textContent = '? UNKNOWN';
+          document.getElementById('diagTtl').textContent = 'unknown';
+          diagnosticsEl.classList.add('visible');
+        } catch (e) {
+          // Even fallback failed - fail silently
+        }
       }
     }
     
