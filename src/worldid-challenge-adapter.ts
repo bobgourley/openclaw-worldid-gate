@@ -203,4 +203,41 @@ export class WorldIdChallengeAdapter {
     const now = clockNowSeconds ?? Math.floor(Date.now() / 1000);
     return now >= signedChallenge.expiresAt;
   }
+
+  /**
+   * Create a session-only challenge (no action, for returning user verification).
+   * 
+   * Used with IDKit.proveSession() for returning users who already have a session.
+   * The RP signature is generated WITHOUT an action field.
+   * 
+   * @returns Signed challenge for session proof and expected nonce for verification
+   */
+  createSessionChallenge(): {
+    signedChallenge: SignedRpChallenge;
+    expectedNonce: string;
+  } {
+    // Sign the RP challenge context WITHOUT action (session proof mode)
+    const rpSignature: RpSignature = signRequest({
+      signingKeyHex: this.config.signingKeyHex,
+      // No action for session-only proofs
+      ttl: this.config.challengeTtlSeconds,
+    });
+
+    const signedChallenge: SignedRpChallenge = {
+      appId: this.config.appId,
+      rpId: this.config.rpId,
+      nonce: rpSignature.nonce,
+      createdAt: rpSignature.createdAt,
+      expiresAt: rpSignature.expiresAt,
+      signature: rpSignature.sig,
+      action: null as any, // No action for session proofs
+      signalHash: null as any, // No signal for session proofs
+      environment: this.config.environment,
+    };
+
+    return {
+      signedChallenge,
+      expectedNonce: rpSignature.nonce,
+    };
+  }
 }
