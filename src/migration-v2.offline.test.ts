@@ -272,6 +272,156 @@ describe('Schema V2 Migration and Blockers', () => {
         });
       }, /Ambiguous nullifier ownership/i);
     });
+
+    test('backfills generation_fences from revoked enrollments', () => {
+      // Create v1 DB with revoked enrollment
+      const db = new Database(testDbPath);
+      
+      db.exec(`
+        CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT);
+        INSERT INTO schema_version VALUES (1, '2026-11-01T12:00:00Z');
+      `);
+
+      db.exec(`
+        CREATE TABLE enrollments (
+          telegram_user_id INTEGER NOT NULL,
+          action TEXT NOT NULL,
+          nullifier TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          revoked INTEGER NOT NULL DEFAULT 0,
+          revoked_at TEXT,
+          revoked_at_seconds INTEGER,
+          revoked_generation INTEGER,
+          PRIMARY KEY (telegram_user_id, action)
+        );
+      `);
+
+      db.exec(`
+        CREATE TABLE generation_counter (id INTEGER PRIMARY KEY, next_generation INTEGER);
+        INSERT INTO generation_counter VALUES (1, 10);
+      `);
+
+      // Insert revoked enrollment with generation marker
+      const revokedAt = Math.floor(Date.now() / 1000);
+      db.exec(`
+        INSERT INTO enrollments (telegram_user_id, action, nullifier, expires_at, created_at, revoked, revoked_at, revoked_at_seconds, revoked_generation)
+        VALUES (555, 'test-migration', '0xrevoked_nullifier', ${revokedAt + 86400}, '2026-11-01T12:00:00Z', 1, '2026-11-01T13:00:00Z', ${revokedAt}, 5);
+      `);
+
+      db.close();
+
+      // Open with v2 service (triggers migration with fence backfill)
+      const fakeClock = new FakeClock();
+      const adapter = new WorldIdChallengeAdapter({
+        appId: TEST_APP_ID,
+        rpId: TEST_RP_ID,
+        signingKeyHex: TEST_SIGNING_KEY,
+        environment: 'staging',
+      });
+      const mockClient = new MockWorldIdClient();
+
+      const service = new EnrollmentService({
+        dbPath: testDbPath,
+        challengeAdapter: adapter,
+        verificationClient: mockClient as any,
+        telegramBotToken: TEST_BOT_TOKEN,
+        action: TEST_ACTION,
+        clock: fakeClock,
+      });
+
+      // Verify generation_fences backfilled
+      const dbCheck = new Database(testDbPath);
+      
+      const fence = dbCheck.prepare(`
+        SELECT * FROM generation_fences WHERE telegram_user_id = 555 AND action = 'test-migration'
+      `).get() as any;
+
+      assert.ok(fence, 'Revoked enrollment must have generation fence');
+      assert.equal(fence.fence_generation, 5, 'Fence must have correct generation');
+      assert.equal(fence.fence_timestamp, revokedAt, 'Fence must have correct timestamp');
+
+      dbCheck.close();
+      service.close();
+    });
+
+    test('detects partial migration restart and fails safe', () => {
+      // Simulate crash scenario: v2 tables exist with data, but version=1
+      const db = new Database(testDbPath);
+      
+      db.exec(`
+        CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT);
+        INSERT INTO schema_version VALUES (1, '2026-11-01T12:00:00Z');
+      `);
+
+      db.exec(`
+        CREATE TABLE enrollments (
+          telegram_user_id INTEGER NOT NULL,
+          action TEXT NOT NULL,
+          nullifier TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          revoked INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (telegram_user_id, action)
+        );
+      `);
+
+      db.exec(`
+        CREATE TABLE generation_counter (id INTEGER PRIMARY KEY, next_generation INTEGER);
+        INSERT INTO generation_counter VALUES (1, 1);
+      `);
+
+      // Create v2 tables (simulating partial migration)
+      db.exec(`
+        CREATE TABLE nullifier_claims (
+          nullifier TEXT NOT NULL,
+          action TEXT NOT NULL,
+          telegram_user_id INTEGER NOT NULL,
+          claimed_at INTEGER NOT NULL,
+          claimed_at_iso TEXT NOT NULL,
+          PRIMARY KEY (nullifier, action)
+        );
+      `);
+
+      db.exec(`
+        CREATE TABLE generation_fences (
+          telegram_user_id INTEGER NOT NULL,
+          action TEXT NOT NULL,
+          fence_generation INTEGER NOT NULL,
+          fence_timestamp INTEGER NOT NULL,
+          fence_iso TEXT NOT NULL,
+          PRIMARY KEY (telegram_user_id, action)
+        );
+      `);
+
+      // Insert data (simulating completed backfill)
+      db.exec(`
+        INSERT INTO nullifier_claims VALUES ('0xtest', 'test-migration', 123, ${Math.floor(Date.now() / 1000)}, '2026-11-01T12:00:00Z');
+      `);
+
+      db.close();
+
+      // Attempt restart (should detect partial migration)
+      const fakeClock = new FakeClock();
+      const adapter = new WorldIdChallengeAdapter({
+        appId: TEST_APP_ID,
+        rpId: TEST_RP_ID,
+        signingKeyHex: TEST_SIGNING_KEY,
+        environment: 'staging',
+      });
+      const mockClient = new MockWorldIdClient();
+
+      assert.throws(() => {
+        new EnrollmentService({
+          dbPath: testDbPath,
+          challengeAdapter: adapter,
+          verificationClient: mockClient as any,
+          telegramBotToken: TEST_BOT_TOKEN,
+          action: TEST_ACTION,
+          clock: fakeClock,
+        });
+      }, /MIGRATION RESTART DETECTED/i);
+    });
   });
 
   describe('Blocker 1: Immutable Nullifier Ownership', () => {

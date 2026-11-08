@@ -319,44 +319,60 @@ export class EnrollmentService {
 
     if (currentVersion < 2) {
       // v2: Immutable nullifier ownership and durable revocation fences
+      // ATOMIC: All DDL, backfill, and version update in single transaction
       
-      // Permanent nullifier ownership claims (never released)
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS nullifier_claims (
-          nullifier TEXT NOT NULL,
-          action TEXT NOT NULL,
-          telegram_user_id INTEGER NOT NULL,
-          claimed_at INTEGER NOT NULL,
-          claimed_at_iso TEXT NOT NULL,
-          PRIMARY KEY (nullifier, action)
-        ) STRICT
-      `);
+      const migrationTransaction = this.db.transaction(() => {
+        // Create v2 tables (DDL inside transaction)
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS nullifier_claims (
+            nullifier TEXT NOT NULL,
+            action TEXT NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            claimed_at INTEGER NOT NULL,
+            claimed_at_iso TEXT NOT NULL,
+            PRIMARY KEY (nullifier, action)
+          ) STRICT
+        `);
 
-      this.db.exec(`
-        CREATE INDEX IF NOT EXISTS idx_nullifier_claims_user
-        ON nullifier_claims(telegram_user_id, action)
-      `);
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_nullifier_claims_user
+          ON nullifier_claims(telegram_user_id, action)
+        `);
 
-      // Independent generation fence table for durable revocation markers
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS generation_fences (
-          telegram_user_id INTEGER NOT NULL,
-          action TEXT NOT NULL,
-          fence_generation INTEGER NOT NULL,
-          fence_timestamp INTEGER NOT NULL,
-          fence_iso TEXT NOT NULL,
-          PRIMARY KEY (telegram_user_id, action)
-        ) STRICT
-      `);
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS generation_fences (
+            telegram_user_id INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            fence_generation INTEGER NOT NULL,
+            fence_timestamp INTEGER NOT NULL,
+            fence_iso TEXT NOT NULL,
+            PRIMARY KEY (telegram_user_id, action)
+          ) STRICT
+        `);
 
-      this.db.exec(`
-        CREATE INDEX IF NOT EXISTS idx_generation_fences_generation
-        ON generation_fences(fence_generation)
-      `);
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_generation_fences_generation
+          ON generation_fences(fence_generation)
+        `);
 
-      // Backfill nullifier_claims from existing enrollments
-      // Fail closed on ambiguous historical ownership
-      const backfillTransaction = this.db.transaction(() => {
+        // Idempotent restart detection
+        const existingClaimsCount = this.db.prepare(`
+          SELECT COUNT(*) as count FROM nullifier_claims
+        `).get() as any;
+
+        if (existingClaimsCount.count > 0) {
+          throw new Error(
+            'MIGRATION RESTART DETECTED: v2 tables exist with data but version=1.\n' +
+            'This indicates a previous migration was interrupted.\n' +
+            'Automatic recovery not safe. Manual inspection required:\n' +
+            '1. Verify nullifier_claims data integrity\n' +
+            '2. Verify generation_fences data integrity\n' +
+            '3. Manually update schema_version to 2 if data is correct\n' +
+            '4. Or restore from backup and retry migration'
+          );
+        }
+
+        // Backfill nullifier_claims from existing enrollments
         const existingNullifiers = this.db.prepare(`
           SELECT nullifier, action, telegram_user_id, 
                  MIN(created_at) as first_claim_at,
@@ -387,15 +403,40 @@ export class EnrollmentService {
             row.first_claim_at
           );
         }
+
+        // Backfill generation_fences from existing revoked enrollments
+        const revokedEnrollments = this.db.prepare(`
+          SELECT telegram_user_id, action, revoked_generation, revoked_at_seconds, revoked_at
+          FROM enrollments
+          WHERE revoked = 1 AND revoked_generation IS NOT NULL
+        `).all() as any[];
+
+        for (const row of revokedEnrollments) {
+          this.db.prepare(`
+            INSERT INTO generation_fences (telegram_user_id, action, fence_generation, fence_timestamp, fence_iso)
+            VALUES (?, ?, ?, ?, ?)
+          `).run(
+            row.telegram_user_id,
+            row.action,
+            row.revoked_generation,
+            row.revoked_at_seconds,
+            row.revoked_at
+          );
+        }
+
+        // Update version INSIDE transaction (commits atomically with DDL and backfill)
+        this.db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(
+          2,
+          this.clock.nowISO()
+        );
       });
 
+      // Execute entire migration atomically
       try {
-        backfillTransaction();
+        migrationTransaction();
       } catch (error: any) {
         throw new Error(`Schema v2 migration failed: ${error.message}`);
       }
-
-      this.setSchemaVersion(2);
     }
   }
 
