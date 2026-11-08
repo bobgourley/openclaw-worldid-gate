@@ -8,8 +8,8 @@
  * @module diagnostic-logger
  */
 
-import { writeFileSync, appendFileSync, existsSync, mkdirSync, statSync, readdirSync, unlinkSync, lstatSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync, appendFileSync, existsSync, mkdirSync, statSync, readdirSync, unlinkSync, lstatSync, openSync, closeSync, fstatSync, constants as fsConstants } from 'node:fs';
+import { join, resolve as resolvePath } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 /**
@@ -358,10 +358,8 @@ export class DiagnosticLogger {
    * THROWS on failure (called only in constructor/safeInitialize)
    */
   private initializeLogDirectory(): void {
-    const { resolve } = require('node:path');
-    
     // Resolve to absolute path
-    const absPath = resolve(this.config.logDir);
+    const absPath = resolvePath(this.config.logDir);
     
     // Check ancestor path components for symlinks
     const pathComponents = absPath.split('/').filter((c: string) => c);
@@ -437,8 +435,7 @@ export class DiagnosticLogger {
    * THROWS on failure (called only in controlled contexts)
    */
   private createLogFile(): string {
-    const { openSync, closeSync, fstatSync } = require('node:fs');
-    const { O_CREAT, O_EXCL, O_WRONLY } = require('node:fs').constants;
+    const { O_CREAT, O_EXCL, O_WRONLY } = fsConstants;
     
     // Use monotonic counter for uniqueness instead of timestamp to avoid truncation
     const counter = Date.now().toString(36) + Math.random().toString(36).substring(2, 10);

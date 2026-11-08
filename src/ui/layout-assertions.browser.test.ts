@@ -459,12 +459,34 @@ test.describe('Layout Assertions with Screenshots', () => {
     
     // Start in portrait (375x667 - iPhone 8)
     await page.setViewportSize({ width: 375, height: 667 });
+    
+    await page.route('https://telegram.org/js/telegram-web-app.js', route => {
+      route.fulfill({ status: 200, contentType: 'application/javascript', body: '// Telegram SDK blocked for testing' });
+    });
+    
+    await page.addInitScript(() => {
+      (window as any).Telegram = {
+        WebApp: {
+          initData: 'user=%7B%22id%22%3A123456%7D&auth_date=1700000000&hash=abc123',
+          initDataUnsafe: { user: { id: 123456, first_name: 'Test' }, auth_date: 1700000000 },
+          ready: () => {}, expand: () => {}, close: () => {},
+          MainButton: { show: () => {}, hide: () => {}, setText: () => {} },
+          BackButton: { show: () => {}, hide: () => {} },
+        },
+      };
+    });
+    
     await page.goto(`${BASE_URL}/enrollment?session=${sessionId}`);
     await page.waitForSelector('h1');
+    await page.waitForTimeout(1000); // Wait for session initialization
+    
+    // Verify button is visible after session initialization
     await expect(page.locator('#verifyButton')).toBeVisible({ timeout: 5000 });
     
     const testConnectorURI = 'wc:test-orientation@2?relay-protocol=irn&symKey=orientation1234567890';
-    await page.evaluate(async (connectorURI) => {
+    
+    // Generate QR and wait for completion
+    const portraitDecoded = await page.evaluate(async (connectorURI) => {
       const connectorDisplay = document.getElementById('connectorDisplay');
       const qrCodeEl = document.getElementById('qrCode');
       const connectorLink = document.getElementById('connectorLink');
@@ -479,14 +501,41 @@ test.describe('Layout Assertions with Screenshots', () => {
           statusEl.textContent = 'Scan QR code with World App';
           statusEl.className = 'success';
         }
+        
+        // Wait for canvas render
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Extract imageData for decode verification
+        const canvas = qrCodeEl.querySelector('canvas') as HTMLCanvasElement;
+        if (!canvas) return null;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        return {
+          data: Array.from(imageData.data),
+          width: imageData.width,
+          height: imageData.height
+        };
       }
+      return null;
     }, testConnectorURI);
-    await page.waitForTimeout(500);
+    
+    // Decode portrait QR
+    if (portraitDecoded) {
+      const imageData = {
+        data: new Uint8ClampedArray(portraitDecoded.data),
+        width: portraitDecoded.width,
+        height: portraitDecoded.height
+      };
+      const code = jsQR(imageData.data, imageData.width, imageData.height);
+      expect(code).not.toBeNull();
+      expect(code?.data).toBe(testConnectorURI);
+    }
     
     await page.screenshot({ path: '/opt/cursor/artifacts/orientation-portrait-375x667.png', fullPage: false });
     const portraitMetrics = await captureLayoutMetrics(page, 'portrait-375x667');
     
-    // Assert strict fit in portrait
+    // Assert strict fit in portrait (no internal overflow)
     const portraitContainer = await page.evaluate(() => {
       const container = document.querySelector('.container') as HTMLElement;
       return container ? {
@@ -500,17 +549,49 @@ test.describe('Layout Assertions with Screenshots', () => {
     
     // Rotate to landscape (667x375)
     await page.setViewportSize({ width: 667, height: 375 });
-    await page.evaluate(() => {
-      // Trigger orientationchange event
+    
+    // Trigger viewport change handlers and wait for QR regeneration
+    const landscapeDecoded = await page.evaluate(async () => {
       window.dispatchEvent(new Event('orientationchange'));
       window.dispatchEvent(new Event('resize'));
+      if ('visualViewport' in window && window.visualViewport) {
+        window.visualViewport.dispatchEvent(new Event('resize'));
+      }
+      
+      // Wait for QR regeneration to complete
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      // Extract imageData after regeneration
+      const qrCodeEl = document.getElementById('qrCode');
+      if (!qrCodeEl) return null;
+      const canvas = qrCodeEl.querySelector('canvas') as HTMLCanvasElement;
+      if (!canvas) return null;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      return {
+        data: Array.from(imageData.data),
+        width: imageData.width,
+        height: imageData.height
+      };
     });
-    await page.waitForTimeout(500); // Let layout recalculate
+    
+    // Decode landscape QR (verify regeneration worked)
+    if (landscapeDecoded) {
+      const imageData = {
+        data: new Uint8ClampedArray(landscapeDecoded.data),
+        width: landscapeDecoded.width,
+        height: landscapeDecoded.height
+      };
+      const code = jsQR(imageData.data, imageData.width, imageData.height);
+      expect(code).not.toBeNull();
+      expect(code?.data).toBe(testConnectorURI);
+    }
     
     await page.screenshot({ path: '/opt/cursor/artifacts/orientation-landscape-667x375.png', fullPage: false });
     const landscapeMetrics = await captureLayoutMetrics(page, 'landscape-667x375');
     
-    // Assert strict fit in landscape
+    // Assert strict fit in landscape (no internal overflow)
     const landscapeContainer = await page.evaluate(() => {
       const container = document.querySelector('.container') as HTMLElement;
       return container ? {
@@ -522,6 +603,7 @@ test.describe('Layout Assertions with Screenshots', () => {
     expect(landscapeContainer!.scrollHeight).toBeLessThanOrEqual(landscapeContainer!.clientHeight);
     expect(landscapeMetrics.connectorLink).not.toBeNull();
     expect(landscapeMetrics.qrCode).not.toBeNull();
+    expect(landscapeMetrics.connectorLink!.y + landscapeMetrics.connectorLink!.height).toBeLessThanOrEqual(375);
   });
 
   test('viewport shrink transition maintains accessibility', async ({ page }) => {
@@ -529,8 +611,26 @@ test.describe('Layout Assertions with Screenshots', () => {
     
     // Start at comfortable size (414x896 - iPhone 11)
     await page.setViewportSize({ width: 414, height: 896 });
+    
+    await page.route('https://telegram.org/js/telegram-web-app.js', route => {
+      route.fulfill({ status: 200, contentType: 'application/javascript', body: '// Telegram SDK blocked for testing' });
+    });
+    
+    await page.addInitScript(() => {
+      (window as any).Telegram = {
+        WebApp: {
+          initData: 'user=%7B%22id%22%3A123456%7D&auth_date=1700000000&hash=abc123',
+          initDataUnsafe: { user: { id: 123456, first_name: 'Test' }, auth_date: 1700000000 },
+          ready: () => {}, expand: () => {}, close: () => {},
+          MainButton: { show: () => {}, hide: () => {}, setText: () => {} },
+          BackButton: { show: () => {}, hide: () => {} },
+        },
+      };
+    });
+    
     await page.goto(`${BASE_URL}/enrollment?session=${sessionId}`);
     await page.waitForSelector('h1');
+    await page.waitForTimeout(1000); // Wait for session initialization
     await expect(page.locator('#verifyButton')).toBeVisible({ timeout: 5000 });
     
     const testConnectorURI = 'wc:test-shrink@2?relay-protocol=irn&symKey=shrink1234567890abcd';
