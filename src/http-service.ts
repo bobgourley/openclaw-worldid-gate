@@ -142,7 +142,13 @@ export class HttpService {
       // Enrollment UI route
       this.app.get('/enrollment', (req: Request, res: Response) => {
         try {
-          const uiPath = join(__dirname, 'ui', 'enrollment.html');
+          // Try dist/ui first (production), fallback to ../dist/ui (when running from src in tests)
+          let uiPath = join(__dirname, 'ui', 'enrollment.html');
+          try {
+            readFileSync(uiPath, 'utf-8');
+          } catch {
+            uiPath = join(__dirname, '..', 'dist', 'ui', 'enrollment.html');
+          }
           const html = readFileSync(uiPath, 'utf-8');
           res.setHeader('Content-Type', 'text/html');
           res.send(html);
@@ -155,7 +161,13 @@ export class HttpService {
       // IDKit bundle route (locally bundled from installed @worldcoin/idkit-core)
       this.app.get('/idkit-bundle.js', (req: Request, res: Response) => {
         try {
-          const bundlePath = join(__dirname, 'ui', 'idkit-bundle.js');
+          // Try dist/ui first (production), fallback to ../dist/ui (when running from src in tests)
+          let bundlePath = join(__dirname, 'ui', 'idkit-bundle.js');
+          try {
+            readFileSync(bundlePath, 'utf-8');
+          } catch {
+            bundlePath = join(__dirname, '..', 'dist', 'ui', 'idkit-bundle.js');
+          }
           const bundle = readFileSync(bundlePath, 'utf-8');
           res.setHeader('Content-Type', 'application/javascript');
           res.setHeader('Cache-Control', 'public, max-age=3600');
@@ -163,6 +175,26 @@ export class HttpService {
         } catch (error) {
           console.error('IDKit bundle serving error:', error);
           res.status(500).send('/* IDKit bundle unavailable */');
+        }
+      });
+
+      // QR code bundle route (locally bundled qrcode library)
+      this.app.get('/qrcode-bundle.js', (req: Request, res: Response) => {
+        try {
+          // Try dist/ui first (production), fallback to ../dist/ui (when running from src in tests)
+          let bundlePath = join(__dirname, 'ui', 'qrcode-bundle.js');
+          try {
+            readFileSync(bundlePath, 'utf-8');
+          } catch {
+            bundlePath = join(__dirname, '..', 'dist', 'ui', 'qrcode-bundle.js');
+          }
+          const bundle = readFileSync(bundlePath, 'utf-8');
+          res.setHeader('Content-Type', 'application/javascript');
+          res.setHeader('Cache-Control', 'public, max-age=3600');
+          res.send(bundle);
+        } catch (error) {
+          console.error('QR code bundle serving error:', error);
+          res.status(500).send('/* QR code bundle unavailable */');
         }
       });
 

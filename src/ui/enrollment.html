@@ -256,7 +256,7 @@
     async function generateQRCode(text, container) {
       try {
         // Import locally bundled qrcode library
-        const { QRCodeLib } = await import('/qrcode-bundle.js');
+        const { QRCode } = await import('/qrcode-bundle.js');
         
         // Generate standards-compliant QR code
         // Settings per ISO/IEC 18004 standard:
@@ -265,7 +265,7 @@
         // - Scale: 8 pixels per module (high resolution)
         const canvas = document.createElement('canvas');
         
-        await QRCodeLib.toCanvas(canvas, text, {
+        await QRCode.toCanvas(canvas, text, {
           errorCorrectionLevel: 'M',
           margin: 4,
           scale: 8,
@@ -284,6 +284,9 @@
         container.innerHTML = `<div style="padding: 20px; background: #f7fafc; border-radius: 8px;"><a href="${text}" target="_blank" style="color: #667eea; text-decoration: none; font-size: 14px; font-weight: 600;">Open World App on this device</a></div>`;
       }
     }
+    
+    // Expose generateQRCode for testing
+    window.generateQRCode = generateQRCode;
 
     async function handleVerification() {
       const session = window.enrollmentSession;
