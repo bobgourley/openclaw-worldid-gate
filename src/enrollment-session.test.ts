@@ -10,7 +10,8 @@
  * - Hard cutover semantics (legacy action denial)
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
 import {
   SqliteEnrollmentStore,
   SqliteChallengeSessionStore,
@@ -41,10 +42,10 @@ describe("Session-based enrollment", () => {
       await store.createEnrollment(enrollment);
 
       const found = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
-      expect(found).not.toBeNull();
-      expect(found?.sessionId).toBe("session_5f3a9c2e8d1b0a");
-      expect(found?.protocolVersion).toBe("4.0");
-      expect(found?.migrationGeneration).toBe(1);
+      assert.ok(found);
+      assert.strictEqual(found?.sessionId, "session_5f3a9c2e8d1b0a");
+      assert.strictEqual(found?.protocolVersion, "4.0");
+      assert.strictEqual(found?.migrationGeneration, 1);
     });
 
     it("should reject enrollment with duplicate session_id", async () => {
@@ -72,8 +73,9 @@ describe("Session-based enrollment", () => {
         protocolVersion: "4.0",
       };
 
-      await expect(store.createEnrollment(enrollment2)).rejects.toThrow(
-        "Session ID already bound to different enrollment",
+      await assert.rejects(
+        () => store.createEnrollment(enrollment2),
+        /Session ID already bound to different enrollment/
       );
     });
 
@@ -102,8 +104,9 @@ describe("Session-based enrollment", () => {
         protocolVersion: "4.0",
       };
 
-      await expect(store.createEnrollment(enrollment2)).rejects.toThrow(
-        "Enrollment for telegramUserId 12345 and action openclaw-enroll-v2 already exists",
+      await assert.rejects(
+        () => store.createEnrollment(enrollment2),
+        /Enrollment for telegramUserId 12345 and action openclaw-enroll-v2 already exists/
       );
     });
 
@@ -132,8 +135,9 @@ describe("Session-based enrollment", () => {
         protocolVersion: "4.0",
       };
 
-      await expect(store.createEnrollment(enrollment2)).rejects.toThrow(
-        "Enrollment nullifier already exists",
+      await assert.rejects(
+        () => store.createEnrollment(enrollment2),
+        /Enrollment nullifier already exists/
       );
     });
 
@@ -167,8 +171,8 @@ describe("Session-based enrollment", () => {
       const found1 = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
       const found2 = await store.findEnrollment(12345, "other-action", new Date());
 
-      expect(found1?.sessionId).toBe("session_action1");
-      expect(found2?.sessionId).toBe("session_action2");
+      assert.strictEqual(found1?.sessionId, "session_action1");
+      assert.strictEqual(found2?.sessionId, "session_action2");
     });
   });
 
@@ -199,7 +203,7 @@ describe("Session-based enrollment", () => {
       await store.recordSessionNullifierClaim(claim);
 
       const isClaimed = await store.isSessionNullifierClaimed("0xsession_null_1", "openclaw-enroll-v2");
-      expect(isClaimed).toBe(true);
+      assert.strictEqual(isClaimed, true);
     });
 
     it("should reject duplicate session nullifier claim (replay attack)", async () => {
@@ -227,8 +231,9 @@ describe("Session-based enrollment", () => {
 
       await store.recordSessionNullifierClaim(claim);
 
-      await expect(store.recordSessionNullifierClaim(claim)).rejects.toThrow(
-        "Session nullifier already claimed",
+      await assert.rejects(
+        () => store.recordSessionNullifierClaim(claim),
+        /Session nullifier already claimed/
       );
     });
 
@@ -269,8 +274,8 @@ describe("Session-based enrollment", () => {
       const isClaimed1 = await store.isSessionNullifierClaimed("0xsame_null", "openclaw-enroll-v2");
       const isClaimed2 = await store.isSessionNullifierClaimed("0xsame_null", "other-action");
 
-      expect(isClaimed1).toBe(true);
-      expect(isClaimed2).toBe(true);
+      assert.strictEqual(isClaimed1, true);
+      assert.strictEqual(isClaimed2, true);
     });
   });
 
@@ -291,10 +296,10 @@ describe("Session-based enrollment", () => {
       await store.createEnrollment(enrollment);
 
       const revoked = await store.revokeEnrollment("0xabc123", "user");
-      expect(revoked).toBe(true);
+      assert.strictEqual(revoked, true);
 
       const found = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
-      expect(found).toBeNull();
+      assert.strictEqual(found, null);
     });
 
     it("should not find revoked enrollment", async () => {
@@ -314,7 +319,7 @@ describe("Session-based enrollment", () => {
       await store.revokeEnrollment("0xabc123", "admin");
 
       const found = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
-      expect(found).toBeNull();
+      assert.strictEqual(found, null);
     });
 
     it("should prevent double revocation", async () => {
@@ -333,10 +338,10 @@ describe("Session-based enrollment", () => {
       await store.createEnrollment(enrollment);
 
       const revoked1 = await store.revokeEnrollment("0xabc123", "user");
-      expect(revoked1).toBe(true);
+      assert.strictEqual(revoked1, true);
 
       const revoked2 = await store.revokeEnrollment("0xabc123", "user");
-      expect(revoked2).toBe(false);
+      assert.strictEqual(revoked2, false);
     });
 
     it("should reactivate revoked enrollment", async () => {
@@ -356,11 +361,11 @@ describe("Session-based enrollment", () => {
       await store.revokeEnrollment("0xabc123", "user");
 
       const reactivated = await store.reactivateEnrollment("0xabc123", "admin");
-      expect(reactivated).toBe(true);
+      assert.strictEqual(reactivated, true);
 
       const found = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
-      expect(found).not.toBeNull();
-      expect(found?.sessionId).toBe("session_test");
+      assert.ok(found);
+      assert.strictEqual(found?.sessionId, "session_test");
     });
 
     it("should not reactivate active enrollment", async () => {
@@ -379,7 +384,7 @@ describe("Session-based enrollment", () => {
       await store.createEnrollment(enrollment);
 
       const reactivated = await store.reactivateEnrollment("0xabc123", "admin");
-      expect(reactivated).toBe(false);
+      assert.strictEqual(reactivated, false);
     });
 
     it("should preserve session_id binding through revoke/reactivate cycle", async () => {
@@ -409,8 +414,9 @@ describe("Session-based enrollment", () => {
         protocolVersion: "4.0",
       };
 
-      await expect(store.createEnrollment(enrollment2)).rejects.toThrow(
-        "Session ID already bound to different enrollment",
+      await assert.rejects(
+        () => store.createEnrollment(enrollment2),
+        /Session ID already bound to different enrollment/
       );
     });
   });
@@ -431,8 +437,8 @@ describe("Session-based enrollment", () => {
       await store.createEnrollment(legacyEnrollment);
 
       const found = await store.findEnrollment(12345, "openclaw-verify", new Date());
-      expect(found).not.toBeNull();
-      expect(found?.sessionId).toBeNull();
+      assert.ok(found);
+      assert.strictEqual(found?.sessionId, null);
     });
 
     it("should isolate legacy and new actions per user", async () => {
@@ -464,11 +470,11 @@ describe("Session-based enrollment", () => {
       const foundLegacy = await store.findEnrollment(12345, "openclaw-verify", new Date());
       const foundNew = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
 
-      expect(foundLegacy?.nullifier).toBe("0xlegacy");
-      expect(foundLegacy?.sessionId).toBeNull();
+      assert.strictEqual(foundLegacy?.nullifier, "0xlegacy");
+      assert.strictEqual(foundLegacy?.sessionId, null);
 
-      expect(foundNew?.nullifier).toBe("0xnew");
-      expect(foundNew?.sessionId).toBe("session_new");
+      assert.strictEqual(foundNew?.nullifier, "0xnew");
+      assert.strictEqual(foundNew?.sessionId, "session_new");
     });
   });
 
@@ -487,11 +493,11 @@ describe("Session-based enrollment", () => {
       await store.createSession(session);
 
       const consumed = await store.consumeSession("nonce123");
-      expect(consumed).not.toBeNull();
-      expect(consumed?.telegramUserId).toBe(12345);
+      assert.ok(consumed);
+      assert.strictEqual(consumed?.telegramUserId, 12345);
 
       const consumed2 = await store.consumeSession("nonce123");
-      expect(consumed2).toBeNull();
+      assert.strictEqual(consumed2, null);
     });
 
     it("should reject expired challenge session", async () => {
@@ -508,7 +514,7 @@ describe("Session-based enrollment", () => {
       await store.createSession(session);
 
       const consumed = await store.consumeSession("nonce_expired");
-      expect(consumed).toBeNull();
+      assert.strictEqual(consumed, null);
     });
   });
 
@@ -530,7 +536,7 @@ describe("Session-based enrollment", () => {
       await store.createEnrollment(enrollment);
 
       const found = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
-      expect(found?.migrationGeneration).toBe(2);
+      assert.strictEqual(found?.migrationGeneration, 2);
     });
 
     it("should default migration generation to 1", async () => {
@@ -549,7 +555,7 @@ describe("Session-based enrollment", () => {
       await store.createEnrollment(enrollment);
 
       const found = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
-      expect(found?.migrationGeneration).toBe(1);
+      assert.strictEqual(found?.migrationGeneration, 1);
     });
   });
 });
