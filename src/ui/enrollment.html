@@ -611,19 +611,125 @@
     function handleProofError(errorCode) {
       console.error('World App error:', errorCode);
       let message = 'World App verification failed. Please try again.';
+      let category = 'generic';
       
-      // Map specific error codes to user-friendly messages
+      // Map error codes to user-friendly messages
+      // Based on https://docs.world.org/world-id/idkit/error-codes.md
+      
+      // User-initiated cancellation
       if (errorCode === 'user_rejected') {
         message = 'Verification was cancelled. Please try again when ready.';
+        category = 'user_cancelled';
       } else if (errorCode === 'verification_rejected') {
         message = 'Verification was rejected by World App. Please try again.';
-      } else if (errorCode === 'credential_unavailable') {
-        message = 'Required World ID credential is not available. Please verify your account in World App.';
-      } else if (errorCode === 'connection_failed') {
-        message = 'Connection to World App failed. Please check your connection and try again.';
+        category = 'rejected';
       } else if (errorCode === 'timeout') {
         message = 'Verification timed out. Please try again.';
+        category = 'timeout';
       }
+      
+      // Credential/identity issues
+      else if (errorCode === 'credential_unavailable') {
+        message = 'Required World ID credential is not available. Please verify your account in World App.';
+        category = 'credential';
+      } else if (errorCode === 'world_id_4_not_available') {
+        message = 'World ID 4.0 credential is not available. Please update your World App.';
+        category = 'credential';
+      } else if (errorCode === 'world_id_3_not_available') {
+        message = 'World ID 3.0 credential is not available. Please contact support.';
+        category = 'credential';
+      }
+      
+      // Session/timing issues
+      else if (errorCode === 'rp_signature_expired') {
+        message = 'Verification session expired. Please request a new verification link from the bot.';
+        category = 'expired';
+      } else if (errorCode === 'timestamp_too_old' || errorCode === 'timestamp_too_far_in_future') {
+        message = 'Verification session is no longer valid. Please request a new verification link.';
+        category = 'timestamp';
+      } else if (errorCode === 'invalid_timestamp') {
+        message = 'Verification session has an invalid timestamp. Please request a new verification link.';
+        category = 'timestamp';
+      }
+      
+      // Replay/duplicate issues
+      else if (errorCode === 'nullifier_replayed') {
+        message = 'This verification has already been completed. If you need to re-enroll, please contact an admin.';
+        category = 'replay';
+      } else if (errorCode === 'duplicate_nonce') {
+        message = 'Verification session has already been used. Please request a new verification link.';
+        category = 'replay';
+      }
+      
+      // RP configuration issues
+      else if (errorCode === 'invalid_rp_signature') {
+        message = 'Verification configuration error. Please contact support with code: invalid_rp_signature';
+        category = 'config';
+      } else if (errorCode === 'unknown_rp' || errorCode === 'inactive_rp') {
+        message = 'Service configuration error. Please contact support with code: ' + errorCode;
+        category = 'rp';
+      } else if (errorCode === 'invalid_rp_id_format') {
+        message = 'Service configuration error. Please contact support with code: invalid_rp_id_format';
+        category = 'config';
+      }
+      
+      // Network/connection
+      else if (errorCode === 'connection_failed') {
+        message = 'Connection to World App failed. Please check your connection and try again.';
+        category = 'network';
+      } else if (errorCode === 'unexpected_response') {
+        message = 'Unexpected response from World App. Please try again.';
+        category = 'network';
+      }
+      
+      // Rate limiting
+      else if (errorCode === 'max_verifications_reached') {
+        message = 'Maximum verifications reached. Please try again later.';
+        category = 'rate_limit';
+      }
+      
+      // Technical errors
+      else if (errorCode === 'inclusion_proof_pending' || errorCode === 'inclusion_proof_failed') {
+        message = 'Verification processing error. Please try again in a moment.';
+        category = 'inclusion_proof';
+      } else if (errorCode === 'malformed_request') {
+        message = 'Verification request error. Please contact support with code: malformed_request';
+        category = 'malformed';
+      } else if (errorCode === 'invalid_network') {
+        message = 'Network configuration mismatch. Please contact support with code: invalid_network';
+        category = 'config';
+      } else if (errorCode === 'user_presence_failed') {
+        message = 'User presence check failed. Please try again.';
+        category = 'presence';
+      } else if (errorCode === 'failed_by_host_app') {
+        message = 'Verification failed during processing. Please try again.';
+        category = 'host_app';
+      } else if (errorCode === 'feature_unavailable') {
+        message = 'Requested feature is not available. Please contact support.';
+        category = 'feature';
+      } else if (errorCode === 'identity_attributes_not_matched') {
+        message = 'Identity attributes did not match requirements. Please contact support.';
+        category = 'identity';
+      } else if (errorCode === 'generic_error') {
+        message = 'An unknown error occurred. Please try again or contact support.';
+        category = 'generic';
+      } else if (errorCode === 'cancelled') {
+        message = 'Verification was cancelled. Please try again when ready.';
+        category = 'user_cancelled';
+      }
+      
+      // Unknown error code (safely log unmapped codes)
+      else {
+        category = 'unmapped_' + (errorCode || 'unknown').replace(/[^a-z0-9_]/gi, '');
+        message = 'Verification failed. Please try again or contact support with code: ' + errorCode;
+      }
+      
+      // Privacy-safe structured error logging (no PII, no proof data)
+      console.error('World App verification error:', {
+        category: category,
+        errorCode: errorCode,
+        timestamp: new Date().toISOString(),
+      });
       
       showError(message);
       buttonEl.disabled = false;
