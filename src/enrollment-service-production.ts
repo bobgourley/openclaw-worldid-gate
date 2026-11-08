@@ -299,9 +299,35 @@ export class EnrollmentService {
         ON enrollments(nullifier)
       `);
 
+      // Partial unique index: nullifier+action unique for active enrollments only
+      // Prevents cross-account nullifier theft while allowing historical revoked duplicates
+      this.db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_enrollments_nullifier_action_unique
+        ON enrollments(nullifier, action)
+        WHERE revoked = 0
+      `);
+
       this.db.exec(`
         CREATE INDEX IF NOT EXISTS idx_enrollments_revoked
         ON enrollments(revoked)
+      `);
+
+      // Independent generation fence table for durable revocation markers
+      // Survives no-enrollment revoke, restoration, restarts, same-second ordering
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS generation_fences (
+          telegram_user_id INTEGER NOT NULL,
+          action TEXT NOT NULL,
+          fence_generation INTEGER NOT NULL,
+          fence_timestamp INTEGER NOT NULL,
+          fence_iso TEXT NOT NULL,
+          PRIMARY KEY (telegram_user_id, action)
+        ) STRICT
+      `);
+
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_generation_fences_generation
+        ON generation_fences(fence_generation)
       `);
 
       // Global generation counter for monotonic event ordering
@@ -567,7 +593,18 @@ export class EnrollmentService {
         throw new Error('Challenge account mismatch in transaction');
       }
 
-      // Re-check for per-account revocation and generation (race protection)
+      // Check generation fence (independent of enrollment state)
+      const fenceCheck = this.db.prepare(`
+        SELECT fence_generation
+        FROM generation_fences
+        WHERE telegram_user_id = ? AND action = ?
+      `).get(authenticatedUser.id, this.action) as any;
+
+      if (fenceCheck && recheckRow.generation < fenceCheck.fence_generation) {
+        throw new Error('Challenge predates revocation fence (fresh verification required)');
+      }
+
+      // Re-check for per-account revocation and generation (legacy check, defense-in-depth)
       const txAccountCheck = this.db.prepare(`
         SELECT revoked, revoked_at_seconds, revoked_generation FROM enrollments
         WHERE telegram_user_id = ? AND action = ? AND revoked = 1
@@ -575,6 +612,17 @@ export class EnrollmentService {
 
       if (txAccountCheck && recheckRow.generation < txAccountCheck.revoked_generation) {
         throw new Error('Challenge predates revocation in transaction');
+      }
+
+      // Check nullifier ownership (cross-account protection)
+      const nullifierOwnerCheck = this.db.prepare(`
+        SELECT telegram_user_id
+        FROM enrollments
+        WHERE nullifier = ? AND action = ? AND revoked = 0
+      `).get(verificationResult.nullifier, this.action) as any;
+
+      if (nullifierOwnerCheck && nullifierOwnerCheck.telegram_user_id !== authenticatedUser.id) {
+        throw new Error('Nullifier already enrolled to different account (one-human binding enforced)');
       }
 
       // Create or restore enrollment
@@ -597,9 +645,9 @@ export class EnrollmentService {
             nullifier = excluded.nullifier,
             expires_at = excluded.expires_at,
             created_at = excluded.created_at,
-            revoked = excluded.revoked,
-            revoked_at = excluded.revoked_at,
-            revoked_at_seconds = excluded.revoked_at_seconds
+            revoked = 0,
+            revoked_at = NULL,
+            revoked_at_seconds = NULL
         `);
 
         upsertStmt.run(
@@ -611,6 +659,10 @@ export class EnrollmentService {
           enrollment.revoked
         );
       } catch (error: any) {
+        // Catch unique constraint violation on (nullifier, action)
+        if (error.message && error.message.includes('UNIQUE constraint failed')) {
+          throw new Error('Nullifier ownership conflict: already bound to different account');
+        }
         throw error;
       }
 
@@ -699,34 +751,54 @@ export class EnrollmentService {
    * @returns True if enrollment found and revoked, false if not found
    */
   async revokeEnrollment(telegramUserId: number): Promise<boolean> {
-    const now = this.clock.nowSeconds();
-    const generation = this.getNextGeneration();
-    
-    const stmt = this.db.prepare(`
-      UPDATE enrollments
-      SET revoked = 1, revoked_at = ?, revoked_at_seconds = ?, revoked_generation = ?
-      WHERE telegram_user_id = ? AND action = ? AND revoked = 0
-    `);
+    // Atomic transaction: fence + enrollment + challenges
+    const transaction = this.db.transaction(() => {
+      const now = this.clock.nowSeconds();
+      const generation = this.getNextGeneration();
+      
+      // 1. UPSERT durable generation fence (creates marker even if no enrollment exists)
+      const fenceStmt = this.db.prepare(`
+        INSERT INTO generation_fences (telegram_user_id, action, fence_generation, fence_timestamp, fence_iso)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(telegram_user_id, action) DO UPDATE SET
+          fence_generation = excluded.fence_generation,
+          fence_timestamp = excluded.fence_timestamp,
+          fence_iso = excluded.fence_iso
+      `);
+      
+      fenceStmt.run(telegramUserId, this.action, generation, now, this.clock.nowISO());
+      
+      // 2. Update enrollment if exists (mark revoked with generation)
+      const enrollmentStmt = this.db.prepare(`
+        UPDATE enrollments
+        SET revoked = 1, revoked_at = ?, revoked_at_seconds = ?, revoked_generation = ?
+        WHERE telegram_user_id = ? AND action = ? AND revoked = 0
+      `);
+      
+      const enrollmentResult = enrollmentStmt.run(this.clock.nowISO(), now, generation, telegramUserId, this.action);
+      const hadEnrollment = enrollmentResult.changes > 0;
+      
+      // 3. Delete all pending challenges (atomic with fence and enrollment)
+      const challengeStmt = this.db.prepare(`
+        DELETE FROM challenge_sessions
+        WHERE telegram_user_id = ? AND action = ?
+      `);
+      
+      challengeStmt.run(telegramUserId, this.action);
+      
+      return hadEnrollment;
+    });
 
-    const result = stmt.run(this.clock.nowISO(), now, generation, telegramUserId, this.action);
-    const wasRevoked = result.changes > 0;
+    const hadEnrollment = transaction();
 
-    // Delete all pending challenges for this user to prevent late completion
-    // Essential for safety: prevents old in-flight proofs from re-enrolling after revocation
-    this.db.prepare(`
-      DELETE FROM challenge_sessions
-      WHERE telegram_user_id = ? AND action = ?
-    `).run(telegramUserId, this.action);
-
-    // DISPLAY-ONLY: Remove member tag after revocation
-    // Tag removal is best-effort and does not affect revocation
-    if (wasRevoked && this.memberTagManager) {
+    // DISPLAY-ONLY: Remove member tag after revocation (best-effort, non-blocking)
+    if (hadEnrollment && this.memberTagManager) {
       this.memberTagManager.removeTagFromMember(telegramUserId).catch(error => {
         console.error('[MemberTag] Failed to remove tag after revocation:', error);
       });
     }
 
-    return wasRevoked;
+    return hadEnrollment;
   }
 
   /**

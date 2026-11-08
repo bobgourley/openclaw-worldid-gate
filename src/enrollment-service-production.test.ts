@@ -505,7 +505,7 @@ describe('EnrollmentService Production', () => {
       assert.equal(enrollment.revoked, false);
     });
 
-    it('allows multiple accounts to use same nullifier', async () => {
+    it('prevents cross-account nullifier theft (ownership protection)', async () => {
       const userId1 = 12345;
       const userId2 = 67890;
       const sharedNullifier = '77777777777777777777';
@@ -525,7 +525,7 @@ describe('EnrollmentService Production', () => {
       });
       assert.equal(result1.success, true);
 
-      // Second account enrolls with SAME nullifier
+      // Second account attempts to enroll with SAME nullifier (should fail)
       const initData2 = createValidInitData(userId2, TEST_BOT_TOKEN);
       const challenge2 = await service.createChallenge(initData2);
       mockClient.setResponse(challenge2.signedChallenge.nonce, {
@@ -538,23 +538,25 @@ describe('EnrollmentService Production', () => {
         initData: initData2,
         idkitResult: createIDKitResult(challenge2.signedChallenge.nonce, TEST_ACTION, challenge2.signedChallenge.signalHash),
       });
-      assert.equal(result2.success, true);
+      assert.equal(result2.success, false, 'Cross-account nullifier theft must be prevented');
+      assert.match(result2.error || '', /different account|ownership/i, 'Error must mention ownership conflict');
 
-      // Both accounts should be enrolled
+      // First account should still be enrolled
       const enrollment1 = await service.findEnrollment(userId1);
-      const enrollment2 = await service.findEnrollment(userId2);
       assert.ok(enrollment1);
-      assert.ok(enrollment2);
       assert.equal(enrollment1.nullifier, sharedNullifier);
-      assert.equal(enrollment2.nullifier, sharedNullifier);
+
+      // Second account should have no enrollment
+      const enrollment2 = await service.findEnrollment(userId2);
+      assert.equal(enrollment2, null, 'Second account must not be enrolled');
     });
 
-    it('revokes only specific account, not others with same nullifier', async () => {
+    it('allows nullifier reuse after revocation (historical ownership transfer)', async () => {
       const userId1 = 12345;
       const userId2 = 67890;
       const sharedNullifier = '66666666666666666666';
 
-      // Both accounts enroll with same nullifier
+      // First account enrolls
       const initData1 = createValidInitData(userId1, TEST_BOT_TOKEN);
       const challenge1 = await service.createChallenge(initData1);
       mockClient.setResponse(challenge1.signedChallenge.nonce, {
@@ -568,6 +570,11 @@ describe('EnrollmentService Production', () => {
         idkitResult: createIDKitResult(challenge1.signedChallenge.nonce, TEST_ACTION, challenge1.signedChallenge.signalHash),
       });
 
+      // Revoke first account (releases nullifier)
+      const revoked = await service.revokeEnrollment(userId1);
+      assert.equal(revoked, true);
+
+      // Second account can now enroll with same nullifier
       const initData2 = createValidInitData(userId2, TEST_BOT_TOKEN);
       const challenge2 = await service.createChallenge(initData2);
       mockClient.setResponse(challenge2.signedChallenge.nonce, {
@@ -576,24 +583,22 @@ describe('EnrollmentService Production', () => {
         issuerSchemaId: 1,
         expiresAtMin: fakeClock.nowSeconds() + 86400,
       });
-      await service.completeEnrollment({
+      const result2 = await service.completeEnrollment({
         initData: initData2,
         idkitResult: createIDKitResult(challenge2.signedChallenge.nonce, TEST_ACTION, challenge2.signedChallenge.signalHash),
       });
+      assert.equal(result2.success, true, 'Should allow enrollment after revocation');
 
-      // Revoke only first account
-      const revoked = await service.revokeEnrollment(userId1);
-      assert.equal(revoked, true);
-
-      // First account should be revoked
+      // First account should still be revoked
       const enrollment1 = await service.findEnrollment(userId1);
       assert.ok(enrollment1);
       assert.equal(enrollment1.revoked, true);
 
-      // Second account should still be active
+      // Second account should be active with nullifier
       const enrollment2 = await service.findEnrollment(userId2);
       assert.ok(enrollment2);
       assert.equal(enrollment2.revoked, false);
+      assert.equal(enrollment2.nullifier, sharedNullifier);
     });
 
     it('returns false when revoking non-existent enrollment', async () => {
