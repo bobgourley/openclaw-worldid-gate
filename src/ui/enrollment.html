@@ -33,6 +33,39 @@
       padding: 24px 20px;
       text-align: center;
     }
+    
+    @media (max-height: 400px) {
+      .container {
+        padding: 16px 20px;
+      }
+      h1 {
+        font-size: 20px;
+        margin-bottom: 6px;
+      }
+      .subtitle {
+        font-size: 13px;
+        margin-bottom: 12px;
+      }
+      #status {
+        padding: 10px;
+        margin-bottom: 12px;
+        font-size: 12px;
+      }
+      .button {
+        padding: 10px 20px;
+        font-size: 14px;
+        margin-top: 10px;
+      }
+      #qrCode {
+        max-width: 160px;
+        max-height: 160px;
+      }
+      #connectorLink {
+        font-size: 12px;
+        padding: 8px 16px;
+        margin-top: 8px;
+      }
+    }
     h1 {
       font-size: 24px;
       font-weight: 700;
@@ -654,7 +687,7 @@
       
       // Replay/duplicate issues
       else if (errorCode === 'nullifier_replayed') {
-        message = 'This verification has already been completed. If you need to re-enroll, please contact an admin.';
+        message = 'World ID rejected this verification request as a replay. Request a fresh verification link from the bot. If this persists, share this error code with an admin.';
         category = 'replay';
       } else if (errorCode === 'duplicate_nonce') {
         message = 'Verification session has already been used. Please request a new verification link.';

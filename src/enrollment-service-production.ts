@@ -24,6 +24,7 @@ import type {
   ExpectedVerificationContext,
 } from './worldid-types.js';
 import type { MemberTagManager } from './member-tag-manager.js';
+import type { DiagnosticLogger } from './diagnostic-logger.js';
 
 /**
  * Clock interface for deterministic testing.
@@ -95,6 +96,9 @@ export interface EnrollmentServiceConfig {
    * Tags are display-only UX, NOT access control mechanism.
    */
   memberTagManager?: MemberTagManager;
+  
+  /** Diagnostic logger (optional, for privacy-safe operational logging) */
+  diagnosticLogger?: DiagnosticLogger;
 }
 
 /**
@@ -153,6 +157,7 @@ export class EnrollmentService {
   private enrollmentTtlSeconds: number;
   private clock: Clock;
   private memberTagManager?: MemberTagManager;
+  private diagnosticLogger?: DiagnosticLogger;
 
   constructor(config: EnrollmentServiceConfig) {
     // Validate stable action scope
@@ -185,6 +190,7 @@ export class EnrollmentService {
     this.enrollmentTtlSeconds = enrollmentTtl;
     this.clock = config.clock ?? new SystemClock();
     this.memberTagManager = config.memberTagManager;
+    this.diagnosticLogger = config.diagnosticLogger;
 
     this.telegramConfig = {
       botToken: config.telegramBotToken,
@@ -549,6 +555,14 @@ export class EnrollmentService {
    * @returns Enrollment result
    */
   async completeEnrollment(request: CompleteEnrollmentRequest): Promise<CompleteEnrollmentResult> {
+    // Generate correlation ID for this enrollment attempt (random, not derived from identity)
+    const correlationId = this.diagnosticLogger?.generateCorrelationId();
+    
+    // Log callback arrival
+    if (correlationId) {
+      this.diagnosticLogger?.logCallbackReceived(correlationId);
+    }
+    
     // Validate input structure (fail-closed boundary)
     if (!request || typeof request !== 'object') {
       return { success: false, error: 'Invalid request: expected object' };
@@ -621,12 +635,29 @@ export class EnrollmentService {
 
     // Step 5: Verify proof (async HTTP call, outside transaction)
     let verificationResult: BackendVerificationResult;
+    const verifyStart = Date.now();
+    
+    if (correlationId) {
+      this.diagnosticLogger?.logUpstreamVerifyStarted(correlationId);
+    }
+    
     try {
       verificationResult = await this.verificationClient.verify(
         request.idkitResult,
         expectedContext
       );
+      
+      const verifyDuration = Date.now() - verifyStart;
+      if (correlationId && verificationResult.success) {
+        this.diagnosticLogger?.logUpstreamVerifySuccess(correlationId, verifyDuration);
+      } else if (correlationId && !verificationResult.success) {
+        this.diagnosticLogger?.logUpstreamVerifyFailed(correlationId, new Error('Proof verification failed'), verifyDuration);
+      }
     } catch (error) {
+      const verifyDuration = Date.now() - verifyStart;
+      if (correlationId) {
+        this.diagnosticLogger?.logUpstreamVerifyFailed(correlationId, error, verifyDuration);
+      }
       // Network/service errors do not consume challenge
       return {
         success: false,
@@ -635,6 +666,9 @@ export class EnrollmentService {
     }
 
     if (!verificationResult.success || !verificationResult.nullifier) {
+      if (correlationId) {
+        this.diagnosticLogger?.logCompletionRejected(correlationId, 'proof_error');
+      }
       return {
         success: false,
         error: 'World ID proof verification failed',
@@ -809,6 +843,11 @@ export class EnrollmentService {
         // Tag failure is logged but does not affect enrollment
         console.error('[MemberTag] Failed to apply tag (enrollment still valid):', error);
       });
+    }
+
+    // Log successful completion
+    if (correlationId) {
+      this.diagnosticLogger?.logCompletionAccepted(correlationId);
     }
 
     return {

@@ -414,9 +414,8 @@ test.describe('Layout Assertions with Screenshots', () => {
     const metrics = await captureLayoutMetrics(page, '667x375');
     expect(metrics.scroll.scrollWidth).toBeLessThanOrEqual(667 + 2);
     expect(metrics.connectorLink).not.toBeNull();
-    // KNOWN ISSUE: Button extends 8px beyond viewport in landscape (383px vs 375px)
-    // This confirms user's suspicion that normal viewports require scrolling
-    expect(metrics.connectorLink!.y + metrics.connectorLink!.height).toBeGreaterThan(375);
+    // STRICT: Button must fit entirely within viewport, no scrolling required
+    expect(metrics.connectorLink!.y + metrics.connectorLink!.height).toBeLessThanOrEqual(375);
     expect(metrics.qrCode).not.toBeNull();
   });
 
