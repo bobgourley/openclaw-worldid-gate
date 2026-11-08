@@ -299,21 +299,45 @@ export class EnrollmentService {
         ON enrollments(nullifier)
       `);
 
-      // Partial unique index: nullifier+action unique for active enrollments only
-      // Prevents cross-account nullifier theft while allowing historical revoked duplicates
-      this.db.exec(`
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_enrollments_nullifier_action_unique
-        ON enrollments(nullifier, action)
-        WHERE revoked = 0
-      `);
-
       this.db.exec(`
         CREATE INDEX IF NOT EXISTS idx_enrollments_revoked
         ON enrollments(revoked)
       `);
 
+      // Global generation counter for monotonic event ordering
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS generation_counter (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          next_generation INTEGER NOT NULL DEFAULT 1
+        ) STRICT
+      `);
+
+      this.db.exec(`INSERT OR IGNORE INTO generation_counter (id, next_generation) VALUES (1, 1)`);
+
+      this.setSchemaVersion(1);
+    }
+
+    if (currentVersion < 2) {
+      // v2: Immutable nullifier ownership and durable revocation fences
+      
+      // Permanent nullifier ownership claims (never released)
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS nullifier_claims (
+          nullifier TEXT NOT NULL,
+          action TEXT NOT NULL,
+          telegram_user_id INTEGER NOT NULL,
+          claimed_at INTEGER NOT NULL,
+          claimed_at_iso TEXT NOT NULL,
+          PRIMARY KEY (nullifier, action)
+        ) STRICT
+      `);
+
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_nullifier_claims_user
+        ON nullifier_claims(telegram_user_id, action)
+      `);
+
       // Independent generation fence table for durable revocation markers
-      // Survives no-enrollment revoke, restoration, restarts, same-second ordering
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS generation_fences (
           telegram_user_id INTEGER NOT NULL,
@@ -330,17 +354,48 @@ export class EnrollmentService {
         ON generation_fences(fence_generation)
       `);
 
-      // Global generation counter for monotonic event ordering
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS generation_counter (
-          id INTEGER PRIMARY KEY CHECK (id = 1),
-          next_generation INTEGER NOT NULL DEFAULT 1
-        ) STRICT
-      `);
+      // Backfill nullifier_claims from existing enrollments
+      // Fail closed on ambiguous historical ownership
+      const backfillTransaction = this.db.transaction(() => {
+        const existingNullifiers = this.db.prepare(`
+          SELECT nullifier, action, telegram_user_id, 
+                 MIN(created_at) as first_claim_at,
+                 COUNT(DISTINCT telegram_user_id) as user_count
+          FROM enrollments
+          WHERE nullifier IS NOT NULL AND nullifier != ''
+          GROUP BY nullifier, action
+        `).all() as any[];
 
-      this.db.exec(`INSERT OR IGNORE INTO generation_counter (id, next_generation) VALUES (1, 1)`);
+        for (const row of existingNullifiers) {
+          if (row.user_count > 1) {
+            throw new Error(
+              `MIGRATION FAILED: Ambiguous nullifier ownership.\n` +
+              `Nullifier ${row.nullifier.substring(0, 10)}... for action ${row.action} ` +
+              `claimed by ${row.user_count} users.\n` +
+              `Historical data corruption detected. Manual resolution required.`
+            );
+          }
 
-      this.setSchemaVersion(1);
+          this.db.prepare(`
+            INSERT INTO nullifier_claims (nullifier, action, telegram_user_id, claimed_at, claimed_at_iso)
+            VALUES (?, ?, ?, ?, ?)
+          `).run(
+            row.nullifier,
+            row.action,
+            row.telegram_user_id,
+            Math.floor(Date.parse(row.first_claim_at) / 1000),
+            row.first_claim_at
+          );
+        }
+      });
+
+      try {
+        backfillTransaction();
+      } catch (error: any) {
+        throw new Error(`Schema v2 migration failed: ${error.message}`);
+      }
+
+      this.setSchemaVersion(2);
     }
   }
 
@@ -614,15 +669,36 @@ export class EnrollmentService {
         throw new Error('Challenge predates revocation in transaction');
       }
 
-      // Check nullifier ownership (cross-account protection)
+      // Check immutable nullifier ownership (permanent claim)
       const nullifierOwnerCheck = this.db.prepare(`
         SELECT telegram_user_id
-        FROM enrollments
-        WHERE nullifier = ? AND action = ? AND revoked = 0
+        FROM nullifier_claims
+        WHERE nullifier = ? AND action = ?
       `).get(verificationResult.nullifier, this.action) as any;
 
       if (nullifierOwnerCheck && nullifierOwnerCheck.telegram_user_id !== authenticatedUser.id) {
-        throw new Error('Nullifier already enrolled to different account (one-human binding enforced)');
+        throw new Error('Nullifier permanently bound to different account (immutable one-human binding)');
+      }
+
+      // Atomically claim nullifier on first use
+      if (!nullifierOwnerCheck) {
+        try {
+          this.db.prepare(`
+            INSERT INTO nullifier_claims (nullifier, action, telegram_user_id, claimed_at, claimed_at_iso)
+            VALUES (?, ?, ?, ?, ?)
+          `).run(
+            verificationResult.nullifier,
+            this.action,
+            authenticatedUser.id,
+            txNow,
+            this.clock.nowISO()
+          );
+        } catch (error: any) {
+          if (error.message && error.message.includes('UNIQUE constraint failed')) {
+            throw new Error('Nullifier ownership race: already claimed by another account');
+          }
+          throw error;
+        }
       }
 
       // Create or restore enrollment
@@ -812,26 +888,60 @@ export class EnrollmentService {
    * Direct enrollment for testing (bypasses full verification flow).
    * DO NOT use in production.
    */
+  /**
+   * Direct enrollment bypass (test utility only).
+   * 
+   * WARNING: Bypasses authentication, challenge validation, and World ID verification.
+   * RESTRICTED: Only available in test environments (NODE_ENV=test).
+   * Production callers must use completeEnrollment() with proper authentication.
+   * 
+   * @internal
+   */
   async directEnroll(params: {
     telegramUserId: number;
     nullifier: string;
     credential: { credential_type: string };
   }): Promise<void> {
+    // Fail closed in production
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('directEnroll is test-only and not available in production');
+    }
+
     const now = this.clock.nowSeconds();
     const expiresAt = now + this.enrollmentTtlSeconds;
 
-    const stmt = this.db.prepare(`
-      INSERT INTO enrollments (telegram_user_id, action, nullifier, expires_at, created_at, revoked, revoked_at, revoked_at_seconds)
-      VALUES (?, ?, ?, ?, ?, 0, NULL, NULL)
-      ON CONFLICT (telegram_user_id, action) DO UPDATE SET
-        nullifier = excluded.nullifier,
-        expires_at = excluded.expires_at,
-        created_at = excluded.created_at,
-        revoked = 0,
-        revoked_at = NULL,
-        revoked_at_seconds = NULL
-    `);
+    // Check and claim nullifier ownership atomically
+    const transaction = this.db.transaction(() => {
+      const ownerCheck = this.db.prepare(`
+        SELECT telegram_user_id FROM nullifier_claims WHERE nullifier = ? AND action = ?
+      `).get(params.nullifier, this.action) as any;
 
-    stmt.run(params.telegramUserId, this.action, params.nullifier, expiresAt, now);
+      if (ownerCheck && ownerCheck.telegram_user_id !== params.telegramUserId) {
+        throw new Error('Nullifier already claimed by different user');
+      }
+
+      if (!ownerCheck) {
+        this.db.prepare(`
+          INSERT INTO nullifier_claims (nullifier, action, telegram_user_id, claimed_at, claimed_at_iso)
+          VALUES (?, ?, ?, ?, ?)
+        `).run(params.nullifier, this.action, params.telegramUserId, now, this.clock.nowISO());
+      }
+
+      const stmt = this.db.prepare(`
+        INSERT INTO enrollments (telegram_user_id, action, nullifier, expires_at, created_at, revoked, revoked_at, revoked_at_seconds)
+        VALUES (?, ?, ?, ?, ?, 0, NULL, NULL)
+        ON CONFLICT (telegram_user_id, action) DO UPDATE SET
+          nullifier = excluded.nullifier,
+          expires_at = excluded.expires_at,
+          created_at = excluded.created_at,
+          revoked = 0,
+          revoked_at = NULL,
+          revoked_at_seconds = NULL
+      `);
+
+      stmt.run(params.telegramUserId, this.action, params.nullifier, expiresAt, this.clock.nowISO());
+    });
+
+    transaction();
   }
 }

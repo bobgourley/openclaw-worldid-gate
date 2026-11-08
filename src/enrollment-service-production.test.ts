@@ -551,7 +551,7 @@ describe('EnrollmentService Production', () => {
       assert.equal(enrollment2, null, 'Second account must not be enrolled');
     });
 
-    it('allows nullifier reuse after revocation (historical ownership transfer)', async () => {
+    it('prevents nullifier reuse after revocation (immutable ownership)', async () => {
       const userId1 = 12345;
       const userId2 = 67890;
       const sharedNullifier = '66666666666666666666';
@@ -570,11 +570,11 @@ describe('EnrollmentService Production', () => {
         idkitResult: createIDKitResult(challenge1.signedChallenge.nonce, TEST_ACTION, challenge1.signedChallenge.signalHash),
       });
 
-      // Revoke first account (releases nullifier)
+      // Revoke first account (nullifier remains permanently bound)
       const revoked = await service.revokeEnrollment(userId1);
       assert.equal(revoked, true);
 
-      // Second account can now enroll with same nullifier
+      // Second account CANNOT enroll with same nullifier (immutable ownership)
       const initData2 = createValidInitData(userId2, TEST_BOT_TOKEN);
       const challenge2 = await service.createChallenge(initData2);
       mockClient.setResponse(challenge2.signedChallenge.nonce, {
@@ -587,18 +587,32 @@ describe('EnrollmentService Production', () => {
         initData: initData2,
         idkitResult: createIDKitResult(challenge2.signedChallenge.nonce, TEST_ACTION, challenge2.signedChallenge.signalHash),
       });
-      assert.equal(result2.success, true, 'Should allow enrollment after revocation');
+      assert.equal(result2.success, false, 'Must prevent nullifier theft after revocation');
+      assert.match(result2.error || '', /different account|immutable/i, 'Error must mention immutable binding');
 
       // First account should still be revoked
       const enrollment1 = await service.findEnrollment(userId1);
       assert.ok(enrollment1);
       assert.equal(enrollment1.revoked, true);
 
-      // Second account should be active with nullifier
+      // Second account should have no enrollment
       const enrollment2 = await service.findEnrollment(userId2);
-      assert.ok(enrollment2);
-      assert.equal(enrollment2.revoked, false);
-      assert.equal(enrollment2.nullifier, sharedNullifier);
+      assert.equal(enrollment2, null, 'Second account must not be enrolled');
+
+      // First account CAN re-enroll with SAME nullifier (owns it)
+      fakeClock.advance(10);
+      const challenge3 = await service.createChallenge(initData1);
+      mockClient.setResponse(challenge3.signedChallenge.nonce, {
+        success: true,
+        nullifier: sharedNullifier,
+        issuerSchemaId: 1,
+        expiresAtMin: fakeClock.nowSeconds() + 86400,
+      });
+      const result3 = await service.completeEnrollment({
+        initData: initData1,
+        idkitResult: createIDKitResult(challenge3.signedChallenge.nonce, TEST_ACTION, challenge3.signedChallenge.signalHash),
+      });
+      assert.equal(result3.success, true, 'Original owner can re-enroll with same nullifier');
     });
 
     it('returns false when revoking non-existent enrollment', async () => {
