@@ -711,6 +711,13 @@ export class EnrollmentService {
     const result = stmt.run(this.clock.nowISO(), now, generation, telegramUserId, this.action);
     const wasRevoked = result.changes > 0;
 
+    // Delete all pending challenges for this user to prevent late completion
+    // Essential for safety: prevents old in-flight proofs from re-enrolling after revocation
+    this.db.prepare(`
+      DELETE FROM challenge_sessions
+      WHERE telegram_user_id = ? AND action = ?
+    `).run(telegramUserId, this.action);
+
     // DISPLAY-ONLY: Remove member tag after revocation
     // Tag removal is best-effort and does not affect revocation
     if (wasRevoked && this.memberTagManager) {

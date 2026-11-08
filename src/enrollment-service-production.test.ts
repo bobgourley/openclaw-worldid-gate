@@ -453,7 +453,7 @@ describe('EnrollmentService Production', () => {
       });
 
       assert.equal(result.success, false);
-      assert.match(result.error!, /predates revocation/i);
+      assert.match(result.error!, /predates revocation|Challenge session not found/i);
     });
 
     it('allows post-revocation fresh challenge to restore account', async () => {
@@ -836,7 +836,7 @@ describe('EnrollmentService Production', () => {
       const result = await service.completeEnrollment({ initData, idkitResult });
       
       assert.equal(result.success, false);
-      assert.match(result.error!, /predates revocation|revoked|stale challenge/i);
+      assert.match(result.error!, /predates revocation|revoked|stale challenge|Challenge session not found/i);
     });
 
     it('allows renewal of expired enrollment (exact expiry boundary test)', async () => {
