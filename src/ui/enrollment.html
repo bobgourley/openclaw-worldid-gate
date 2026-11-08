@@ -14,10 +14,12 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       min-height: 100vh;
+      min-height: 100dvh;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 20px;
+      padding: 16px;
+      padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
     }
     .container {
       background: white;
@@ -25,27 +27,30 @@
       box-shadow: 0 20px 60px rgba(0,0,0,0.3);
       max-width: 420px;
       width: 100%;
-      padding: 40px 30px;
+      max-height: calc(100vh - 32px);
+      max-height: calc(100dvh - 32px);
+      overflow-y: auto;
+      padding: 24px 20px;
       text-align: center;
     }
     h1 {
-      font-size: 28px;
+      font-size: 24px;
       font-weight: 700;
       color: #1a202c;
-      margin-bottom: 12px;
+      margin-bottom: 8px;
     }
     .subtitle {
-      font-size: 16px;
+      font-size: 14px;
       color: #718096;
-      margin-bottom: 32px;
-      line-height: 1.5;
+      margin-bottom: 20px;
+      line-height: 1.4;
     }
     #status {
-      padding: 16px;
+      padding: 12px;
       border-radius: 8px;
-      margin-bottom: 24px;
-      font-size: 14px;
-      line-height: 1.6;
+      margin-bottom: 16px;
+      font-size: 13px;
+      line-height: 1.5;
     }
     #status.loading {
       background: #edf2f7;
@@ -67,14 +72,14 @@
       background: #667eea;
       color: white;
       border: none;
-      padding: 14px 28px;
+      padding: 12px 24px;
       border-radius: 8px;
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.2s;
       width: 100%;
-      margin-top: 16px;
+      margin-top: 12px;
     }
     .button:hover {
       background: #5a67d8;
@@ -88,20 +93,20 @@
       box-shadow: none;
     }
     .info {
-      font-size: 13px;
+      font-size: 12px;
       color: #a0aec0;
-      margin-top: 24px;
-      padding-top: 24px;
+      margin-top: 16px;
+      padding-top: 16px;
       border-top: 1px solid #e2e8f0;
     }
     .spinner {
       border: 3px solid #e2e8f0;
       border-top: 3px solid #667eea;
       border-radius: 50%;
-      width: 40px;
-      height: 40px;
+      width: 32px;
+      height: 32px;
       animation: spin 1s linear infinite;
-      margin: 20px auto;
+      margin: 12px auto;
     }
     @keyframes spin {
       0% { transform: rotate(0deg); }
@@ -109,6 +114,165 @@
     }
     .hidden {
       display: none;
+    }
+    #connectorDisplay {
+      margin: 16px 0;
+    }
+    #qrCode {
+      margin: 0 auto 12px;
+      display: inline-block;
+      padding: 8px;
+      background: white;
+      border-radius: 8px;
+      max-width: 100%;
+    }
+    #qrCode canvas {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      width: auto;
+    }
+    .qr-instruction {
+      margin-bottom: 8px;
+      font-size: 13px;
+      color: #4a5568;
+      font-weight: 600;
+    }
+    .connector-link {
+      display: inline-block;
+      padding: 10px 20px;
+      background: #667eea;
+      color: white;
+      text-decoration: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-top: 8px;
+      transition: all 0.2s;
+    }
+    .connector-link:hover {
+      background: #5a67d8;
+      transform: translateY(-1px);
+    }
+    
+    @media (max-width: 480px) {
+      body {
+        padding: 12px;
+      }
+      .container {
+        padding: 20px 16px;
+        max-height: calc(100vh - 24px);
+        max-height: calc(100dvh - 24px);
+      }
+      h1 {
+        font-size: 22px;
+      }
+      .subtitle {
+        font-size: 13px;
+        margin-bottom: 16px;
+      }
+      #status {
+        padding: 10px;
+        font-size: 12px;
+        margin-bottom: 12px;
+      }
+      .spinner {
+        width: 28px;
+        height: 28px;
+      }
+      .info {
+        font-size: 11px;
+        margin-top: 12px;
+        padding-top: 12px;
+      }
+    }
+    
+    @media (max-height: 700px) {
+      .container {
+        padding: 20px 20px;
+      }
+      h1 {
+        font-size: 22px;
+        margin-bottom: 6px;
+      }
+      .subtitle {
+        font-size: 13px;
+        margin-bottom: 16px;
+      }
+      #status {
+        margin-bottom: 12px;
+        padding: 10px;
+      }
+      #connectorDisplay {
+        margin: 12px 0;
+      }
+      #qrCode {
+        margin-bottom: 8px;
+        padding: 6px;
+      }
+      .qr-instruction {
+        font-size: 12px;
+        margin-bottom: 6px;
+      }
+      .connector-link {
+        padding: 8px 16px;
+        font-size: 12px;
+        margin-top: 6px;
+      }
+      .info {
+        margin-top: 12px;
+        padding-top: 12px;
+        font-size: 11px;
+      }
+    }
+    
+    @media (max-height: 580px) {
+      .container {
+        padding: 16px;
+      }
+      h1 {
+        font-size: 20px;
+        margin-bottom: 4px;
+      }
+      .subtitle {
+        font-size: 12px;
+        margin-bottom: 12px;
+      }
+      #status {
+        padding: 8px;
+        font-size: 11px;
+        margin-bottom: 10px;
+      }
+      .spinner {
+        width: 24px;
+        height: 24px;
+        margin: 8px auto;
+      }
+      #connectorDisplay {
+        margin: 10px 0;
+      }
+      #qrCode {
+        padding: 4px;
+        margin-bottom: 6px;
+      }
+      .qr-instruction {
+        font-size: 11px;
+        margin-bottom: 4px;
+      }
+      .connector-link {
+        padding: 6px 14px;
+        font-size: 11px;
+        margin-top: 4px;
+      }
+      .button {
+        padding: 10px 20px;
+        font-size: 14px;
+      }
+      .info {
+        font-size: 10px;
+        margin-top: 10px;
+        padding-top: 10px;
+      }
     }
   </style>
 </head>
@@ -122,12 +286,12 @@
       Loading verification session...
     </div>
     
-    <div id="connectorDisplay" class="hidden" style="margin: 20px 0; text-align: center;">
-      <div id="qrCode" style="margin: 0 auto 20px; display: inline-block; padding: 10px; background: white; border-radius: 8px;"></div>
-      <p style="margin-bottom: 10px; font-size: 14px; color: #4a5568; font-weight: 600;">
+    <div id="connectorDisplay" class="hidden">
+      <div id="qrCode"></div>
+      <p class="qr-instruction">
         Scan QR code with World App
       </p>
-      <a id="connectorLink" href="#" target="_blank" style="display: inline-block; padding: 12px 24px; background: #667eea; color: white; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600; margin-top: 10px;">
+      <a id="connectorLink" href="#" target="_blank" class="connector-link">
         Or tap to open on this device
       </a>
     </div>
@@ -249,6 +413,7 @@
     
     /**
      * Generate standards-compliant QR code using bundled qrcode library
+     * Responsive sizing based on viewport constraints
      * 
      * @param text - Data to encode (connectorURI)
      * @param container - DOM element to render into
@@ -257,6 +422,29 @@
       try {
         // Import locally bundled qrcode library
         const { QRCode } = await import('/qrcode-bundle.js');
+        
+        // Calculate responsive QR size based on viewport
+        const viewportHeight = window.innerHeight;
+        const viewportWidth = window.innerWidth;
+        const containerWidth = Math.min(viewportWidth - 80, 420);
+        
+        let qrSize;
+        if (viewportHeight < 580) {
+          // Very short viewports: minimal but scannable
+          qrSize = Math.min(160, containerWidth - 40);
+        } else if (viewportHeight < 700) {
+          // Short viewports: compact
+          qrSize = Math.min(200, containerWidth - 40);
+        } else if (viewportWidth < 480) {
+          // Mobile portrait: medium
+          qrSize = Math.min(240, containerWidth - 40);
+        } else {
+          // Desktop/tablet: full size
+          qrSize = Math.min(280, containerWidth - 40);
+        }
+        
+        // Ensure minimum scannable size
+        qrSize = Math.max(140, qrSize);
         
         // Generate standards-compliant QR code
         // Settings per ISO/IEC 18004 standard:
@@ -269,7 +457,7 @@
           errorCorrectionLevel: 'M',
           margin: 4,
           scale: 8,
-          width: 280,
+          width: qrSize,
           color: {
             dark: '#1a202c',
             light: '#ffffff'
@@ -281,7 +469,7 @@
       } catch (error) {
         console.error('QR generation failed:', error);
         // Fallback: show clickable URL
-        container.innerHTML = `<div style="padding: 20px; background: #f7fafc; border-radius: 8px;"><a href="${text}" target="_blank" style="color: #667eea; text-decoration: none; font-size: 14px; font-weight: 600;">Open World App on this device</a></div>`;
+        container.innerHTML = `<div style="padding: 16px; background: #f7fafc; border-radius: 8px;"><a href="${text}" target="_blank" style="color: #667eea; text-decoration: none; font-size: 13px; font-weight: 600;">Open World App on this device</a></div>`;
       }
     }
     
