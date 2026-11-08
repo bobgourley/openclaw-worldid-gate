@@ -87,12 +87,48 @@ export interface IDKitResult {
 }
 
 /**
+ * Session Credential Response (from World App for returning users).
+ * Contains session_nullifier tuple instead of action nullifier.
+ */
+export interface WorldIdSessionCredentialResponse {
+  /** Credential identifier (e.g., "proof_of_human") */
+  identifier: string;
+  /** Encoded Groth16 proof (first 4 elements) + Merkle root (5th element) as decimal strings */
+  proof: string[];
+  /** Session nullifier tuple [nullifier, action] for replay protection */
+  session_nullifier: [string, string];
+  /** Credential issuer schema ID (1=proof_of_human, 11=selfie) */
+  issuer_schema_id: number;
+  /** Minimum expiration timestamp (unix seconds) */
+  expires_at_min: number;
+}
+
+/**
+ * IDKit Session Result from World App (for returning users).
+ * Returned by IDKit.proveSession() for session-based verification.
+ */
+export interface IDKitResultSession {
+  /** Protocol version */
+  protocol_version: '4.0';
+  /** Nonce from RP context */
+  nonce: string;
+  /** Session ID (existing session being verified) */
+  session_id: `session_${string}`;
+  /** Session credential responses with session_nullifier tuples */
+  responses: WorldIdSessionCredentialResponse[];
+  /** User presence check completed (if requested) */
+  user_presence_completed?: boolean;
+  /** Environment */
+  environment: string;
+}
+
+/**
  * V4 Developer Portal API verification request.
  * Forward complete IDKit result as-is to POST https://developer.world.org/api/v4/verify/{rp_id}
  * Source: https://docs.world.org/world-id/idkit/integrate.md
  * Source: https://docs.world.org/api-reference/developer-portal/verify.md
  */
-export type V4VerifyRequest = IDKitResult;
+export type V4VerifyRequest = IDKitResult | IDKitResultSession;
 
 /**
  * V4 Developer Portal API credential verification result.
