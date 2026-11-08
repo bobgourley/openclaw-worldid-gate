@@ -127,6 +127,8 @@ export interface CompleteEnrollmentResult {
   telegramUserId?: number;
   nullifier?: string;
   expiresAt?: number;
+  sessionId?: string;
+  protocolVersion?: string;
   error?: string;
 }
 
@@ -141,6 +143,8 @@ export interface EnrollmentQuery {
   createdAt: string;
   revoked: boolean;
   expired: boolean;
+  sessionId?: string | null;
+  protocolVersion?: string | null;
 }
 
 /**
@@ -442,6 +446,71 @@ export class EnrollmentService {
         migrationTransaction();
       } catch (error: any) {
         throw new Error(`Schema v2 migration failed: ${error.message}`);
+      }
+    }
+
+    if (currentVersion < 3) {
+      // v3: Session-based enrollment support (World ID 4.0 session proofs)
+      const migrationTransaction = this.db.transaction(() => {
+        // Add session columns to enrollments table
+        this.db.exec(`
+          ALTER TABLE enrollments ADD COLUMN session_id TEXT
+        `);
+
+        this.db.exec(`
+          ALTER TABLE enrollments ADD COLUMN protocol_version TEXT
+        `);
+
+        // Create unique index on session_id (immutable binding)
+        this.db.exec(`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_enrollments_session_id
+          ON enrollments(session_id) WHERE session_id IS NOT NULL
+        `);
+
+        // Create session_nullifier_claims table for replay protection
+        // Composite PRIMARY KEY (session_nullifier, action) per World ID tuple
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS session_nullifier_claims (
+            session_nullifier TEXT NOT NULL,
+            action TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            nullifier TEXT NOT NULL,
+            claimed_at INTEGER NOT NULL,
+            claimed_at_iso TEXT NOT NULL,
+            PRIMARY KEY (session_nullifier, action)
+          ) STRICT
+        `);
+
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_session_nullifier_claims_session
+          ON session_nullifier_claims(session_id)
+        `);
+
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_session_nullifier_claims_user
+          ON session_nullifier_claims(telegram_user_id, action)
+        `);
+
+        // Backfill protocol_version for existing enrollments
+        // Mark existing enrollments as UNKNOWN protocol (not v4)
+        this.db.exec(`
+          UPDATE enrollments
+          SET protocol_version = 'UNKNOWN'
+          WHERE protocol_version IS NULL
+        `);
+
+        // Update version
+        this.db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(
+          3,
+          this.clock.nowISO()
+        );
+      });
+
+      try {
+        migrationTransaction();
+      } catch (error: any) {
+        throw new Error(`Schema v3 migration failed: ${error.message}`);
       }
     }
   }
@@ -803,6 +872,11 @@ export class EnrollmentService {
 
       // Create or restore enrollment
       const enrollmentExpiresAt = txNow + this.enrollmentTtlSeconds;
+      
+      // Extract session_id and protocol_version from IDKit result (World ID 4.0 session support)
+      const sessionId = request.idkitResult.session_id ?? null;
+      const protocolVersion = request.idkitResult.protocol_version ?? '4.0';
+      
       const enrollment = {
         nullifier: verificationResult.nullifier!,
         telegramUserId: authenticatedUser.id,
@@ -810,20 +884,24 @@ export class EnrollmentService {
         expiresAt: enrollmentExpiresAt,
         createdAt: this.clock.nowISO(),
         revoked: 0,
+        sessionId,
+        protocolVersion,
       };
 
       try {
         // UPSERT: replace existing enrollment (including revoked) for this account
         const upsertStmt = this.db.prepare(`
-          INSERT INTO enrollments (telegram_user_id, action, nullifier, expires_at, created_at, revoked, revoked_at, revoked_at_seconds)
-          VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)
+          INSERT INTO enrollments (telegram_user_id, action, nullifier, expires_at, created_at, revoked, revoked_at, revoked_at_seconds, session_id, protocol_version)
+          VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
           ON CONFLICT(telegram_user_id, action) DO UPDATE SET
             nullifier = excluded.nullifier,
             expires_at = excluded.expires_at,
             created_at = excluded.created_at,
             revoked = 0,
             revoked_at = NULL,
-            revoked_at_seconds = NULL
+            revoked_at_seconds = NULL,
+            session_id = excluded.session_id,
+            protocol_version = excluded.protocol_version
         `);
 
         upsertStmt.run(
@@ -832,7 +910,9 @@ export class EnrollmentService {
           enrollment.nullifier,
           enrollment.expiresAt,
           enrollment.createdAt,
-          enrollment.revoked
+          enrollment.revoked,
+          enrollment.sessionId,
+          enrollment.protocolVersion
         );
       } catch (error: any) {
         // Catch unique constraint violation on (nullifier, action)
@@ -880,6 +960,8 @@ export class EnrollmentService {
       telegramUserId: enrollment.telegramUserId,
       nullifier: enrollment.nullifier,
       expiresAt: enrollment.expiresAt,
+      sessionId: enrollment.sessionId ?? undefined,
+      protocolVersion: enrollment.protocolVersion,
     };
   }
 
@@ -891,7 +973,7 @@ export class EnrollmentService {
    */
   async findEnrollment(telegramUserId: number): Promise<EnrollmentQuery | null> {
     const stmt = this.db.prepare(`
-      SELECT nullifier, telegram_user_id, action, expires_at, created_at, revoked
+      SELECT nullifier, telegram_user_id, action, expires_at, created_at, revoked, session_id, protocol_version
       FROM enrollments
       WHERE telegram_user_id = ? AND action = ?
     `);
@@ -915,6 +997,8 @@ export class EnrollmentService {
       createdAt: row.created_at,
       revoked: row.revoked === 1,
       expired,
+      sessionId: row.session_id ?? null,
+      protocolVersion: row.protocol_version ?? null,
     };
   }
 
@@ -1039,8 +1123,8 @@ export class EnrollmentService {
       }
 
       const stmt = this.db.prepare(`
-        INSERT INTO enrollments (telegram_user_id, action, nullifier, expires_at, created_at, revoked, revoked_at, revoked_at_seconds)
-        VALUES (?, ?, ?, ?, ?, 0, NULL, NULL)
+        INSERT INTO enrollments (telegram_user_id, action, nullifier, expires_at, created_at, revoked, revoked_at, revoked_at_seconds, session_id, protocol_version)
+        VALUES (?, ?, ?, ?, ?, 0, NULL, NULL, NULL, 'UNKNOWN')
         ON CONFLICT (telegram_user_id, action) DO UPDATE SET
           nullifier = excluded.nullifier,
           expires_at = excluded.expires_at,

@@ -205,9 +205,9 @@ describe('Schema V2 Migration and Blockers', () => {
       assert.equal(claim.telegram_user_id, 12345, 'Backfilled claim must have correct user');
       assert.equal(claim.nullifier, '0xtest_nullifier_v1', 'Backfilled claim must have correct nullifier');
 
-      // Verify version updated
+      // Verify version updated (v2 + v3 migrations both run)
       const version = dbCheck.prepare(`SELECT MAX(version) as v FROM schema_version`).get() as any;
-      assert.equal(version.v, 2, 'Schema version must be updated to 2');
+      assert.equal(version.v, 3, 'Schema version must be updated to 3');
 
       dbCheck.close();
       service.close();
