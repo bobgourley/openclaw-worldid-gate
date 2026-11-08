@@ -248,58 +248,33 @@
     }
     
     /**
-     * Generate QR code using native canvas (no external dependencies)
-     * Implements a minimal QR encoder for URL data
+     * Generate standards-compliant QR code using bundled qrcode library
+     * 
+     * @param text - Data to encode (connectorURI)
+     * @param container - DOM element to render into
      */
     async function generateQRCode(text, container) {
       try {
+        // Import locally bundled qrcode library
+        const { QRCodeLib } = await import('/qrcode-bundle.js');
+        
+        // Generate standards-compliant QR code
+        // Settings per ISO/IEC 18004 standard:
+        // - Error correction: M (15% recovery)
+        // - Margin: 4 modules (standard quiet zone)
+        // - Scale: 8 pixels per module (high resolution)
         const canvas = document.createElement('canvas');
-        const size = 280;
-        canvas.width = size;
-        canvas.height = size;
-        const ctx = canvas.getContext('2d');
         
-        // Simple QR-like visual representation
-        // For production QR: the connector URL opens World App via deep link on tap
-        // For desktop: user can scan this visual code with World App camera
-        const moduleCount = 33; // QR version 1-3 range
-        const moduleSize = Math.floor(size / moduleCount);
-        const offset = Math.floor((size - (moduleSize * moduleCount)) / 2);
-        
-        // White background
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, size, size);
-        
-        // Generate deterministic pattern from URL hash
-        const hash = await hashString(text);
-        const bits = hash.split('').map(c => c.charCodeAt(0));
-        
-        ctx.fillStyle = '#1a202c';
-        
-        // Draw position markers (corners)
-        drawPositionMarker(ctx, offset, offset, moduleSize);
-        drawPositionMarker(ctx, offset + (moduleCount - 7) * moduleSize, offset, moduleSize);
-        drawPositionMarker(ctx, offset, offset + (moduleCount - 7) * moduleSize, moduleSize);
-        
-        // Draw data pattern
-        let bitIndex = 0;
-        for (let row = 0; row < moduleCount; row++) {
-          for (let col = 0; col < moduleCount; col++) {
-            // Skip position marker areas
-            if (isPositionMarkerArea(row, col, moduleCount)) continue;
-            
-            // Draw module if bit is 1
-            if (bits[bitIndex % bits.length] % 2 === 1) {
-              ctx.fillRect(
-                offset + col * moduleSize,
-                offset + row * moduleSize,
-                moduleSize,
-                moduleSize
-              );
-            }
-            bitIndex++;
+        await QRCodeLib.toCanvas(canvas, text, {
+          errorCorrectionLevel: 'M',
+          margin: 4,
+          scale: 8,
+          width: 280,
+          color: {
+            dark: '#1a202c',
+            light: '#ffffff'
           }
-        }
+        });
         
         container.innerHTML = '';
         container.appendChild(canvas);
@@ -308,33 +283,6 @@
         // Fallback: show clickable URL
         container.innerHTML = `<div style="padding: 20px; background: #f7fafc; border-radius: 8px;"><a href="${text}" target="_blank" style="color: #667eea; text-decoration: none; font-size: 14px; font-weight: 600;">Open World App on this device</a></div>`;
       }
-    }
-    
-    function drawPositionMarker(ctx, x, y, size) {
-      // Outer square
-      ctx.fillRect(x, y, size * 7, size * 7);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(x + size, y + size, size * 5, size * 5);
-      ctx.fillStyle = '#1a202c';
-      ctx.fillRect(x + size * 2, y + size * 2, size * 3, size * 3);
-    }
-    
-    function isPositionMarkerArea(row, col, moduleCount) {
-      // Top-left
-      if (row < 9 && col < 9) return true;
-      // Top-right
-      if (row < 9 && col >= moduleCount - 9) return true;
-      // Bottom-left
-      if (row >= moduleCount - 9 && col < 9) return true;
-      return false;
-    }
-    
-    async function hashString(str) {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(str);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
     }
 
     async function handleVerification() {
