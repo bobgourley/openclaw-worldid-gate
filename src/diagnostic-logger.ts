@@ -78,6 +78,9 @@ export interface DiagnosticLogEntry {
   
   /** Duration in milliseconds */
   durationMs?: number;
+  
+  /** Expiry time in seconds */
+  expiresInSeconds?: number;
 }
 
 /**
@@ -132,7 +135,7 @@ export class DiagnosticLogger {
         this.safeInitialize();
       } catch (error) {
         this.initFailed = true;
-        this.fallbackToStderr('initialization_failed', undefined, error);
+        this.fallbackToStderr();
       }
     }
   }
@@ -165,46 +168,95 @@ export class DiagnosticLogger {
     if (!this.config.enabled || this.initFailed) return;
     
     try {
-      // Validate stage and errorCategory against strict allowlists
-      this.validateEntry(entry);
+      // Validate and project to safe output
+      const safeEntry = this.validateAndProject(entry);
       
       // Check if rotation needed
       if (this.needsRotation()) {
         this.rotateLogFile();
       }
       
-      // Append to current log file
-      const logLine = JSON.stringify(entry) + '\n';
+      // Append to current log file (safe projected output only)
+      const logLine = JSON.stringify(safeEntry) + '\n';
       appendFileSync(this.currentLogFile, logLine, { mode: 0o600 });
     } catch (error) {
-      // Fallback to sanitized stderr (no raw error details)
-      this.fallbackToStderr(entry.stage, entry.errorCategory, error);
+      // Fallback to fixed safe stderr (no unvalidated values)
+      this.fallbackToStderr();
     }
   }
   
   /**
-   * Validate entry against strict allowlists (throws on invalid)
+   * Validate entry and project to safe output (ONLY known keys, strict validation)
+   * Throws on invalid input (caught by log() for fallback)
    */
-  private validateEntry(entry: DiagnosticLogEntry): void {
+  private validateAndProject(entry: DiagnosticLogEntry): Record<string, string | number> {
+    // Validate stage (allowlist only)
     if (!ALLOWED_STAGES.includes(entry.stage)) {
-      throw new Error(`Invalid stage: '${entry.stage}' not in allowlist`);
+      throw new Error('Invalid stage');
     }
 
+    // Validate errorCategory if present (allowlist only)
     if (entry.errorCategory !== undefined && !ALLOWED_ERROR_CATEGORIES.includes(entry.errorCategory)) {
-      throw new Error(`Invalid errorCategory: '${entry.errorCategory}' not in allowlist`);
+      throw new Error('Invalid error category');
     }
+
+    // Validate correlationId (must be hex string, not user-provided secret)
+    if (typeof entry.correlationId !== 'string' || 
+        entry.correlationId.length === 0 || 
+        entry.correlationId.length > 64 ||
+        !/^[a-f0-9-]+$/.test(entry.correlationId)) {
+      throw new Error('Invalid correlation ID format');
+    }
+
+    // Generate timestamp (never trust caller-supplied timestamp)
+    const timestamp = new Date().toISOString();
+
+    // Project ONLY known safe keys
+    const safeEntry: Record<string, string | number> = {
+      timestamp,
+      correlationId: entry.correlationId,
+      stage: entry.stage,
+    };
+
+    // Add optional fields with validation
+    if (entry.errorCategory) {
+      safeEntry.errorCategory = entry.errorCategory;
+    }
+
+    if (entry.result) {
+      if (entry.result !== 'success' && entry.result !== 'failure' && entry.result !== 'in_progress') {
+        throw new Error('Invalid result value');
+      }
+      safeEntry.result = entry.result;
+    }
+
+    if (entry.durationMs !== undefined) {
+      if (!Number.isFinite(entry.durationMs) || entry.durationMs < 0 || entry.durationMs > 300000) {
+        throw new Error('Invalid duration');
+      }
+      safeEntry.durationMs = entry.durationMs;
+    }
+
+    if (entry.expiresInSeconds !== undefined) {
+      if (!Number.isFinite(entry.expiresInSeconds) || entry.expiresInSeconds < 0 || entry.expiresInSeconds > 31536000) {
+        throw new Error('Invalid expiry');
+      }
+      safeEntry.expiresInSeconds = entry.expiresInSeconds;
+    }
+
+    // NEVER include unknown keys from caller object
+    return safeEntry;
   }
   
   /**
-   * Fallback to sanitized stderr when primary logging fails.
-   * Emits ONLY stage and errorCategory, no metadata or error details.
+   * Fallback to fixed safe stderr when primary logging fails.
+   * Emits ONLY fixed safe values, NO unvalidated input.
    */
-  private fallbackToStderr(stage: string, errorCategory: string | undefined, _err: unknown): void {
+  private fallbackToStderr(): void {
     try {
       const fallbackEntry = {
         timestamp: new Date().toISOString(),
-        stage,
-        ...(errorCategory && { errorCategory }),
+        stage: 'logging_failed',
         fallback: true,
       };
       process.stderr.write(JSON.stringify(fallbackEntry) + '\n');
@@ -222,7 +274,7 @@ export class DiagnosticLogger {
       correlationId,
       stage: 'challenge_issued',
       result: 'success',
-      durationMs: expiresInSeconds * 1000,
+      expiresInSeconds,
     });
   }
   
@@ -488,7 +540,7 @@ export class DiagnosticLogger {
       this.currentLogFile = this.createLogFile();
       this.cleanupOldLogFiles();
     } catch (error) {
-      this.fallbackToStderr('log_rotation_failed', undefined, error);
+      this.fallbackToStderr();
     }
   }
   

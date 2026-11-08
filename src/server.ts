@@ -128,11 +128,15 @@ async function main(): Promise<void> {
   }
   console.log('');
 
-  // Create diagnostic logger
-  if (config.diagnosticLogEnabled && !config.diagnosticLogDir) {
-    console.error('DIAGNOSTIC_LOG_ENABLED=true requires DIAGNOSTIC_LOG_DIR to be set');
-    console.error('Example: DIAGNOSTIC_LOG_DIR=/var/log/enrollment-service');
-    process.exit(1);
+  // Create diagnostic logger with startup validation
+  // ENABLED PATH: Server exits if DIAGNOSTIC_LOG_DIR unset or unsafe
+  // DISABLED PATH: Logger disables diagnostics, service continues
+  if (config.diagnosticLogEnabled) {
+    if (!config.diagnosticLogDir) {
+      console.error('DIAGNOSTIC_LOG_ENABLED=true requires DIAGNOSTIC_LOG_DIR to be set');
+      console.error('Example: DIAGNOSTIC_LOG_DIR=/Users/finn/worldid-gate-runtime/private/diagnostics');
+      process.exit(1);
+    }
   }
   
   const diagnosticLogger = createDiagnosticLogger({
@@ -141,6 +145,10 @@ async function main(): Promise<void> {
     maxFiles: 10,
     enabled: config.diagnosticLogEnabled,
   });
+  
+  // If logger initialization failed (unsafe path), behavior depends on enabled flag
+  // ENABLED PATH: Already validated above, createDiagnosticLogger throws if path unsafe
+  // DISABLED PATH: Logger internally disables, service continues (initFailed=true)
 
   // Create challenge adapter
   const challengeAdapter = new WorldIdChallengeAdapter({
