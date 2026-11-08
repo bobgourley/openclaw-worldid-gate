@@ -1,0 +1,67 @@
+
+Testing console.error sanitization (fixed literals only)...
+  Found 5 total console.error calls
+✓ All console.error calls use fixed literals only
+Testing all 25 canonical SDK error codes...
+  ✓ user_rejected
+  ✓ verification_rejected
+  ✓ credential_unavailable
+  ✓ feature_unavailable
+  ✓ world_id_4_not_available
+  ✓ world_id_3_not_available
+  ✓ malformed_request
+  ✓ invalid_network
+  ✓ inclusion_proof_pending
+  ✓ inclusion_proof_failed
+  ✓ unexpected_response
+  ✓ connection_failed
+  ✓ max_verifications_reached
+  ✓ failed_by_host_app
+  ✓ user_presence_failed
+  ✓ invalid_rp_signature
+  ✓ nullifier_replayed
+  ✓ duplicate_nonce
+  ✓ unknown_rp
+  ✓ inactive_rp
+  ✓ timestamp_too_old
+  ✓ timestamp_too_far_in_future
+  ✓ invalid_timestamp
+  ✓ rp_signature_expired
+  ✓ identity_attributes_not_matched
+  ✓ generic_error
+  ✓ invalid_rp_id_format
+  ✓ timeout
+  ✓ cancelled
+✓ All 29 canonical codes handled correctly
+
+Testing malicious/unknown codes...
+  ✓ Malicious code blocked: <script>alert("XSS")</script>...
+  ✓ Malicious code blocked: attacker_injected_code...
+  ✓ Malicious code blocked: ../../etc/passwd...
+  ✓ Malicious code blocked: rm -rf /...
+  ✓ Malicious code blocked: DROP TABLE users;...
+✓ All 5 malicious codes safely handled
+
+Testing malicious object type coercion attacks...
+  ✓ object-with-toString blocked (no coercion)
+  ✓ object-with-toPrimitive blocked (no coercion)
+  ✓ null-prototype-object blocked (no coercion)
+  ✓ array blocked (no coercion)
+  ✓ null blocked (no coercion)
+  ✓ undefined blocked (no coercion)
+  ✓ number blocked (no coercion)
+  ✓ symbol blocked (no coercion)
+✓ All 8 malicious objects safely handled
+
+Testing neutral replay wording...
+  ✓ Neutral replay wording: "This verification has already been used. (Code: nullifier_replayed)"
+✓ Replay wording is neutral
+
+✅ All behavioral tests passed
+   - 29 canonical codes correctly handled
+   - 5 malicious strings safely blocked
+   - 8 malicious objects safely blocked
+   - Neutral replay wording verified
+   - Console sanitization verified (no raw error leaks)
+   - No type coercion vulnerabilities
+Exit code: 0

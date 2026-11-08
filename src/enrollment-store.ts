@@ -40,6 +40,20 @@ export interface Enrollment {
   expiresAt: number;
   /** ISO 8601 timestamp when enrollment was created */
   createdAt: string;
+  /** World ID session ID for returning user verification (session_<128 hex chars>) or null for uniqueness-only */
+  sessionId?: string | null;
+  /** Protocol version: '3.0' (legacy), '4.0' (v4), or 'UNKNOWN' (existing data with unknown protocol) */
+  protocolVersion?: string;
+  /** ISO 8601 timestamp when enrollment was revoked, or null if active */
+  revokedAt?: string | null;
+  /** Who revoked: 'user' | 'admin' | null */
+  revokedBy?: string | null;
+  /** ISO 8601 timestamp when enrollment was reactivated, or null if never reactivated */
+  reactivatedAt?: string | null;
+  /** Who reactivated: 'user' | 'admin' | null */
+  reactivatedBy?: string | null;
+  /** Immutable migration generation for this enrollment (1 = initial, increments on schema changes) */
+  migrationGeneration?: number;
 }
 
 /**
@@ -72,6 +86,25 @@ export interface ChallengeSessionStore {
 }
 
 /**
+ * Session nullifier claim for replay protection of session proofs.
+ *
+ * Each session proof returns a tuple [nullifier, action] that must be tracked
+ * to prevent replay attacks. This is separate from the enrollment nullifier.
+ */
+export interface SessionNullifierClaim {
+  /** Session nullifier from tuple (0x-prefixed hex) */
+  sessionNullifier: string;
+  /** Action from tuple */
+  action: string;
+  /** Session ID this nullifier belongs to */
+  sessionId: string;
+  /** Enrollment nullifier this session claim is linked to */
+  enrollmentNullifier: string;
+  /** ISO 8601 timestamp when claim was recorded */
+  claimedAt: string;
+}
+
+/**
  * Enrollment store for durable credential lifecycle management.
  */
 export interface EnrollmentStore {
@@ -84,12 +117,12 @@ export interface EnrollmentStore {
   createEnrollment(enrollment: Enrollment): Promise<void>;
 
   /**
-   * Find active enrollment by Telegram user ID and action (not expired).
+   * Find active enrollment by Telegram user ID and action (not expired, not revoked).
    *
    * @param telegramUserId - Telegram numeric user ID
    * @param action - Action identifier
    * @param currentTime - Current clock for expiry check (dependency injection for testing)
-   * @returns Active enrollment or null if not found/expired
+   * @returns Active enrollment or null if not found/expired/revoked
    */
   findEnrollment(
     telegramUserId: number,
@@ -112,6 +145,41 @@ export interface EnrollmentStore {
    * @returns Number of expired enrollments deleted
    */
   expireEnrollments(beforeTimestamp: number): Promise<number>;
+
+  /**
+   * Revoke enrollment by nullifier (soft delete with audit trail).
+   *
+   * @param nullifier - World ID nullifier
+   * @param revokedBy - Who revoked: 'user' | 'admin'
+   * @returns True if enrollment was revoked, false if not found
+   */
+  revokeEnrollment(nullifier: string, revokedBy: 'user' | 'admin'): Promise<boolean>;
+
+  /**
+   * Reactivate a revoked enrollment (requires explicit authorization).
+   *
+   * @param nullifier - World ID nullifier
+   * @param reactivatedBy - Who reactivated: 'user' | 'admin'
+   * @returns True if enrollment was reactivated, false if not found or not revoked
+   */
+  reactivateEnrollment(nullifier: string, reactivatedBy: 'user' | 'admin'): Promise<boolean>;
+
+  /**
+   * Record a session nullifier claim for replay protection.
+   *
+   * @param claim - Session nullifier claim to record
+   * @throws If session nullifier already claimed
+   */
+  recordSessionNullifierClaim(claim: SessionNullifierClaim): Promise<void>;
+
+  /**
+   * Check if session nullifier has been claimed (replay detection).
+   *
+   * @param sessionNullifier - Session nullifier to check
+   * @param action - Action identifier
+   * @returns True if already claimed, false if safe to use
+   */
+  isSessionNullifierClaimed(sessionNullifier: string, action: string): Promise<boolean>;
 }
 
 /**
@@ -210,6 +278,11 @@ export class InMemoryEnrollmentStore implements EnrollmentStore, LegacyEnrollmen
       return null;
     }
 
+    // Revoked enrollments are not active
+    if (enrollment.revokedAt) {
+      return null;
+    }
+
     const now = Math.floor(currentTime.getTime() / 1000);
     if (enrollment.expiresAt <= now) {
       this.enrollments.delete(nullifier);
@@ -302,5 +375,46 @@ export class InMemoryEnrollmentStore implements EnrollmentStore, LegacyEnrollmen
     if (nullifier) {
       this.revokedNullifiers.add(nullifier);
     }
+  }
+
+  async revokeEnrollment(nullifier: string, revokedBy: 'user' | 'admin'): Promise<boolean> {
+    const enrollment = this.enrollments.get(nullifier);
+    if (!enrollment || enrollment.revokedAt) {
+      return false;
+    }
+
+    enrollment.revokedAt = new Date().toISOString();
+    enrollment.revokedBy = revokedBy;
+    this.revokedNullifiers.add(nullifier);
+    return true;
+  }
+
+  async reactivateEnrollment(nullifier: string, reactivatedBy: 'user' | 'admin'): Promise<boolean> {
+    const enrollment = this.enrollments.get(nullifier);
+    if (!enrollment || !enrollment.revokedAt) {
+      return false;
+    }
+
+    enrollment.reactivatedAt = new Date().toISOString();
+    enrollment.reactivatedBy = reactivatedBy;
+    enrollment.revokedAt = null;
+    enrollment.revokedBy = null;
+    this.revokedNullifiers.delete(nullifier);
+    return true;
+  }
+
+  private sessionNullifierClaims = new Map<string, SessionNullifierClaim>();
+
+  async recordSessionNullifierClaim(claim: SessionNullifierClaim): Promise<void> {
+    const key = `${claim.sessionNullifier}:${claim.action}`;
+    if (this.sessionNullifierClaims.has(key)) {
+      throw new Error(`Session nullifier already claimed: ${claim.sessionNullifier}`);
+    }
+    this.sessionNullifierClaims.set(key, claim);
+  }
+
+  async isSessionNullifierClaimed(sessionNullifier: string, action: string): Promise<boolean> {
+    const key = `${sessionNullifier}:${action}`;
+    return this.sessionNullifierClaims.has(key);
   }
 }
