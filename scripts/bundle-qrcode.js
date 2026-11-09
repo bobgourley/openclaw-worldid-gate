@@ -21,8 +21,7 @@ try {
   await esbuild.build({
     entryPoints: [resolve(__dirname, '../src/ui/qrcode-bridge.ts')],
     bundle: true,
-    format: 'iife',
-    globalName: 'QRCodeBundle',
+    format: 'esm',
     platform: 'browser',
     target: 'es2020',
     outfile: 'dist/ui/qrcode-bundle.js',

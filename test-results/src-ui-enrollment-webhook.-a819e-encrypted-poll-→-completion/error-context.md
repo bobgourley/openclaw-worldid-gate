@@ -20,123 +20,123 @@ Received: false
 # Test source
 
 ```ts
-  342 |         }
-  343 |         return;
-  344 |       }
-  345 |       
-  346 |       // Unknown endpoint
-  347 |       console.log('[Mock] Unknown bridge endpoint, aborting');
-  348 |       await route.abort();
-  349 |     });
-  350 | 
-  351 |     // Navigate to enrollment page
-  352 |     const enrollmentUrl = `http://127.0.0.1:${serverPort}/enrollment?session=${sessionId}`;
-  353 |     await page.goto(enrollmentUrl);
-  354 |     await page.waitForLoadState('networkidle');
-  355 | 
-  356 |     const statusEl = page.locator('#status');
-  357 |     await expect(statusEl).toBeVisible();
-  358 | 
-  359 |     // Step 3: Click Verify and capture connectorURI
-  360 |     console.log('\n=== Step 3: Clicking Verify and extracting encryption key ===');
-  361 | 
-  362 |     const verifyButton = page.locator('#verifyButton');
-  363 |     await expect(verifyButton).toBeVisible();
-  364 | 
-  365 |     // Wait for SDK to be ready
-  366 |     await page.waitForTimeout(500);
-  367 | 
-  368 |     // Click Verify
-  369 |     await verifyButton.click();
-  370 |     console.log('Verify button clicked');
-  371 | 
-  372 |     // Wait for connectorURI to be displayed
-  373 |     await page.waitForTimeout(2000);
-  374 | 
-  375 |     const connectorLink = page.locator('#connectorLink');
-  376 |     await expect(connectorLink).toBeVisible({ timeout: 5000 });
-  377 | 
-  378 |     const connectorHref = await connectorLink.getAttribute('href');
-  379 |     expect(connectorHref).toBeTruthy();
-  380 |     
-  381 |     capturedConnectorURI = connectorHref!;
-  382 |     console.log('connectorURI captured (redacted)');
-  383 | 
-  384 |     // Extract encryption key from connectorURI
-  385 |     const keyMatch = capturedConnectorURI.match(/[?&]k=([^&]+)/);
-  386 |     expect(keyMatch).toBeTruthy();
-  387 |     const keyParam = decodeURIComponent(keyMatch![1]);
-  388 |     encryptionKey = Buffer.from(keyParam, 'base64');
-  389 |     console.log('Encryption key extracted:', encryptionKey.length, 'bytes');
-  390 | 
-  391 |     // Step 4: Wait for SDK to start polling (already mocked in bridge handler)
-  392 |     console.log('\n=== Step 4: Waiting for encrypted bridge poll ===');
-  393 | 
-  394 |     // Monitor completion POST (but let it go to real server)
-  395 |     let completionReceived = false;
-  396 |     let completionPayload: any = null;
-  397 | 
-  398 |     page.on('request', req => {
-  399 |       if (req.url().includes('/api/enrollment/complete') && req.method() === 'POST') {
-  400 |         completionReceived = true;
-  401 |         try {
-  402 |           completionPayload = req.postDataJSON();
-  403 |           console.log('[Monitor] Completion POST sent');
-  404 |           console.log('[Monitor] idkitResult keys:', Object.keys(completionPayload.idkitResult || {}));
-  405 |           console.log('[Monitor] idkitResult.nonce:', completionPayload.idkitResult?.nonce);
-  406 |           console.log('[Monitor] idkitResult.protocol_version:', completionPayload.idkitResult?.protocol_version);
-  407 |         } catch (e) {
-  408 |           console.log('[Monitor] Could not parse completion payload');
-  409 |         }
-  410 |       }
-  411 |     });
-  412 | 
-  413 |     // Wait for polling to complete
-  414 |     await page.waitForTimeout(10000);
-  415 | 
-  416 |     // Step 5: Verify completion
-  417 |     console.log('\n=== Step 5: Verifying completion ===');
-  418 | 
-  419 |     const finalStatus = await statusEl.textContent();
-  420 |     console.log('Final status:', finalStatus);
-  421 | 
-  422 |     // Take screenshot of final state
-  423 |     await page.screenshot({ 
-  424 |       path: '/opt/cursor/artifacts/enrollment-webhook-final.png',
-  425 |       fullPage: true 
-  426 |     });
-  427 | 
-  428 |     // Step 6: Verify enrollment in database
-  429 |     console.log('\n=== Step 6: Verifying enrollment in database ===');
-  430 |     
-  431 |     const enrollmentService = (service as any).enrollmentService;
-  432 |     const enrollment = await enrollmentService.findEnrollment(TEST_USER_ID);
-  433 |     
-  434 |     console.log('Enrollment found:', !!enrollment);
-  435 |     if (enrollment) {
-  436 |       console.log('  - revoked:', enrollment.revoked);
-  437 |       console.log('  - expired:', enrollment.expired);
-  438 |     }
-  439 |     console.log('Completion POST sent:', completionReceived);
-  440 | 
-  441 |     // Assertions
-> 442 |     expect(completionReceived).toBeTruthy();
+  344 |         }
+  345 |         return;
+  346 |       }
+  347 |       
+  348 |       // Unknown endpoint
+  349 |       console.log('[Mock] Unknown bridge endpoint, aborting');
+  350 |       await route.abort();
+  351 |     });
+  352 | 
+  353 |     // Navigate to enrollment page
+  354 |     const enrollmentUrl = `http://127.0.0.1:${serverPort}/enrollment?session=${sessionId}`;
+  355 |     await page.goto(enrollmentUrl);
+  356 |     await page.waitForLoadState('networkidle');
+  357 | 
+  358 |     const statusEl = page.locator('#status');
+  359 |     await expect(statusEl).toBeVisible();
+  360 | 
+  361 |     // Step 3: Click Verify and capture connectorURI
+  362 |     console.log('\n=== Step 3: Clicking Verify and extracting encryption key ===');
+  363 | 
+  364 |     const verifyButton = page.locator('#verifyButton');
+  365 |     await expect(verifyButton).toBeVisible();
+  366 | 
+  367 |     // Wait for SDK to be ready
+  368 |     await page.waitForTimeout(500);
+  369 | 
+  370 |     // Click Verify
+  371 |     await verifyButton.click();
+  372 |     console.log('Verify button clicked');
+  373 | 
+  374 |     // Wait for connectorURI to be displayed
+  375 |     await page.waitForTimeout(2000);
+  376 | 
+  377 |     const connectorLink = page.locator('#connectorLink');
+  378 |     await expect(connectorLink).toBeVisible({ timeout: 5000 });
+  379 | 
+  380 |     const connectorHref = await connectorLink.getAttribute('href');
+  381 |     expect(connectorHref).toBeTruthy();
+  382 |     
+  383 |     capturedConnectorURI = connectorHref!;
+  384 |     console.log('connectorURI captured (redacted)');
+  385 | 
+  386 |     // Extract encryption key from connectorURI
+  387 |     const keyMatch = capturedConnectorURI.match(/[?&]k=([^&]+)/);
+  388 |     expect(keyMatch).toBeTruthy();
+  389 |     const keyParam = decodeURIComponent(keyMatch![1]);
+  390 |     encryptionKey = Buffer.from(keyParam, 'base64');
+  391 |     console.log('Encryption key extracted:', encryptionKey.length, 'bytes');
+  392 | 
+  393 |     // Step 4: Wait for SDK to start polling (already mocked in bridge handler)
+  394 |     console.log('\n=== Step 4: Waiting for encrypted bridge poll ===');
+  395 | 
+  396 |     // Monitor completion POST (but let it go to real server)
+  397 |     let completionReceived = false;
+  398 |     let completionPayload: any = null;
+  399 | 
+  400 |     page.on('request', req => {
+  401 |       if (req.url().includes('/api/enrollment/complete') && req.method() === 'POST') {
+  402 |         completionReceived = true;
+  403 |         try {
+  404 |           completionPayload = req.postDataJSON();
+  405 |           console.log('[Monitor] Completion POST sent');
+  406 |           console.log('[Monitor] idkitResult keys:', Object.keys(completionPayload.idkitResult || {}));
+  407 |           console.log('[Monitor] idkitResult.nonce:', completionPayload.idkitResult?.nonce);
+  408 |           console.log('[Monitor] idkitResult.protocol_version:', completionPayload.idkitResult?.protocol_version);
+  409 |         } catch (e) {
+  410 |           console.log('[Monitor] Could not parse completion payload');
+  411 |         }
+  412 |       }
+  413 |     });
+  414 | 
+  415 |     // Wait for polling to complete
+  416 |     await page.waitForTimeout(10000);
+  417 | 
+  418 |     // Step 5: Verify completion
+  419 |     console.log('\n=== Step 5: Verifying completion ===');
+  420 | 
+  421 |     const finalStatus = await statusEl.textContent();
+  422 |     console.log('Final status:', finalStatus);
+  423 | 
+  424 |     // Take screenshot of final state
+  425 |     await page.screenshot({ 
+  426 |       path: '/opt/cursor/artifacts/enrollment-webhook-final.png',
+  427 |       fullPage: true 
+  428 |     });
+  429 | 
+  430 |     // Step 6: Verify enrollment in database
+  431 |     console.log('\n=== Step 6: Verifying enrollment in database ===');
+  432 |     
+  433 |     const enrollmentService = (service as any).enrollmentService;
+  434 |     const enrollment = await enrollmentService.findEnrollment(TEST_USER_ID);
+  435 |     
+  436 |     console.log('Enrollment found:', !!enrollment);
+  437 |     if (enrollment) {
+  438 |       console.log('  - revoked:', enrollment.revoked);
+  439 |       console.log('  - expired:', enrollment.expired);
+  440 |     }
+  441 |     console.log('Completion POST sent:', completionReceived);
+  442 | 
+  443 |     // Assertions
+> 444 |     expect(completionReceived).toBeTruthy();
       |                                ^ Error: expect(received).toBeTruthy()
-  443 |     expect(completionPayload).toBeTruthy();
-  444 |     expect(completionPayload.initData).toBeTruthy();
-  445 |     expect(completionPayload.idkitResult).toBeTruthy();
-  446 |     expect(enrollment).toBeTruthy();
-  447 |     expect(enrollment.revoked).toBe(false);
-  448 | 
-  449 |     console.log('\n=== Test Results ===');
-  450 |     console.log('✓ Webhook /verify created session via production path');
-  451 |     console.log('✓ Session stored with storeChallengeForSession');
-  452 |     console.log('✓ connectorURI extracted and key decoded');
-  453 |     console.log('✓ Valid AES-GCM encrypted response constructed');
-  454 |     console.log('✓ SDK decrypted response successfully');
-  455 |     console.log('✓ Completion POST sent with initData + idkitResult');
-  456 |     console.log('✓ Enrollment saved to database');
-  457 |   });
-  458 | });
-  459 | 
+  445 |     expect(completionPayload).toBeTruthy();
+  446 |     expect(completionPayload.initData).toBeTruthy();
+  447 |     expect(completionPayload.idkitResult).toBeTruthy();
+  448 |     expect(enrollment).toBeTruthy();
+  449 |     expect(enrollment.revoked).toBe(false);
+  450 | 
+  451 |     console.log('\n=== Test Results ===');
+  452 |     console.log('✓ Webhook /verify created session via production path');
+  453 |     console.log('✓ Session stored with storeChallengeForSession');
+  454 |     console.log('✓ connectorURI extracted and key decoded');
+  455 |     console.log('✓ Valid AES-GCM encrypted response constructed');
+  456 |     console.log('✓ SDK decrypted response successfully');
+  457 |     console.log('✓ Completion POST sent with initData + idkitResult');
+  458 |     console.log('✓ Enrollment saved to database');
+  459 |   });
+  460 | });
+  461 | 
 ```

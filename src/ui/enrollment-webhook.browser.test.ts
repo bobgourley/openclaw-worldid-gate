@@ -259,8 +259,8 @@ test.describe('Full webhook enrollment workflow', () => {
     let pollCount = 0;
     let sessionNonce: string | null = null;
 
-    // Intercept session info to get nonce
-    await page.route(`http://127.0.0.1:${serverPort}/api/enrollment/session/**`, async (route) => {
+    // Intercept challenge creation to get nonce
+    await page.route(`http://127.0.0.1:${serverPort}/api/challenge/create`, async (route) => {
       const response = await route.fetch();
       const json = await response.json();
       if (json.signedChallenge?.nonce) {
@@ -309,13 +309,15 @@ test.describe('Full webhook enrollment workflow', () => {
           const successPayload = {
             version: 1,
             id: 'mock_response_id',
+            nonce: sessionNonce,  // Must match request nonce for SDK validation
             session_id: 'session_' + '0'.repeat(64) + '01' + '0'.repeat(62),
             user_presence_completed: true,
             responses: [{
               identifier: 'proof_of_human',
               issuer_schema_id: 1,
-              proof: '0'.repeat(320),  // 320 hex chars (5 proof elements)
-              nullifier: 'nil_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+              proof: ['0x1', '0x2', '0x3', '0x4', '0x5'],  // Array of field elements
+              signal_hash: 'test_signal_hash',
+              nullifier: '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
               expires_at_min: Math.floor(Date.now() / 1000) + 86400,
             }],
           };
