@@ -276,10 +276,15 @@ describe('enrollment.html client execution', () => {
       'Should use official IDKit.request API'
     );
     
-    // Should use preset API (proofOfHuman, etc.)
+    // Should use constraints API with CredentialRequest (World ID 4.0)
     assert.ok(
-      html.includes('.preset(') || html.includes('proofOfHuman'),
-      'Should use official preset API'
+      html.includes('.constraints('),
+      'Should use constraints API (World ID 4.0 session support)'
+    );
+    
+    assert.ok(
+      html.includes('CredentialRequest'),
+      'Should use CredentialRequest for session enrollment'
     );
   });
 });

@@ -39,10 +39,11 @@ describe('IDKit execution in enrollment.html', () => {
     assert.ok(script.includes('action:'), 'Should pass action parameter');
     assert.ok(script.includes('rp_context:'), 'Should pass rp_context parameter');
     assert.ok(script.includes('allow_legacy_proofs:'), 'Should pass allow_legacy_proofs parameter');
+    assert.ok(script.includes('session_id:'), 'Should pass session_id parameter for session creation');
     
-    // Verify preset is called
-    assert.ok(script.includes('.preset('), 'Should call preset');
-    assert.ok(script.includes('proofOfHuman'), 'Should use proofOfHuman preset');
+    // Verify constraints API is used (World ID 4.0)
+    assert.ok(script.includes('.constraints('), 'Should call constraints (not preset)');
+    assert.ok(script.includes('CredentialRequest'), 'Should use CredentialRequest');
     assert.ok(script.includes('signal:'), 'Should pass signal parameter');
     
     // Verify pollUntilCompletion is called
