@@ -58,7 +58,7 @@ function createValidInitData(userId: number, botToken: string): string {
 }
 
 // Create IDKitResult for enrollment
-function createIDKitResult(nonce: string, action: string, signalHash: string, sessionId?: string) {
+function createIDKitResult(nonce: string, action: string, signalHash: string, sessionId?: string, nullifier?: string) {
   return {
     protocol_version: '4.0' as const,
     nonce,
@@ -67,7 +67,7 @@ function createIDKitResult(nonce: string, action: string, signalHash: string, se
     responses: [{
       identifier: 'proof_of_human' as const,
       issuer_schema_id: 1,
-      nullifier: '0x' + randomBytes(16).toString('hex'),
+      nullifier: nullifier || '0x' + randomBytes(32).toString('hex'),
       expires_at_min: Math.floor(Date.now() / 1000) + 86400,
       proof: ['0x1', '0x2', '0x3', '0x4', '0x5'],
       signal_hash: signalHash,
@@ -133,7 +133,7 @@ describe('Session Verification Integration Tests', () => {
         challenge1.signedChallenge.signalHash,
         sessionId
       );
-      idkitResult1.responses[0].nullifier = nullifier;
+      // Nullifier passed in createIDKitResult
       
       verifier.setResponse(challenge1.signedChallenge.nonce, {
         success: true,
@@ -148,11 +148,11 @@ describe('Session Verification Integration Tests', () => {
       const sessionChallenge = await service.createSessionChallenge(initData);
       
       // Step 3: Verify with session proof
-      const sessionNullifier = randomBytes(16).toString('hex');
+      const sessionAction = '0x' + randomBytes(32).toString('hex');
       const sessionResult = createSessionResult(
         sessionChallenge.signedChallenge.nonce,
         sessionId,
-        [nullifier, TEST_ACTION]
+        [nullifier, sessionAction]
       );
       
       verifier.setResponse(sessionChallenge.signedChallenge.nonce, {
@@ -182,7 +182,7 @@ describe('Session Verification Integration Tests', () => {
         challenge1.signedChallenge.signalHash,
         sessionId
       );
-      idkitResult1.responses[0].nullifier = nullifier;
+      // Nullifier passed in createIDKitResult
       
       verifier.setResponse(challenge1.signedChallenge.nonce, { success: true, nullifier });
       await service.completeEnrollment({ initData, idkitResult: idkitResult1 });
@@ -193,7 +193,7 @@ describe('Session Verification Integration Tests', () => {
       const sessionResult = createSessionResult(
         sessionChallenge.signedChallenge.nonce,
         wrongSessionId, // WRONG session ID
-        [nullifier, TEST_ACTION]
+        [nullifier, '0x' + randomBytes(32).toString('hex')]
       );
       
       verifier.setResponse(sessionChallenge.signedChallenge.nonce, { success: true, nullifier });
@@ -219,7 +219,7 @@ describe('Session Verification Integration Tests', () => {
         challenge1.signedChallenge.signalHash,
         sessionId
       );
-      idkitResult1.responses[0].nullifier = nullifier;
+      // Nullifier passed in createIDKitResult
       
       verifier.setResponse(challenge1.signedChallenge.nonce, { success: true, nullifier });
       await service.completeEnrollment({ initData: initDataA, idkitResult: idkitResult1 });
@@ -234,7 +234,7 @@ describe('Session Verification Integration Tests', () => {
         challenge2.signedChallenge.signalHash,
         sessionIdB
       );
-      idkitResult2.responses[0].nullifier = nullifierB;
+      // Nullifier passed in createIDKitResult
       
       verifier.setResponse(challenge2.signedChallenge.nonce, { success: true, nullifier: nullifierB });
       await service.completeEnrollment({ initData: initDataB, idkitResult: idkitResult2 });
@@ -246,7 +246,7 @@ describe('Session Verification Integration Tests', () => {
       const sessionResult = createSessionResult(
         sessionChallengeB.signedChallenge.nonce,
         sessionId, // User A's session ID
-        [nullifierB, TEST_ACTION] // But User B's nullifier
+        [nullifierB, '0x' + randomBytes(32).toString('hex')] // But User B's nullifier
       );
       
       verifier.setResponse(sessionChallengeB.signedChallenge.nonce, { success: true, nullifier: nullifierB });
@@ -270,7 +270,7 @@ describe('Session Verification Integration Tests', () => {
         challenge1.signedChallenge.signalHash,
         sessionId
       );
-      idkitResult1.responses[0].nullifier = nullifier;
+      // Nullifier passed in createIDKitResult
       
       verifier.setResponse(challenge1.signedChallenge.nonce, { success: true, nullifier });
       await service.completeEnrollment({ initData, idkitResult: idkitResult1 });
@@ -305,7 +305,7 @@ describe('Session Verification Integration Tests', () => {
         challenge1.signedChallenge.signalHash,
         sessionId
       );
-      idkitResult1.responses[0].nullifier = nullifier;
+      // Nullifier passed in createIDKitResult
       
       verifier.setResponse(challenge1.signedChallenge.nonce, { success: true, nullifier });
       await service.completeEnrollment({ initData, idkitResult: idkitResult1 });
@@ -341,7 +341,7 @@ describe('Session Verification Integration Tests', () => {
         challenge1.signedChallenge.signalHash,
         sessionId
       );
-      idkitResult1.responses[0].nullifier = nullifier;
+      // Nullifier passed in createIDKitResult
       
       verifier.setResponse(challenge1.signedChallenge.nonce, { success: true, nullifier });
       await service.completeEnrollment({ initData, idkitResult: idkitResult1 });
@@ -352,7 +352,7 @@ describe('Session Verification Integration Tests', () => {
       const sessionResult1 = createSessionResult(
         sessionChallenge1.signedChallenge.nonce,
         sessionId,
-        [nullifier, TEST_ACTION]
+        [nullifier, '0x' + randomBytes(32).toString('hex')]
       );
       
       verifier.setResponse(sessionChallenge1.signedChallenge.nonce, { success: true, nullifier });
@@ -365,7 +365,7 @@ describe('Session Verification Integration Tests', () => {
       const sessionResult2 = createSessionResult(
         sessionChallenge2.signedChallenge.nonce,
         sessionId,
-        [nullifier, TEST_ACTION] // SAME session_nullifier tuple
+        [nullifier, '0x' + randomBytes(32).toString('hex')] // DIFFERENT randomized action
       );
       
       verifier.setResponse(sessionChallenge2.signedChallenge.nonce, { success: true, nullifier });
@@ -416,7 +416,7 @@ describe('Session Verification Integration Tests', () => {
         challenge1.signedChallenge.signalHash,
         sessionId
       );
-      idkitResult1.responses[0].nullifier = nullifier;
+      // Nullifier passed in createIDKitResult
       
       verifier.setResponse(challenge1.signedChallenge.nonce, { success: true, nullifier });
       await service.completeEnrollment({ initData, idkitResult: idkitResult1 });
@@ -431,7 +431,7 @@ describe('Session Verification Integration Tests', () => {
       const sessionResult = createSessionResult(
         sessionChallenge.signedChallenge.nonce,
         sessionId,
-        [nullifier, TEST_ACTION]
+        [nullifier, '0x' + randomBytes(32).toString('hex')]
       );
       
       verifier.setResponse(sessionChallenge.signedChallenge.nonce, { success: true, nullifier });
@@ -457,7 +457,7 @@ describe('Session Verification Integration Tests', () => {
         challenge1.signedChallenge.signalHash,
         sessionId
       );
-      idkitResult1.responses[0].nullifier = nullifier;
+      // Nullifier passed in createIDKitResult
       
       verifier.setResponse(challenge1.signedChallenge.nonce, { success: true, nullifier });
       await service.completeEnrollment({ initData, idkitResult: idkitResult1 });
@@ -472,7 +472,7 @@ describe('Session Verification Integration Tests', () => {
       const sessionResult = createSessionResult(
         sessionChallenge.signedChallenge.nonce,
         sessionId,
-        [nullifier, TEST_ACTION]
+        [nullifier, sessionAction]
       );
       
       verifier.setResponse(sessionChallenge.signedChallenge.nonce, { success: true, nullifier });
@@ -496,7 +496,7 @@ describe('Session Verification Integration Tests', () => {
         challenge1.signedChallenge.signalHash,
         sessionId
       );
-      idkitResult1.responses[0].nullifier = nullifier;
+      // Nullifier passed in createIDKitResult
       
       verifier.setResponse(challenge1.signedChallenge.nonce, { success: true, nullifier });
       await service.completeEnrollment({ initData, idkitResult: idkitResult1 });
@@ -544,7 +544,7 @@ describe('Session Verification Integration Tests', () => {
           challenge1.signedChallenge.signalHash,
           sessionId
         );
-        idkitResult1.responses[0].nullifier = nullifier;
+        // Nullifier passed in createIDKitResult
         
         verifier.setResponse(challenge1.signedChallenge.nonce, { success: true, nullifier });
         await service.completeEnrollment({ initData, idkitResult: idkitResult1 });
