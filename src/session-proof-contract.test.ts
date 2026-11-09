@@ -38,17 +38,37 @@ function createValidInitData(userId: number, botToken: string): string {
   return `auth_date=${authDate}&hash=${hash}&user=${encodeURIComponent(userJson)}`;
 }
 
-// Stub fetch for WorldIdHttpVerifier
+// Stub fetch for WorldIdHttpVerifier (returns v4 API format)
 function createStubFetch(responses: Map<string, any>) {
   return async (url: string, options: any) => {
     const body = JSON.parse(options.body);
     const key = `${body.nonce || 'default'}`;
-    const response = responses.get(key) || { success: false };
+    const mockResult = responses.get(key);
+    
+    if (!mockResult || !mockResult.success) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ success: false, error: 'Mock verification failed' }),
+      } as any;
+    }
+    
+    // Return v4 API format
+    const v4Response = {
+      success: true,
+      results: [{
+        identifier: 'proof_of_human',
+        nullifier: mockResult.nullifier,
+        issuer_schema_id: mockResult.issuer_schema_id || 1,
+        expires_at_min: mockResult.expires_at_min,
+      }],
+      environment: 'staging',
+    };
     
     return {
       ok: true,
       status: 200,
-      json: async () => response,
+      text: async () => JSON.stringify(v4Response),
     } as any;
   };
 }
@@ -125,7 +145,9 @@ describe('Session Proof Contract (World ID 4.0 Specs)', () => {
     };
     
     const enrollResult = await service.completeEnrollment(enrollmentRequest);
-    assert.ok(enrollResult.success, 'Enrollment should succeed');
+    if (!enrollResult.success) {
+      throw new Error(`Enrollment failed: ${enrollResult.error || 'unknown error'}`);
+    }
     assert.equal(enrollResult.sessionId, sessionId, 'Session ID should be captured');
     
     // Step 2: Session verification with DIFFERENT nullifier
