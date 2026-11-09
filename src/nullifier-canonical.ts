@@ -13,11 +13,15 @@
  * 
  * Accepts:
  * - Hex with 0x prefix: "0x1", "0x01", "0xABC" (any length, any case)
- * - Decimal string: "1", "255"
+ * 
+ * SECURITY: Bare decimal strings are REJECTED to prevent aliasing:
+ * - "10" decimal (value 10) vs "0x10" hex (value 16) would create different keys
+ * - World ID 4.0 nullifiers are always 0x-prefixed hex per API docs
  * 
  * Returns: Canonical 0x-prefixed, lowercase, 64-char hex string
  * 
  * Throws on:
+ * - Bare decimal strings (must be 0x-prefixed to prevent aliasing)
  * - Negative values
  * - Non-integer (floats, NaN, Infinity)
  * - Overflow (> 256 bits)
@@ -44,7 +48,7 @@ export function canonicalizeNullifier(input: unknown): string {
 
   try {
     if (trimmed.startsWith('0x') || trimmed.startsWith('0X')) {
-      // Hex format
+      // Hex format - ONLY accepted format per World ID 4.0
       const hexPart = trimmed.slice(2);
       if (hexPart.length === 0) {
         throw new Error('Hex nullifier missing digits after 0x');
@@ -54,14 +58,12 @@ export function canonicalizeNullifier(input: unknown): string {
       }
       bigIntValue = BigInt(trimmed);
     } else {
-      // Decimal format
-      if (!/^[0-9]+$/.test(trimmed)) {
-        throw new Error('Decimal nullifier contains invalid characters (must be digits only)');
-      }
-      bigIntValue = BigInt(trimmed);
+      // SECURITY: Reject bare decimal to prevent aliasing
+      // "10" (decimal 10) vs "0x10" (hex 16) would create replay vectors
+      throw new Error('Nullifier must be 0x-prefixed hex string to prevent aliasing (bare decimal rejected)');
     }
   } catch (error) {
-    if (error instanceof Error && (error.message.includes('invalid characters') || error.message.includes('negative'))) {
+    if (error instanceof Error && (error.message.includes('invalid characters') || error.message.includes('negative') || error.message.includes('aliasing'))) {
       throw error;
     }
     throw new Error(`Invalid nullifier format: ${error instanceof Error ? error.message : String(error)}`);

@@ -160,12 +160,11 @@ describe('Nullifier Canonicalization', () => {
       ]);
     });
 
-    it('accepts decimal and hex mixed', () => {
-      const result = canonicalizeSessionNullifierTuple(['1', '0x2']);
-      assert.deepEqual(result, [
-        '0x0000000000000000000000000000000000000000000000000000000000000001',
-        '0x0000000000000000000000000000000000000000000000000000000000000002',
-      ]);
+    it('rejects bare decimal in tuple (aliasing prevention)', () => {
+      assert.throws(
+        () => canonicalizeSessionNullifierTuple(['1', '0x2']),
+        /must be 0x-prefixed.*aliasing/
+      );
     });
 
     it('rejects non-array', () => {
@@ -198,13 +197,11 @@ describe('Nullifier Canonicalization', () => {
   describe('nullifiersEqual', () => {
     it('returns true for equivalent representations', () => {
       assert.equal(nullifiersEqual('0x1', '0x01'), true);
-      assert.equal(nullifiersEqual('1', '0x1'), true);
       assert.equal(nullifiersEqual('0xABC', '0xabc'), true);
     });
 
     it('returns false for different values', () => {
       assert.equal(nullifiersEqual('0x1', '0x2'), false);
-      assert.equal(nullifiersEqual('1', '2'), false);
     });
 
     it('returns false for invalid inputs', () => {
@@ -228,16 +225,23 @@ describe('Nullifier Canonicalization', () => {
       assert.equal(nullifier1, nullifier2, 'Case normalization prevents bypass');
     });
 
-    it('prevents replay via decimal vs hex (1 vs 0x1)', () => {
-      const nullifier1 = canonicalizeNullifier('1');
-      const nullifier2 = canonicalizeNullifier('0x1');
+    it('prevents replay via decimal vs hex aliasing (SECURITY)', () => {
+      // SECURITY: bare decimal must be rejected to prevent aliasing
+      // '1' decimal would normalize to 0x1, but '10' decimal vs '0x10' hex differ
+      // Rejecting all bare decimals prevents the attack vector
+      assert.throws(
+        () => canonicalizeNullifier('1'),
+        /must be 0x-prefixed.*aliasing/
+      );
       
-      assert.equal(nullifier1, nullifier2, 'Format normalization prevents bypass');
+      // Only 0x-prefixed hex accepted
+      const nullifier = canonicalizeNullifier('0x1');
+      assert.equal(nullifier, '0x0000000000000000000000000000000000000000000000000000000000000001');
     });
 
     it('session tuple canonicalization prevents replay aliases', () => {
       const tuple1 = canonicalizeSessionNullifierTuple(['0x1', '0xABC']);
-      const tuple2 = canonicalizeSessionNullifierTuple(['1', '0xabc']);
+      const tuple2 = canonicalizeSessionNullifierTuple(['0x01', '0xabc']);
       
       assert.deepEqual(tuple1, tuple2, 'Tuple canonicalization prevents bypass');
     });
@@ -257,7 +261,6 @@ describe('Nullifier Canonicalization', () => {
         '0x1',
         '0x01',
         '0x001',
-        '1',
         '0X1', // uppercase X
         '0x0000000000000000000000000000000000000000000000000000000000000001',
       ];
