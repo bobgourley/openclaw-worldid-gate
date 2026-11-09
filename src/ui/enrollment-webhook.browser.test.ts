@@ -234,19 +234,32 @@ test.describe('Full webhook enrollment workflow', () => {
           window.WorldIDKitBundle = {
             IDKit: {
               request: function(config) {
-                console.log('[Test IDKit] request() called with config');
+                console.log('[Test IDKit] request() called');
+                console.log('[Test IDKit] rp_context.signal_hash:', config.rp_context?.signal_hash);
                 const connector = {
                   uri: 'https://world.org/verify?t=wld&i=test123&k=abc',
                   async poll() {
                     console.log('[Test IDKit] Returning mock success');
+                    // For session_id: 'create', World App returns BOTH action and a generated session_id
+                    // For uniqueness proofs: has action, no session_id
+                    // For session proofs: has session_id, no action
+                    const isCreatingSession = config.session_id === 'create';
+                    const resultShape = isCreatingSession ? {
+                      action: config.action,
+                      session_id: 'session_' + '0'.repeat(64) + '01' + '0'.repeat(62),
+                    } : config.action ? {
+                      action: config.action,
+                    } : {
+                      session_id: config.session_id,
+                    };
+                    
                     // Realistic format: 0x hex nullifier, 5 decimal proof strings
                     return {
                       type: 'confirmed',
                       result: {
                         protocol_version: '4.0',
                         nonce: config.rp_context.nonce,
-                        action: config.rp_context.action,
-                        session_id: config.rp_context.session_id,
+                        ...resultShape,
                         responses: [{
                           identifier: 'proof_of_human',
                           issuer_schema_id: 1,
@@ -308,9 +321,22 @@ test.describe('Full webhook enrollment workflow', () => {
 
     // Step 3: Load enrollment page
     console.log('\n=== Step 3: Loading enrollment page ===');
+    
+    // Capture signal_hash from challenge creation
+    let capturedSignalHash: string | null = null;
+    await page.route(`http://127.0.0.1:${serverPort}/api/challenge/create`, async (route) => {
+      const response = await route.fetch();
+      const json = await response.json();
+      capturedSignalHash = json.signedChallenge?.signalHash || json.signal_hash;
+      console.log('[Monitor] Challenge created with signalHash:', capturedSignalHash);
+      await route.fulfill({ response });
+    });
+    
     const enrollmentUrl = `http://127.0.0.1:${serverPort}/enrollment?session=${sessionId}`;
     await page.goto(enrollmentUrl);
     await page.waitForLoadState('networkidle');
+    
+    console.log('[Monitor] Page loaded, captured signalHash:', capturedSignalHash);
 
     const statusEl = page.locator('#status');
     await expect(statusEl).toBeVisible();
@@ -353,13 +379,15 @@ test.describe('Full webhook enrollment workflow', () => {
     const enrollment = await enrollmentService.findEnrollment(TEST_USER_ID);
     
     expect(enrollment).toBeTruthy();
-    expect(enrollment.telegram_user_id).toBe(TEST_USER_ID);
+    expect(enrollment.telegramUserId).toBe(TEST_USER_ID);
     expect(enrollment.action).toBe(TEST_ACTION);
     expect(enrollment.revoked).toBe(false);
     expect(enrollment.nullifier).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(enrollment.sessionId).toBeTruthy();
+    expect(enrollment.protocolVersion).toBe('4.0');
     
     console.log('Enrollment verified in database:', {
-      user_id: enrollment.telegram_user_id,
+      user_id: enrollment.telegramUserId,
       action: enrollment.action,
       nullifier: enrollment.nullifier.substring(0, 20) + '...',
     });

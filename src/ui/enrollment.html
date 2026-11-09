@@ -692,6 +692,7 @@
           created_at: session.signedChallenge.createdAt,
           expires_at: session.signedChallenge.expiresAt,
           signature: session.signedChallenge.signature,
+          signal_hash: session.signedChallenge.signalHash,
         };
         
         // Create verification request with session creation
@@ -753,6 +754,7 @@
           created_at: challenge.signedChallenge.createdAt,
           expires_at: challenge.signedChallenge.expiresAt,
           signature: challenge.signedChallenge.signature,
+          signal_hash: challenge.signedChallenge.signalHash || challenge.signalHash,
         };
         
         // Use proveSession for returning user (session ID in memory only, never stored)
