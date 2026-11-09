@@ -319,7 +319,7 @@ export class TelegramBotHandler {
             }
 
             spawnAttempted = true;
-            return { allowed: true };
+            return { allowed: true, enrollmentExpiresAt: enrollment.expiresAt };
           },
         });
 

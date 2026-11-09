@@ -12,6 +12,10 @@ import { WorldIdHttpVerifier } from './worldid-verifier-http.js';
 import { HttpService } from './http-service.js';
 import { TelegramBotHandler, TelegramHttpTransport } from './telegram-bot-handler.js';
 import { createDiagnosticLogger } from './diagnostic-logger.js';
+import { StatusSocketServer, loadStatusSecret } from './status-socket-server.js';
+import { MemberTagManager } from './member-tag-manager.js';
+import { TelegramApiClient } from './telegram-api-client.js';
+import { openclawIntegrationConfig } from './config.js';
 
 // Configuration from environment (with unconfigured defaults for local testing)
 const config = {
@@ -167,6 +171,24 @@ async function main(): Promise<void> {
     timeoutMs: 10000,
   });
 
+  // Create member tag manager (if enabled)
+  let memberTagManager: MemberTagManager | undefined;
+  let telegramApiClient: TelegramApiClient | undefined;
+  if (openclawIntegrationConfig.memberTags.enabled) {
+    if (!config.openclawAllowedGroupId) {
+      console.error('FATAL: OPENCLAW_ALLOWED_GROUP required when member tags enabled');
+      process.exit(1);
+    }
+    
+    telegramApiClient = new TelegramApiClient({
+      botToken: config.telegramBotToken,
+    });
+    
+    console.log('Member tags enabled:');
+    console.log(`  Tag text: ${openclawIntegrationConfig.memberTags.tagText}`);
+    console.log(`  Target chat: ${openclawIntegrationConfig.memberTags.targetChatId}`);
+  }
+
   // Create enrollment service
   const enrollmentService = new EnrollmentService({
     dbPath: config.databasePath,
@@ -178,6 +200,36 @@ async function main(): Promise<void> {
     enrollmentTtlSeconds: 2592000, // 30 days
     diagnosticLogger,
   });
+
+  // Wire member tag manager after enrollment service is created
+  if (openclawIntegrationConfig.memberTags.enabled && telegramApiClient) {
+    memberTagManager = new MemberTagManager({
+      telegramClient: telegramApiClient,
+      enrollmentService,
+      db: (enrollmentService as any).db, // Access private db field
+      targetChatId: openclawIntegrationConfig.memberTags.targetChatId,
+      tagText: openclawIntegrationConfig.memberTags.tagText,
+      action: config.action,
+      enabled: true,
+      sweepIntervalHours: openclawIntegrationConfig.memberTags.sweepIntervalHours,
+    });
+    
+    // Check permissions on startup
+    const permCheck = await memberTagManager.checkPermissions();
+    if (!permCheck.success) {
+      console.warn(`[MemberTag] Permission check failed: ${permCheck.status}`);
+      console.warn('[MemberTag] Tagging disabled (enrollment will continue normally)');
+      memberTagManager = undefined; // Disable tagging
+    } else {
+      console.log(`[MemberTag] Permission check passed, starting sweeper (interval: ${openclawIntegrationConfig.memberTags.sweepIntervalHours}h)`);
+      await memberTagManager.startSweeper();
+    }
+  }
+
+  // Update enrollment service with member tag manager
+  if (memberTagManager) {
+    (enrollmentService as any).memberTagManager = memberTagManager;
+  }
 
   // Create Telegram bot handler
   const telegramTransport = new TelegramHttpTransport(config.telegramBotToken);
@@ -237,7 +289,26 @@ async function main(): Promise<void> {
     requestTimeoutMs: 30000,
   });
 
-  // Start server
+  // Create and start status socket server (if enabled)
+  let statusSocketServer: StatusSocketServer | undefined;
+  if (openclawIntegrationConfig.statusSocket.enabled) {
+    try {
+      const secret = await loadStatusSecret(openclawIntegrationConfig.statusSocket.secretFile);
+      
+      statusSocketServer = new StatusSocketServer({
+        socketPath: openclawIntegrationConfig.statusSocket.socketPath,
+        secret,
+        enrollmentService,
+      });
+      
+      await statusSocketServer.start();
+    } catch (error: any) {
+      console.error('FATAL: Failed to start status socket server:', error.message);
+      process.exit(1);
+    }
+  }
+
+  // Start HTTP server
   await httpService.start();
 
   // Mark service as ready after successful startup
@@ -249,6 +320,17 @@ async function main(): Promise<void> {
     console.log('');
     console.log('Shutting down...');
     serviceReady = false;
+    
+    // Stop member tag sweeper
+    if (memberTagManager) {
+      memberTagManager.stopSweeper();
+    }
+    
+    // Stop status socket server
+    if (statusSocketServer) {
+      await statusSocketServer.stop();
+    }
+    
     await httpService.stop();
     enrollmentService.close();
     process.exit(0);

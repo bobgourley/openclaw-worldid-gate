@@ -66,7 +66,7 @@ export interface DispatchRequest {
   /** Message text */
   text: string;
   /** Pre-spawn admission check (called after file prep, before spawn) */
-  preSpawnCheck?: () => Promise<{ allowed: boolean; reason?: string }>;
+  preSpawnCheck?: () => Promise<{ allowed: boolean; reason?: string; enrollmentExpiresAt?: number }>;
 }
 
 export interface DispatchResult {
@@ -111,6 +111,12 @@ export async function dispatchToOpenClaw(
           success: false,
           error: checkResult.reason || 'Pre-spawn admission check failed',
         };
+      }
+      
+      // Log enrollment context (privacy-safe: expiry date only, no nullifier)
+      if (checkResult.enrollmentExpiresAt) {
+        const expiryDate = new Date(checkResult.enrollmentExpiresAt * 1000).toISOString().split('T')[0];
+        console.log(`[gate] sender World ID verified, expires ${expiryDate}`);
       }
     }
 

@@ -530,5 +530,12 @@ describe('HttpService Integration', () => {
       const data = await response.json();
       assert.match(data.error, /not found/i);
     });
+
+    it('returns 404 for status endpoint (not mounted on public server)', async () => {
+      const response = await fetch(`http://127.0.0.1:${testPort}/status/123456789`);
+      assert.equal(response.status, 404);
+      const data = await response.json();
+      assert.match(data.error, /not found/i);
+    });
   });
 });

@@ -137,37 +137,105 @@ describe('TelegramApiClient', () => {
   });
 
   describe('checkTagPermission', () => {
-    it('validates chat type', async () => {
+    it('checks bot permissions', async () => {
       const client = new TelegramApiClient({ botToken: 'test_token' });
       
       const originalFetch = global.fetch;
-      global.fetch = mock.fn(async () => ({
-        json: async () => ({
-          ok: true,
-          result: { type: 'private' },
-        }),
-      })) as any;
+      let callCount = 0;
+      global.fetch = mock.fn(async (url: string) => {
+        callCount++;
+        // First call: getMe
+        if (callCount === 1) {
+          return {
+            json: async () => ({
+              ok: true,
+              result: { id: 123456 },
+            }),
+          };
+        }
+        // Second call: getChatMember
+        return {
+          json: async () => ({
+            ok: true,
+            result: {
+              status: 'administrator',
+              can_manage_tags: true,
+            },
+          }),
+        };
+      }) as any;
 
       const result = await client.checkTagPermission(456);
-      assert.strictEqual(result.success, false);
-      assert.ok(result.error?.includes('does not support member tags'));
+      assert.strictEqual(result.success, true);
 
       global.fetch = originalFetch;
     });
 
-    it('succeeds for group chat', async () => {
+    it('fails when bot lacks can_manage_tags', async () => {
       const client = new TelegramApiClient({ botToken: 'test_token' });
       
       const originalFetch = global.fetch;
-      global.fetch = mock.fn(async () => ({
-        json: async () => ({
-          ok: true,
-          result: { type: 'supergroup' },
-        }),
-      })) as any;
+      let callCount = 0;
+      global.fetch = mock.fn(async (url: string) => {
+        callCount++;
+        // First call: getMe
+        if (callCount === 1) {
+          return {
+            json: async () => ({
+              ok: true,
+              result: { id: 123456 },
+            }),
+          };
+        }
+        // Second call: getChatMember
+        return {
+          json: async () => ({
+            ok: true,
+            result: {
+              status: 'administrator',
+              can_manage_tags: false,
+            },
+          }),
+        };
+      }) as any;
 
       const result = await client.checkTagPermission(456);
-      assert.strictEqual(result.success, true);
+      assert.strictEqual(result.success, false);
+      assert.ok(result.error?.includes('lacks can_manage_tags'));
+
+      global.fetch = originalFetch;
+    });
+
+    it('fails when bot is not admin', async () => {
+      const client = new TelegramApiClient({ botToken: 'test_token' });
+      
+      const originalFetch = global.fetch;
+      let callCount = 0;
+      global.fetch = mock.fn(async (url: string) => {
+        callCount++;
+        // First call: getMe
+        if (callCount === 1) {
+          return {
+            json: async () => ({
+              ok: true,
+              result: { id: 123456 },
+            }),
+          };
+        }
+        // Second call: getChatMember
+        return {
+          json: async () => ({
+            ok: true,
+            result: {
+              status: 'member',
+            },
+          }),
+        };
+      }) as any;
+
+      const result = await client.checkTagPermission(456);
+      assert.strictEqual(result.success, false);
+      assert.ok(result.error?.includes('not an administrator'));
 
       global.fetch = originalFetch;
     });

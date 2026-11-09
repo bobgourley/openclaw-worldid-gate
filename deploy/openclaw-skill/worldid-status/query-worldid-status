@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+#
+# Query World ID enrollment status via Unix domain socket.
+# 
+# Usage: query-worldid-status <telegram_user_id>
+# 
+# Required environment variables:
+#   WORLDID_STATUS_SOCKET - Path to Unix domain socket
+#   WORLDID_STATUS_SECRET - Bearer token for authentication
+#
+# Exit codes:
+#   0 - Success
+#   1 - Invalid arguments
+#   2 - Authentication failed
+#   3 - Network error or socket unavailable
+#   4 - Rate limit exceeded
+
+set -euo pipefail
+
+# Check arguments
+if [ $# -ne 1 ]; then
+  echo "Usage: query-worldid-status <telegram_user_id>" >&2
+  exit 1
+fi
+
+USER_ID="$1"
+
+# Validate user ID is numeric
+if ! [[ "$USER_ID" =~ ^[0-9]+$ ]]; then
+  echo "Error: telegram_user_id must be numeric" >&2
+  exit 1
+fi
+
+# Check required environment variables
+if [ -z "${WORLDID_STATUS_SOCKET:-}" ]; then
+  echo "Error: WORLDID_STATUS_SOCKET environment variable not set" >&2
+  exit 3
+fi
+
+if [ -z "${WORLDID_STATUS_SECRET:-}" ]; then
+  echo "Error: WORLDID_STATUS_SECRET environment variable not set" >&2
+  exit 2
+fi
+
+# Query the status socket
+HTTP_CODE=$(curl --silent --show-error --fail-with-body \
+  --unix-socket "$WORLDID_STATUS_SOCKET" \
+  --header "Authorization: Bearer $WORLDID_STATUS_SECRET" \
+  --write-out "%{http_code}" \
+  --output /tmp/worldid-status-response.$$.json \
+  "http://localhost/status/$USER_ID" 2>/dev/null || echo "000")
+
+# Check HTTP status
+case "$HTTP_CODE" in
+  200)
+    cat /tmp/worldid-status-response.$$.json
+    rm -f /tmp/worldid-status-response.$$.json
+    exit 0
+    ;;
+  401)
+    echo "Error: Authentication failed (invalid bearer token)" >&2
+    rm -f /tmp/worldid-status-response.$$.json
+    exit 2
+    ;;
+  404)
+    echo "Error: Endpoint not found (check socket path)" >&2
+    rm -f /tmp/worldid-status-response.$$.json
+    exit 3
+    ;;
+  429)
+    echo "Error: Rate limit exceeded" >&2
+    rm -f /tmp/worldid-status-response.$$.json
+    exit 4
+    ;;
+  000)
+    echo "Error: Cannot connect to socket (is the gate service running?)" >&2
+    rm -f /tmp/worldid-status-response.$$.json
+    exit 3
+    ;;
+  *)
+    echo "Error: Unexpected HTTP status $HTTP_CODE" >&2
+    if [ -f /tmp/worldid-status-response.$$.json ]; then
+      cat /tmp/worldid-status-response.$$.json >&2
+      rm -f /tmp/worldid-status-response.$$.json
+    fi
+    exit 3
+    ;;
+esac

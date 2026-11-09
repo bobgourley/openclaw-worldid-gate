@@ -589,6 +589,40 @@ export class EnrollmentService {
         throw new Error(`Schema v3 migration failed: ${error.message}`);
       }
     }
+
+    if (currentVersion < 4) {
+      // v4: Member tags tracking table
+      const migrationTransaction = this.db.transaction(() => {
+        // Create member_tags table
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS member_tags (
+            telegram_user_id INTEGER NOT NULL,
+            chat_id TEXT NOT NULL,
+            applied_text TEXT NOT NULL,
+            applied_at TEXT NOT NULL,
+            removed_at TEXT,
+            PRIMARY KEY (telegram_user_id, chat_id)
+          ) STRICT
+        `);
+
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_member_tags_removed
+          ON member_tags(removed_at)
+        `);
+
+        // Update version
+        this.db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(
+          4,
+          this.clock.nowISO()
+        );
+      });
+
+      try {
+        migrationTransaction();
+      } catch (error: any) {
+        throw new Error(`Schema v4 migration failed: ${error.message}`);
+      }
+    }
   }
 
   private getNextGeneration(): number {

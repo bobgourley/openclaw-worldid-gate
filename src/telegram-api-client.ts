@@ -179,12 +179,91 @@ export class TelegramApiClient {
    * @param chatId - Telegram chat ID
    * @returns Result indicating if bot can manage tags
    * 
-   * Note: This attempts a no-op tag operation to check permissions.
-   * Returns success if bot has can_manage_tags right.
+   * This calls getChatMember for the bot itself to check can_manage_tags.
    */
   async checkTagPermission(chatId: number | string): Promise<SetTagResult> {
-    // Attempt to get chat info via getChat
-    const url = `${this.baseUrl}/bot${this.botToken}/getChat`;
+    // First get chat info to extract bot's user_id
+    const getChatUrl = `${this.baseUrl}/bot${this.botToken}/getMe`;
+    
+    try {
+      const meResponse = await fetch(getChatUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const meData = await meResponse.json() as any;
+
+      if (!meData.ok || !meData.result?.id) {
+        return {
+          success: false,
+          error: 'Cannot get bot user ID',
+        };
+      }
+
+      const botUserId = meData.result.id;
+
+      // Now check bot's member status and permissions
+      const getChatMemberUrl = `${this.baseUrl}/bot${this.botToken}/getChatMember`;
+      const memberResponse = await fetch(getChatMemberUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          user_id: botUserId,
+        }),
+      });
+
+      const memberData = await memberResponse.json() as any;
+
+      if (!memberData.ok) {
+        return {
+          success: false,
+          error: memberData.description || 'Cannot check bot member status',
+        };
+      }
+
+      const member = memberData.result;
+      
+      // Check if bot is admin
+      if (member.status !== 'administrator' && member.status !== 'creator') {
+        return {
+          success: false,
+          error: 'Bot is not an administrator',
+        };
+      }
+
+      // Check can_manage_tags permission
+      if (!member.can_manage_tags) {
+        return {
+          success: false,
+          error: 'Bot lacks can_manage_tags permission',
+          permissionDenied: true,
+        };
+      }
+
+      return { success: true };
+
+    } catch (error: any) {
+      return {
+        success: false,
+        error: `Network error: ${error.message || 'Unknown'}`,
+      };
+    }
+  }
+
+  /**
+   * Get chat member info (for checking admin status before tagging).
+   */
+  async getChatMember(chatId: number | string, userId: number): Promise<{
+    success: boolean;
+    status?: 'creator' | 'administrator' | 'member' | 'restricted' | 'left' | 'kicked';
+    error?: string;
+  }> {
+    const url = `${this.baseUrl}/bot${this.botToken}/getChatMember`;
     
     try {
       const response = await fetch(url, {
@@ -194,6 +273,7 @@ export class TelegramApiClient {
         },
         body: JSON.stringify({
           chat_id: chatId,
+          user_id: userId,
         }),
       });
 
@@ -202,25 +282,14 @@ export class TelegramApiClient {
       if (!data.ok) {
         return {
           success: false,
-          error: data.description || 'Cannot access chat',
+          error: data.description || 'Cannot get member status',
         };
       }
 
-      // Check if chat type supports tags
-      const chatType = data.result?.type;
-      if (chatType !== 'group' && chatType !== 'supergroup') {
-        return {
-          success: false,
-          error: `Chat type '${chatType}' does not support member tags (only groups and supergroups)`,
-        };
-      }
-
-      // NOTE: We cannot directly check can_manage_tags without attempting an operation
-      // or calling getChatMember for the bot itself (which requires user_id)
-      // For now, return success if chat type is valid
-      // Actual permission will be verified on first tag operation
-      return { success: true };
-
+      return {
+        success: true,
+        status: data.result?.status,
+      };
     } catch (error: any) {
       return {
         success: false,

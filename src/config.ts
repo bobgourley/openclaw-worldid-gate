@@ -86,6 +86,16 @@ export interface OpenClawIntegrationConfig {
     tagText: string; // Max 16 characters, no emoji (Telegram API limit)
     requireAdminPermission: 'can_manage_tags'; // Required bot administrator right
     targetChatId: number | string; // Telegram chat ID or @username for tag operations
+    sweepIntervalHours: number; // How often to run expiry sweeper (default 24 hours)
+  };
+
+  /**
+   * PLANNED: Private status socket for OpenClaw integration
+   */
+  statusSocket: {
+    enabled: boolean;
+    socketPath: string;
+    secretFile: string;
   };
 
   /**
@@ -159,10 +169,11 @@ export const openclawIntegrationConfig: OpenClawIntegrationConfig = {
     hmacSecret: process.env.ENROLLMENT_LINK_HMAC_SECRET || '',
   },
   memberTags: {
-    enabled: false, // Enable after bot admin setup with can_manage_tags
-    tagText: 'Human Verified', // 14 chars (including space), no emoji
+    enabled: process.env.MEMBER_TAGS_ENABLED === 'true', // Enable after bot admin setup with can_manage_tags
+    tagText: process.env.MEMBER_TAG_TEXT || 'Human Verified', // 14 chars (including space), no emoji
     requireAdminPermission: 'can_manage_tags',
-    targetChatId: '', // Telegram chat ID or @username (e.g., '@finntalkgroup')
+    targetChatId: process.env.OPENCLAW_ALLOWED_GROUP || '', // Telegram chat ID or @username (e.g., '@finntalkgroup')
+    sweepIntervalHours: parseInt(process.env.MEMBER_TAG_SWEEP_INTERVAL_HOURS || '24', 10), // Default 24 hours
   },
   selectedGroupIds: {
     enabled: false,
@@ -176,6 +187,15 @@ export const openclawIntegrationConfig: OpenClawIntegrationConfig = {
     syncMode: 'per-request',
     periodicSyncIntervalSeconds: 300, // 5 minutes
     failClosedOnSyncError: true,
+  },
+
+  /**
+   * PLANNED: Private status socket for OpenClaw integration
+   */
+  statusSocket: {
+    enabled: !!(process.env.WORLDID_STATUS_SOCKET && process.env.WORLDID_STATUS_SECRET_FILE),
+    socketPath: process.env.WORLDID_STATUS_SOCKET || '',
+    secretFile: process.env.WORLDID_STATUS_SECRET_FILE || '',
   },
 };
 
