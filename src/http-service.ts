@@ -270,6 +270,7 @@ export class HttpService {
           }
           const html = readFileSync(uiPath, 'utf-8');
           res.setHeader('Content-Type', 'text/html');
+          res.setHeader('Cache-Control', 'no-store');
           res.send(html);
         } catch (error) {
           console.error('UI serving error:', error);
@@ -290,7 +291,7 @@ export class HttpService {
           const bundle = readFileSync(bundlePath, 'utf-8');
           res.setHeader('Content-Type', 'application/javascript');
           // No caching for unversioned bundles to prevent stale SDK after deployment
-          res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+          res.setHeader('Cache-Control', 'no-store');
           res.send(bundle);
         } catch (error) {
           console.error('IDKit bundle serving error:', error);
@@ -311,7 +312,7 @@ export class HttpService {
           const bundle = readFileSync(bundlePath, 'utf-8');
           res.setHeader('Content-Type', 'application/javascript');
           // No caching for unversioned bundles to prevent stale SDK after deployment
-          res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+          res.setHeader('Cache-Control', 'no-store');
           res.send(bundle);
         } catch (error) {
           console.error('QR code bundle serving error:', error);
@@ -319,15 +320,6 @@ export class HttpService {
         }
       });
 
-      // Session info API (for UI initialization)
-      this.app.get('/api/enrollment/session/:sessionId', async (req: Request, res: Response) => {
-        try {
-          await this.handleGetSessionInfo(req, res);
-        } catch (error) {
-          console.error('Session info error:', error);
-          res.status(500).json({ error: 'Session retrieval failed' });
-        }
-      });
     }
 
     // 404 handler
@@ -338,7 +330,8 @@ export class HttpService {
     // Generic error handler (no identity leaks)
     // MUST be registered AFTER all routes and 404 handler
     this.app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-      console.error('Request error:', err);
+      // Log only safe fields, never the full error or body (could contain PII)
+      console.error('Request error:', err.type || 'unknown', err.status || 'no-status');
 
       if (err.type === 'entity.parse.failed') {
         return res.status(400).json({ error: 'Invalid JSON' });
@@ -396,6 +389,11 @@ export class HttpService {
         return;
       }
 
+      if (error.message?.includes('session verification')) {
+        res.status(409).json({ error: 'User must use session verification' });
+        return;
+      }
+
       res.status(500).json({ error: 'Challenge creation failed' });
     }
   }
@@ -432,11 +430,10 @@ export class HttpService {
     const result: CompleteEnrollmentResult = await this.enrollmentService.completeEnrollment(enrollmentRequest);
 
     if (result.success) {
+      // Return only success, expiry, and protocol version (no PII/sessionId)
       res.json({
         success: true,
-        telegramUserId: result.telegramUserId,
         expiresAt: result.expiresAt,
-        sessionId: result.sessionId,
         protocolVersion: result.protocolVersion,
       });
     } else {
@@ -460,9 +457,9 @@ export class HttpService {
   }
 
   /**
-   * Handle session challenge creation request.
+   * Handle session challenge creation request (renewal only).
    * 
-   * Request body: { initData: string, mode?: 'renewal' | 'reactivation' }
+   * Request body: { initData: string }
    * Response: { signedChallenge: SignedRpChallenge }
    */
   private async handleCreateSessionChallenge(req: Request, res: Response): Promise<void> {
@@ -477,18 +474,9 @@ export class HttpService {
       return;
     }
 
-    const mode = req.body.mode || 'renewal';
-    if (mode !== 'renewal' && mode !== 'reactivation') {
-      res.status(400).json({ error: 'mode must be "renewal" or "reactivation"' });
-      return;
-    }
-
-    // Create session challenge
+    // Create session challenge (renewal only)
     try {
-      const result = await this.enrollmentService.createSessionChallenge(
-        req.body.initData,
-        { mode }
-      );
+      const result = await this.enrollmentService.createSessionChallenge(req.body.initData);
 
       res.json({
         signedChallenge: result.signedChallenge,
@@ -507,13 +495,8 @@ export class HttpService {
         return;
       }
 
-      if (error.message?.includes('has been revoked') && mode === 'renewal') {
-        res.status(403).json({ error: 'Enrollment revoked (use mode=reactivation)' });
-        return;
-      }
-
-      if (error.message?.includes('not revoked') && mode === 'reactivation') {
-        res.status(400).json({ error: 'Enrollment not revoked' });
+      if (error.message?.includes('has been revoked')) {
+        res.status(403).json({ error: 'Enrollment revoked' });
         return;
       }
 
@@ -552,17 +535,16 @@ export class HttpService {
       });
 
       if (result.success) {
+        // Return only success and expiry (no PII/nullifier/sessionId)
         res.json({
           success: true,
-          telegramUserId: result.telegramUserId,
-          nullifier: result.nullifier,
           expiresAt: result.expiresAt,
         });
       } else {
-        // Verification failed
+        // Verification failed - sanitized error (no raw error text)
         res.status(400).json({
           success: false,
-          error: result.error,
+          error: 'Session verification failed',
         });
       }
     } catch (error: any) {
@@ -578,7 +560,7 @@ export class HttpService {
    * - new: No enrollment exists (fresh v2 enrollment)
    * - upgrade: Historical UNKNOWN/no-session enrollment (fresh v2 enrollment)
    * - renewal: Active or expired enrollment with saved session
-   * - reactivation: Revoked enrollment with saved session
+   * - error: Revoked enrollment (cannot use system)
    * 
    * Session ID returned ONLY when needed by frontend for proveSession flow.
    * NEVER returned for new/upgrade flows (no session exists yet).
@@ -611,8 +593,8 @@ export class HttpService {
         return;
       }
 
-      // Check protocol version and session presence
-      if (!enrollment.protocolVersion || enrollment.protocolVersion === 'UNKNOWN' || !enrollment.sessionId) {
+      // Check session presence (key only on sessionId, not protocolVersion)
+      if (!enrollment.sessionId) {
         // Historical enrollment without session - upgrade to v2
         res.json({
           status: 'upgrade',
@@ -622,11 +604,9 @@ export class HttpService {
 
       // Enrollment has session - check revocation status
       if (enrollment.revoked) {
-        // Revoked with saved session - explicit reactivation flow
+        // Revoked users cannot use the system (no reactivation flow)
         res.json({
-          status: 'reactivation',
-          sessionId: enrollment.sessionId, // Needed for proveSession
-          expiresAt: enrollment.expiresAt,
+          status: 'error',
         });
         return;
       }
@@ -688,40 +668,6 @@ export class HttpService {
 
     // Telegram expects 200 OK quickly
     res.status(200).json({ ok: true });
-  }
-
-  /**
-   * Handle session info request (for UI initialization).
-   * 
-   * Security: Validates session ID format, checks expiry.
-   */
-  private async handleGetSessionInfo(req: Request, res: Response): Promise<void> {
-    if (!this.telegramBotHandler) {
-      res.status(404).json({ error: 'Bot not configured' });
-      return;
-    }
-
-    const sessionId = req.params.sessionId;
-
-    if (!sessionId || typeof sessionId !== 'string') {
-      res.status(400).json({ error: 'Invalid session ID' });
-      return;
-    }
-
-    const sessionInfo = await this.telegramBotHandler.getSessionInfo(sessionId);
-
-    if (!sessionInfo) {
-      res.status(404).json({ error: 'Session not found or expired' });
-      return;
-    }
-
-    // Return session configuration (NO SECRETS)
-    res.json({
-      signedChallenge: sessionInfo.signedChallenge,
-      appId: sessionInfo.appId,
-      rpId: (sessionInfo as any).rpId, // Include rpId if present
-      signal: sessionInfo.signal,
-    });
   }
 
   /**
@@ -898,6 +844,20 @@ export class HttpService {
         }
       });
     });
+  }
+
+  /**
+   * Get the actual port the server is listening on (useful when port 0 is used).
+   */
+  getActualPort(): number {
+    if (!this.server) {
+      return this.port;
+    }
+    const address = this.server.address();
+    if (typeof address === 'object' && address !== null) {
+      return address.port;
+    }
+    return this.port;
   }
 
   /**

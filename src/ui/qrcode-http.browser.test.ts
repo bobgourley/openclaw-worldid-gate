@@ -39,8 +39,8 @@ class MockTelegramBotHandler {
 test.describe('QR Code HTTP Integration', () => {
   let httpService: HttpService;
   let enrollmentService: EnrollmentService;
-  const TEST_PORT = 13579;
-  const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
+  const TEST_PORT = 0; // Let OS assign an available port
+  let BASE_URL: string;
 
   test.beforeAll(async () => {
     // Setup real HTTP service with mock bot handler to enable enrollment routes
@@ -64,6 +64,10 @@ test.describe('QR Code HTTP Integration', () => {
     });
 
     await httpService.start();
+    
+    // Get the actual assigned port and set BASE_URL
+    const actualPort = httpService.getActualPort();
+    BASE_URL = `http://127.0.0.1:${actualPort}`;
   });
 
   test.afterAll(async () => {

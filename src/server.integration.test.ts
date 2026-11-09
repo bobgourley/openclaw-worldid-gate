@@ -76,8 +76,8 @@ describe('Production server integration', () => {
   let testDbPath: string;
 
   beforeEach(async () => {
-    // Use random port for each test
-    testPort = 13000 + Math.floor(Math.random() * 1000);
+    // Use port 0 to let OS assign an available port
+    testPort = 0;
     testDbPath = `/tmp/test-enrollment-${Date.now()}-${Math.random()}.db`;
 
     // Create services with throwaway config
@@ -118,6 +118,9 @@ describe('Production server integration', () => {
     });
 
     await httpService.start();
+    
+    // Get the actual assigned port
+    testPort = httpService.getActualPort();
   });
 
   afterEach(async () => {
@@ -176,38 +179,6 @@ describe('Production server integration', () => {
       }
       
       assert.ok(foundTelegramCheck, 'Should explicitly check window.Telegram availability');
-    });
-  });
-
-  describe('Session API routes', () => {
-    test('GET /api/enrollment/session/:sessionId with invalid format returns 404', async () => {
-      const response = await fetch(`http://127.0.0.1:${testPort}/api/enrollment/session/invalid!@#`);
-      
-      // Invalid session ID format returns 404 (session not found)
-      assert.equal(response.status, 404);
-      const data = await response.json();
-      assert.ok(data.error);
-    });
-
-    test('GET /api/enrollment/session/:sessionId with non-existent session returns 404', async () => {
-      const validSessionId = 'a'.repeat(32);
-      const response = await fetch(`http://127.0.0.1:${testPort}/api/enrollment/session/${validSessionId}`);
-      
-      assert.equal(response.status, 404);
-      const data = await response.json();
-      assert.ok(data.error);
-    });
-
-    test('Session info route does not leak identity without proper auth', async () => {
-      // Even with a valid-format session ID, should not expose user identity
-      const validSessionId = 'b'.repeat(32);
-      const response = await fetch(`http://127.0.0.1:${testPort}/api/enrollment/session/${validSessionId}`);
-      
-      // Should fail (404 or 403), not expose user ID
-      assert.ok(response.status >= 400, 'Should deny access');
-      const text = await response.text();
-      assert.ok(!text.includes('userId'), 'Should not leak user ID');
-      assert.ok(!text.includes('telegramUserId'), 'Should not leak Telegram user ID');
     });
   });
 

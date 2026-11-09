@@ -355,6 +355,12 @@ describe('TelegramBotHandler', () => {
 
       assert.equal(sentMessages.length, 1);
       assert.match(sentMessages[0].text, /Commands/i);
+      // Verify only visible commands (/verify, /status, /help) are shown
+      assert.match(sentMessages[0].text, /\/verify/);
+      assert.match(sentMessages[0].text, /\/status/);
+      assert.match(sentMessages[0].text, /\/help/);
+      // /revoke should NOT be in help text (hidden command)
+      assert.ok(!sentMessages[0].text.includes('/revoke'), 'Help text should not include /revoke');
     });
 
     it('handles /verify command for new user', async () => {
@@ -396,10 +402,25 @@ describe('TelegramBotHandler', () => {
         nullifier: '0x123',
         telegramUserId: 123,
         action: 'test',
+        sessionId: 'session_' + '0'.repeat(128),
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         revoked: false,
         expired: false,
+      }));
+
+      mockEnrollmentService.createSessionChallenge = mock.fn(async () => ({
+        signedChallenge: {
+          appId: 'app_test',
+          rpId: 'rp_test',
+          nonce: '0x' + '0'.repeat(64),
+          createdAt: Math.floor(Date.now() / 1000),
+          expiresAt: Math.floor(Date.now() / 1000) + 300,
+          signature: '0x' + '0'.repeat(130),
+          action: '',
+          signalHash: '',
+          environment: 'staging',
+        },
       }));
 
       const handler = new TelegramBotHandler({
@@ -423,7 +444,61 @@ describe('TelegramBotHandler', () => {
       await handler.handleUpdate(update);
 
       assert.equal(sentMessages.length, 1);
-      assert.match(sentMessages[0].text, /already verified/i);
+      // Should now offer early renewal, not say "already verified"
+      assert.match(sentMessages[0].text, /World ID Verification|verify|Open/i);
+    });
+
+    it('handles /verify for expired user with session_id (renewal, not create)', async () => {
+      mockEnrollmentService.findEnrollment = mock.fn(async () => ({
+        nullifier: '0x456',
+        telegramUserId: 124,
+        action: 'test',
+        sessionId: 'session_' + '1'.repeat(128),
+        expiresAt: Math.floor(Date.now() / 1000) - 100, // EXPIRED
+        createdAt: new Date().toISOString(),
+        revoked: false,
+        expired: true,
+      }));
+
+      mockEnrollmentService.createSessionChallenge = mock.fn(async () => ({
+        signedChallenge: {
+          appId: 'app_test',
+          rpId: 'rp_test',
+          nonce: '0x' + '1'.repeat(64),
+          createdAt: Math.floor(Date.now() / 1000),
+          expiresAt: Math.floor(Date.now() / 1000) + 300,
+          signature: '0x' + '1'.repeat(130),
+          action: null,
+          signalHash: null,
+          environment: 'staging',
+        },
+      }));
+
+      const handler = new TelegramBotHandler({
+        botToken: 'test_token',
+        enrollmentService: mockEnrollmentService,
+        transport: mockTransport,
+        enrollmentBaseUrl: 'https://example.com',
+      });
+
+      const update: TelegramUpdate = {
+        update_id: 1,
+        message: {
+          message_id: 1,
+          from: { id: 124, is_bot: false, first_name: 'Expired' },
+          chat: { id: 124, type: 'private' },
+          date: 1234567890,
+          text: '/verify',
+        },
+      };
+
+      await handler.handleUpdate(update);
+
+      assert.equal(sentMessages.length, 1);
+      // Should offer renewal via proveSession, NOT uniqueness proof with 'create'
+      assert.match(sentMessages[0].text, /World ID Verification|verify|Open/i);
+      // Verify createSessionChallenge was called (no mode parameter)
+      assert.equal(mockEnrollmentService.createSessionChallenge.mock.calls.length, 1);
     });
 
     it('handles /status for enrolled user', async () => {
@@ -542,16 +617,10 @@ describe('TelegramBotHandler', () => {
   });
 
   describe('/revoke command', () => {
-    it('revokes active enrollment in private chat', async () => {
-      const mockRevokeEnrollment = mock.fn(async () => true);
-      const enrollmentServiceWithRevoke = {
-        ...mockEnrollmentService,
-        revokeEnrollment: mockRevokeEnrollment,
-      } as any;
-
+    it('treats /revoke as unknown command in private chat', async () => {
       const handler = new TelegramBotHandler({
         botToken: 'test_token',
-        enrollmentService: enrollmentServiceWithRevoke,
+        enrollmentService: mockEnrollmentService,
         transport: mockTransport,
         enrollmentBaseUrl: 'https://example.com',
       });
@@ -569,243 +638,9 @@ describe('TelegramBotHandler', () => {
 
       await handler.handleUpdate(update);
 
-      assert.equal((mockRevokeEnrollment as any).mock.calls.length, 1);
-      assert.equal((mockRevokeEnrollment as any).mock.calls[0].arguments[0], 12345);
       assert.equal(sentMessages.length, 1);
       assert.equal(sentMessages[0].chatId, 12345);
-      assert.match(sentMessages[0].text, /Your verification has been revoked/i);
-      assert.match(sentMessages[0].text, /World ID credentials in the World App are not affected/i);
-      assert.match(sentMessages[0].text, /\/verify to verify again/i);
-    });
-
-    it('handles /revoke when no active enrollment exists', async () => {
-      const mockRevokeEnrollment = mock.fn(async () => false);
-      const enrollmentServiceWithRevoke = {
-        ...mockEnrollmentService,
-        revokeEnrollment: mockRevokeEnrollment,
-      } as any;
-
-      const handler = new TelegramBotHandler({
-        botToken: 'test_token',
-        enrollmentService: enrollmentServiceWithRevoke,
-        transport: mockTransport,
-        enrollmentBaseUrl: 'https://example.com',
-      });
-
-      const update: TelegramUpdate = {
-        update_id: 1,
-        message: {
-          message_id: 1,
-          from: { id: 12345, is_bot: false, first_name: 'Test' },
-          chat: { id: 12345, type: 'private' },
-          date: 1234567890,
-          text: '/revoke',
-        },
-      };
-
-      await handler.handleUpdate(update);
-
-      assert.equal((mockRevokeEnrollment as any).mock.calls.length, 1);
-      assert.equal(sentMessages.length, 1);
-      assert.equal(sentMessages[0].chatId, 12345);
-      assert.match(sentMessages[0].text, /No active verification found/i);
-      assert.match(sentMessages[0].text, /\/verify to start World ID verification/i);
-    });
-
-    it('handles /revoke@botname format', async () => {
-      const mockRevokeEnrollment = mock.fn(async () => true);
-      const enrollmentServiceWithRevoke = {
-        ...mockEnrollmentService,
-        revokeEnrollment: mockRevokeEnrollment,
-      } as any;
-
-      const handler = new TelegramBotHandler({
-        botToken: 'test_token',
-        enrollmentService: enrollmentServiceWithRevoke,
-        transport: mockTransport,
-        enrollmentBaseUrl: 'https://example.com',
-      });
-
-      const update: TelegramUpdate = {
-        update_id: 1,
-        message: {
-          message_id: 1,
-          from: { id: 12345, is_bot: false, first_name: 'Test' },
-          chat: { id: 12345, type: 'private' },
-          date: 1234567890,
-          text: '/revoke@worldid_bot',
-        },
-      };
-
-      await handler.handleUpdate(update);
-
-      assert.equal((mockRevokeEnrollment as any).mock.calls.length, 1);
-      assert.equal(sentMessages.length, 1);
-      assert.match(sentMessages[0].text, /Your verification has been revoked/i);
-    });
-
-    it('directs group /revoke to private DM without exposing details', async () => {
-      const mockRevokeEnrollment = mock.fn(async () => true);
-      const enrollmentServiceWithRevoke = {
-        ...mockEnrollmentService,
-        revokeEnrollment: mockRevokeEnrollment,
-      } as any;
-
-      const handler = new TelegramBotHandler({
-        botToken: 'test_token',
-        enrollmentService: enrollmentServiceWithRevoke,
-        transport: mockTransport,
-        enrollmentBaseUrl: 'https://example.com',
-      });
-
-      const update: TelegramUpdate = {
-        update_id: 1,
-        message: {
-          message_id: 1,
-          from: { id: 12345, is_bot: false, first_name: 'Test' },
-          chat: { id: 999, type: 'group' },
-          date: 1234567890,
-          text: '/revoke',
-        },
-      };
-
-      await handler.handleUpdate(update);
-
-      assert.equal((mockRevokeEnrollment as any).mock.calls.length, 0);
-      assert.equal(sentMessages.length, 1);
-      assert.equal(sentMessages[0].chatId, 999);
-      assert.match(sentMessages[0].text, /message me privately/i);
-      assert.doesNotMatch(sentMessages[0].text, /verification/i);
-    });
-
-    it('directs supergroup /revoke to private DM', async () => {
-      const mockRevokeEnrollment = mock.fn(async () => true);
-      const enrollmentServiceWithRevoke = {
-        ...mockEnrollmentService,
-        revokeEnrollment: mockRevokeEnrollment,
-      } as any;
-
-      const handler = new TelegramBotHandler({
-        botToken: 'test_token',
-        enrollmentService: enrollmentServiceWithRevoke,
-        transport: mockTransport,
-        enrollmentBaseUrl: 'https://example.com',
-      });
-
-      const update: TelegramUpdate = {
-        update_id: 1,
-        message: {
-          message_id: 1,
-          from: { id: 12345, is_bot: false, first_name: 'Test' },
-          chat: { id: 999, type: 'supergroup' },
-          date: 1234567890,
-          text: '/revoke',
-        },
-      };
-
-      await handler.handleUpdate(update);
-
-      assert.equal((mockRevokeEnrollment as any).mock.calls.length, 0);
-      assert.equal(sentMessages.length, 1);
-      assert.equal(sentMessages[0].chatId, 999);
-      assert.match(sentMessages[0].text, /message me privately/i);
-    });
-
-    it('directs group /revoke@botname to private DM', async () => {
-      const mockRevokeEnrollment = mock.fn(async () => true);
-      const enrollmentServiceWithRevoke = {
-        ...mockEnrollmentService,
-        revokeEnrollment: mockRevokeEnrollment,
-      } as any;
-
-      const handler = new TelegramBotHandler({
-        botToken: 'test_token',
-        enrollmentService: enrollmentServiceWithRevoke,
-        transport: mockTransport,
-        enrollmentBaseUrl: 'https://example.com',
-      });
-
-      const update: TelegramUpdate = {
-        update_id: 1,
-        message: {
-          message_id: 1,
-          from: { id: 12345, is_bot: false, first_name: 'Test' },
-          chat: { id: 999, type: 'group' },
-          date: 1234567890,
-          text: '/revoke@worldid_bot',
-        },
-      };
-
-      await handler.handleUpdate(update);
-
-      assert.equal((mockRevokeEnrollment as any).mock.calls.length, 0);
-      assert.equal(sentMessages.length, 1);
-      assert.equal(sentMessages[0].chatId, 999);
-      assert.match(sentMessages[0].text, /message me privately/i);
-    });
-
-    it('uses authenticated message.from.id only', async () => {
-      const mockRevokeEnrollment = mock.fn(async () => true);
-      const enrollmentServiceWithRevoke = {
-        ...mockEnrollmentService,
-        revokeEnrollment: mockRevokeEnrollment,
-      } as any;
-
-      const handler = new TelegramBotHandler({
-        botToken: 'test_token',
-        enrollmentService: enrollmentServiceWithRevoke,
-        transport: mockTransport,
-        enrollmentBaseUrl: 'https://example.com',
-      });
-
-      const update: TelegramUpdate = {
-        update_id: 1,
-        message: {
-          message_id: 1,
-          from: { id: 99999, is_bot: false, first_name: 'Test' },
-          chat: { id: 99999, type: 'private' },
-          date: 1234567890,
-          text: '/revoke',
-        },
-      };
-
-      await handler.handleUpdate(update);
-
-      assert.equal((mockRevokeEnrollment as any).mock.calls.length, 1);
-      assert.equal((mockRevokeEnrollment as any).mock.calls[0].arguments[0], 99999);
-    });
-
-    it('handles revoke service error gracefully', async () => {
-      const mockRevokeEnrollment = mock.fn(async () => {
-        throw new Error('Database error');
-      });
-      const enrollmentServiceWithRevoke = {
-        ...mockEnrollmentService,
-        revokeEnrollment: mockRevokeEnrollment,
-      } as any;
-
-      const handler = new TelegramBotHandler({
-        botToken: 'test_token',
-        enrollmentService: enrollmentServiceWithRevoke,
-        transport: mockTransport,
-        enrollmentBaseUrl: 'https://example.com',
-      });
-
-      const update: TelegramUpdate = {
-        update_id: 1,
-        message: {
-          message_id: 1,
-          from: { id: 12345, is_bot: false, first_name: 'Test' },
-          chat: { id: 12345, type: 'private' },
-          date: 1234567890,
-          text: '/revoke',
-        },
-      };
-
-      await handler.handleUpdate(update);
-
-      assert.equal(sentMessages.length, 1);
-      assert.match(sentMessages[0].text, /Unable to process revocation/i);
+      assert.match(sentMessages[0].text, /Unknown command/i);
     });
   });
 });

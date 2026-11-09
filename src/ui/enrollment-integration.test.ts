@@ -52,21 +52,18 @@ describe('Frontend Integration Patterns', () => {
   it('routes to correct flow based on server status response', () => {
     const html = readFileSync(join(__dirname, 'enrollment.html'), 'utf-8');
     
-    // Verify flow routing
+    // Verify flow routing (renewal only, no reactivation)
     assert.ok(html.includes("status === 'renewal'"), 'Must check renewal status');
-    assert.ok(html.includes("status === 'reactivation'"), 'Must check reactivation status');
     assert.ok(html.includes('handleReturningUser'), 'Must handle returning users');
     assert.ok(html.includes('handleNewEnrollment'), 'Must handle new enrollment');
   });
 
-  it('passes mode parameter for reactivation challenges', () => {
+  it('handles renewal flow without mode parameter', () => {
     const html = readFileSync(join(__dirname, 'enrollment.html'), 'utf-8');
     
-    // Verify reactivation mode handling
-    assert.ok(html.includes("'reactivation'"), 'Must handle reactivation mode');
-    assert.ok(html.includes("'renewal'"), 'Must handle renewal mode');
+    // Verify renewal handling (no mode parameter)
     assert.ok(html.includes('/api/session/challenge/create'), 'Must call session challenge endpoint');
-    assert.ok(html.includes('mode:'), 'Must pass mode parameter');
+    assert.ok(!html.includes("mode: 'reactivation'"), 'Must not use reactivation mode');
   });
 
   it('submits proofs to correct endpoints', () => {

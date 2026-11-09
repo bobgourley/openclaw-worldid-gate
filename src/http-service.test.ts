@@ -8,6 +8,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createHmac } from 'node:crypto';
+import { format } from 'node:util';
 import { HttpService } from './http-service.js';
 import { EnrollmentService, type Clock, type BackendVerificationClient } from './enrollment-service-production.js';
 import { WorldIdChallengeAdapter } from './worldid-challenge-adapter.js';
@@ -127,7 +128,7 @@ describe('HttpService Integration', () => {
     // Generate unique identifiers for each test run
     const uniqueId = Math.floor(Math.random() * 1000000);
     testDbPath = `/tmp/test-http-service-${uniqueId}.db`;
-    testPort = 13579 + (uniqueId % 1000);
+    testPort = 0; // Let OS assign an available port
 
     if (fs.existsSync(testDbPath)) {
       fs.unlinkSync(testDbPath);
@@ -164,6 +165,9 @@ describe('HttpService Integration', () => {
     });
 
     await service.start();
+    
+    // Get the actual assigned port
+    testPort = service.getActualPort();
   });
 
   afterEach(async () => {
@@ -264,7 +268,7 @@ describe('HttpService Integration', () => {
         body: JSON.stringify({ initData, idkitResult: idkitResult1 }),
       });
 
-      // Second attempt
+      // Second attempt - should reject because user has sessionId
       const response = await fetch(`http://127.0.0.1:${testPort}/api/challenge/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -273,7 +277,7 @@ describe('HttpService Integration', () => {
 
       assert.equal(response.status, 409);
       const data = await response.json();
-      assert.match(data.error, /already enrolled/i);
+      assert.match(data.error, /session verification/i);
     });
   });
 
@@ -308,8 +312,12 @@ describe('HttpService Integration', () => {
       assert.equal(response.status, 200);
       const data = await response.json();
       assert.equal(data.success, true);
-      assert.equal(data.telegramUserId, userId);
+      // Privacy: no PII fields returned
       assert.ok(data.expiresAt);
+      assert.ok(data.protocolVersion);
+      assert.strictEqual(data.telegramUserId, undefined, 'Must not return telegramUserId');
+      assert.strictEqual(data.nullifier, undefined, 'Must not return nullifier');
+      assert.strictEqual(data.sessionId, undefined, 'Must not return sessionId');
     });
 
     it('rejects missing initData', async () => {
@@ -396,43 +404,6 @@ describe('HttpService Integration', () => {
       assert.match(data.error, /no enrollment found/i);
     });
 
-    it('rejects reactivation mode for non-revoked enrollment', async () => {
-      const userId = 23456;
-      const initData = createValidInitData(userId, TEST_BOT_TOKEN);
-
-      // Enroll the user
-      const challenge1Response = await fetch(`http://127.0.0.1:${testPort}/api/challenge/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData }),
-      });
-      const challenge1 = await challenge1Response.json();
-      
-      const sessionId2 = 'session_' + '3333333333333333'.repeat(8);
-      const idkitResult1 = createIDKitResult(
-        challenge1.signedChallenge.nonce,
-        challenge1.signedChallenge.action,
-        '2234567890abcdef1234567890abcdef',
-        sessionId2
-      );
-
-      await fetch(`http://127.0.0.1:${testPort}/api/enrollment/complete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData, idkitResult: idkitResult1 }),
-      });
-
-      // Try reactivation mode on active enrollment
-      const response = await fetch(`http://127.0.0.1:${testPort}/api/session/challenge/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData, mode: 'reactivation' }),
-      });
-
-      assert.equal(response.status, 400);
-      const data = await response.json();
-      assert.match(data.error, /not revoked/i);
-    });
   });
 
   describe('POST /api/session/verify', () => {
@@ -456,13 +427,13 @@ describe('HttpService Integration', () => {
         sessionId3
       );
 
-      const enrollResponse = await fetch(`http://127.0.0.1:${testPort}/api/enrollment/complete`, {
+      await fetch(`http://127.0.0.1:${testPort}/api/enrollment/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ initData, idkitResult: idkitResult1 }),
       });
-      const enrollment = await enrollResponse.json();
-      const sessionId = enrollment.sessionId;
+      // sessionId not returned in response (privacy fix), use the one from enrollment
+      const sessionId = sessionId3;
 
       // Create session challenge
       const sessionChallengeResponse = await fetch(`http://127.0.0.1:${testPort}/api/session/challenge/create`, {
@@ -506,8 +477,10 @@ describe('HttpService Integration', () => {
 
       const data = await verifyResponse.json();
       assert.equal(data.success, true);
-      assert.equal(data.telegramUserId, userId);
+      // Privacy: no PII fields returned
       assert.ok(data.expiresAt);
+      assert.strictEqual(data.telegramUserId, undefined, 'Must not return telegramUserId');
+      assert.strictEqual(data.nullifier, undefined, 'Must not return nullifier');
     });
 
     it('rejects missing initData', async () => {
@@ -536,6 +509,34 @@ describe('HttpService Integration', () => {
       assert.equal(response.status, 404);
       const data = await response.json();
       assert.match(data.error, /not found/i);
+    });
+  });
+
+  describe('Error logging privacy', () => {
+    it('does not log PII from malformed JSON requests', async () => {
+      // Capture console.error output
+      const originalConsoleError = console.error;
+      const loggedMessages: string[] = [];
+      console.error = (...args: any[]) => {
+        loggedMessages.push(format(...args));
+      };
+
+      try {
+        // Post malformed JSON containing a fake Telegram ID
+        const malformedBody = '{"initData": "user=123456789&hash=abc", invalid json}';
+        await fetch(`http://127.0.0.1:${testPort}/api/challenge/create`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: malformedBody,
+        });
+
+        // Verify the fake ID is NOT in any logged message
+        const combinedLogs = loggedMessages.join(' ');
+        assert.ok(!combinedLogs.includes('123456789'), 'Logs must not contain Telegram ID from malformed request');
+        assert.ok(!combinedLogs.includes('user='), 'Logs must not contain initData from malformed request');
+      } finally {
+        console.error = originalConsoleError;
+      }
     });
   });
 });
