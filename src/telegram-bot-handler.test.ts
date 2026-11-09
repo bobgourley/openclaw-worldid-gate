@@ -231,6 +231,41 @@ describe('TelegramBotHandler', () => {
       assert.equal(sentMessages.length, 0);
     });
 
+    it('stays silent with no error log on /ask and anonymous or bot senders in supergroup', async () => {
+      const handler = new TelegramBotHandler({
+        botToken: 'test_token',
+        enrollmentService: mockEnrollmentService,
+        transport: mockTransport,
+        enrollmentBaseUrl: 'https://example.com',
+      });
+      const errors: string[] = [];
+      const originalError = console.error;
+      console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+      try {
+        const senders: any[] = [
+          { id: 123, is_bot: false, first_name: 'Test' },
+          { id: 124, is_bot: true, first_name: 'OtherBot' },
+          undefined,
+        ];
+        for (const [i, from] of senders.entries()) {
+          await handler.handleUpdate({
+            update_id: 100 + i,
+            message: {
+              message_id: 100 + i,
+              from,
+              chat: { id: -456, type: 'supergroup' },
+              date: 1234567890,
+              text: '/ask hello',
+            },
+          } as any);
+        }
+      } finally {
+        console.error = originalError;
+      }
+      assert.equal(sentMessages.length, 0, 'Bot must send nothing in groups');
+      assert.equal(errors.length, 0, 'Group traffic must not produce error logs');
+    });
+
     it('stays silent on unaddressed command in group', async () => {
       const handler = new TelegramBotHandler({
         botToken: 'test_token',
@@ -282,7 +317,6 @@ describe('TelegramBotHandler', () => {
     it('stays silent on command addressed to this bot', async () => {
       const handler = new TelegramBotHandler({
         botToken: 'test_token',
-        botUsername: 'TestBot',
         enrollmentService: mockEnrollmentService,
         transport: mockTransport,
         enrollmentBaseUrl: 'https://example.com',
@@ -307,7 +341,6 @@ describe('TelegramBotHandler', () => {
     it('stays silent on command addressed to different bot', async () => {
       const handler = new TelegramBotHandler({
         botToken: 'test_token',
-        botUsername: 'TestBot',
         enrollmentService: mockEnrollmentService,
         transport: mockTransport,
         enrollmentBaseUrl: 'https://example.com',
@@ -332,7 +365,6 @@ describe('TelegramBotHandler', () => {
     it('stays silent on plain message in group', async () => {
       const handler = new TelegramBotHandler({
         botToken: 'test_token',
-        botUsername: 'TestBot',
         enrollmentService: mockEnrollmentService,
         transport: mockTransport,
         enrollmentBaseUrl: 'https://example.com',
@@ -357,11 +389,9 @@ describe('TelegramBotHandler', () => {
     it('stays silent on plain message in known tag group', async () => {
       const handler = new TelegramBotHandler({
         botToken: 'test_token',
-        botUsername: 'TestBot',
         enrollmentService: mockEnrollmentService,
         transport: mockTransport,
         enrollmentBaseUrl: 'https://example.com',
-        knownGroupIds: [-123456, -789012],
       });
 
       const update: TelegramUpdate = {
@@ -383,11 +413,9 @@ describe('TelegramBotHandler', () => {
     it('stays silent on plain message in unknown group', async () => {
       const handler = new TelegramBotHandler({
         botToken: 'test_token',
-        botUsername: 'TestBot',
         enrollmentService: mockEnrollmentService,
         transport: mockTransport,
         enrollmentBaseUrl: 'https://example.com',
-        knownGroupIds: [-123456],
       });
 
       const update: TelegramUpdate = {
@@ -772,7 +800,6 @@ describe('TelegramBotHandler', () => {
     it('stays silent on command addressed to this bot', async () => {
       const handler = new TelegramBotHandler({
         botToken: 'test_token',
-        botUsername: 'MyTestBot',
         enrollmentService: mockEnrollmentService,
         transport: mockTransport,
         enrollmentBaseUrl: 'https://example.com',
@@ -797,7 +824,6 @@ describe('TelegramBotHandler', () => {
     it('stays silent on addressed command with arguments', async () => {
       const handler = new TelegramBotHandler({
         botToken: 'test_token',
-        botUsername: 'MyTestBot',
         enrollmentService: mockEnrollmentService,
         transport: mockTransport,
         enrollmentBaseUrl: 'https://example.com',

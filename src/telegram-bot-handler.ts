@@ -69,9 +69,6 @@ export interface TelegramBotHandlerConfig {
   /** Bot token for authentication */
   botToken: string;
   
-  /** Bot username (optional, for group command filtering) */
-  botUsername?: string;
-  
   /** Enrollment service */
   enrollmentService: EnrollmentService;
   
@@ -89,9 +86,6 @@ export interface TelegramBotHandlerConfig {
   
   /** Allowed group ID for OpenClaw dispatch (required if openclawConfig set) */
   allowedGroupId?: number;
-  
-  /** Known group IDs (tag groups + allowed group) for silent operation */
-  knownGroupIds?: number[];
 }
 
 /**
@@ -99,14 +93,12 @@ export interface TelegramBotHandlerConfig {
  */
 export class TelegramBotHandler {
   private readonly botToken: string;
-  private readonly botUsername: string;
   private readonly enrollmentService: EnrollmentService;
   private readonly transport: TelegramBotTransport;
   private readonly enrollmentBaseUrl: string;
   private readonly webhookSecret?: string;
   private readonly openclawConfig?: OpenClawDispatchConfig;
   private readonly allowedGroupId?: number;
-  private readonly knownGroupIds: Set<number>;
   private readonly activeSessions: Map<number, { sessionId: string; createdAt: number }> = new Map();
   private readonly recentDeliveries: Map<string, number> = new Map();
 
@@ -125,14 +117,12 @@ export class TelegramBotHandler {
     }
 
     this.botToken = config.botToken;
-    this.botUsername = config.botUsername || '';
     this.enrollmentService = config.enrollmentService;
     this.transport = config.transport;
     this.enrollmentBaseUrl = config.enrollmentBaseUrl;
     this.webhookSecret = config.webhookSecret;
     this.openclawConfig = config.openclawConfig;
     this.allowedGroupId = config.allowedGroupId;
-    this.knownGroupIds = new Set(config.knownGroupIds || []);
     
     // Validate OpenClaw config if provided
     if (this.openclawConfig) {
@@ -199,47 +189,6 @@ export class TelegramBotHandler {
   }
 
   /**
-   * Check if a message text is a bot command explicitly addressed to this bot.
-   * 
-   * Examples:
-   * - /verify@MyBot -> true (if botUsername is MyBot)
-   * - /start@MyBot -> true
-   * - /verify -> false (unaddressed)
-   * - /verify@OtherBot -> false (addressed to different bot)
-   * - plain text -> false
-   * 
-   * @param text - Message text
-   * @returns True if this is a command addressed to this bot
-   */
-  private isCommandAddressedToBot(text: string): boolean {
-    if (!text || !text.startsWith('/')) {
-      return false;
-    }
-    
-    // If no bot username configured, cannot detect addressed commands
-    if (!this.botUsername) {
-      return false;
-    }
-    
-    // Extract command with possible @username
-    const firstSpace = text.indexOf(' ');
-    const command = firstSpace === -1 ? text : text.substring(0, firstSpace);
-    
-    // Check if command has @username
-    const atIndex = command.indexOf('@');
-    if (atIndex === -1) {
-      // Unaddressed command in group
-      return false;
-    }
-    
-    // Extract username from command
-    const username = command.substring(atIndex + 1);
-    
-    // Check if it matches this bot's username (case-insensitive)
-    return username.toLowerCase() === this.botUsername.toLowerCase();
-  }
-
-  /**
    * Validate webhook request (fail-closed on invalid).
    * 
    * @param body - Raw request body
@@ -283,6 +232,12 @@ export class TelegramBotHandler {
 
     const message = update.message;
 
+    // Handle group messages (COMPLETELY SILENT): checked before any other
+    // validation so group traffic never produces a reply or a log line.
+    if (!message.chat || message.chat.type !== 'private') {
+      return;
+    }
+
     // Validate message structure
     if (!message.from || typeof message.from.id !== 'number') {
       console.error('Invalid message: missing or invalid from.id');
@@ -292,21 +247,6 @@ export class TelegramBotHandler {
     // Reject bot messages
     if (message.from.is_bot) {
       console.error('Invalid message: from bot user');
-      return;
-    }
-
-    // Handle group messages (COMPLETELY SILENT)
-    // Per Bob's requirement: bot sends NO messages at all in any group
-    // for any update, making it effectively invisible in groups.
-    // The bot only does silent background work (member tag application).
-    if (message.chat.type !== 'private') {
-      // Stay completely silent in all groups for all updates:
-      // - Plain messages
-      // - Mentions of any bot
-      // - Replies to other users
-      // - Unaddressed commands (including /ask, /verify, /start, etc.)
-      // - Addressed commands (including /verify@ThisBot, /start@ThisBot, etc.)
-      // Bot only does silent tag work in groups, no user-visible interaction
       return;
     }
 

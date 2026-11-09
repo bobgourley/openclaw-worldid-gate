@@ -297,12 +297,44 @@ describe('MemberTagManager', () => {
 /**
  * Create test manager with mocked dependencies.
  */
+describe('MemberTagManager per-group permission logging', () => {
+  async function captureCycle(permissionDenied: boolean): Promise<string[]> {
+    const { manager, db, dbPath } = createTestManager({ permissionDenied, logLabel: 'group 2/2' });
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+    try {
+      await (manager as any).runSweeperCycle();
+    } finally {
+      console.log = original;
+      db.close();
+      await unlink(dbPath);
+    }
+    return lines.filter(l => l.includes('Permission check'));
+  }
+
+  it('logs a labelled pass line without the chat id', async () => {
+    const lines = await captureCycle(false);
+    assert.strictEqual(lines.length, 1);
+    assert.ok(lines[0].includes('[MemberTag] group 2/2: Permission check passed'));
+    assert.ok(!lines[0].includes('123456'), 'chat id must not be logged');
+  });
+
+  it('logs a labelled fail line without the chat id', async () => {
+    const lines = await captureCycle(true);
+    assert.strictEqual(lines.length, 1);
+    assert.ok(lines[0].includes('[MemberTag] group 2/2: Permission check failed'));
+    assert.ok(!lines[0].includes('123456'), 'chat id must not be logged');
+  });
+});
+
 function createTestManager(options: {
   memberStatus?: string;
   permissionDenied?: boolean;
   tagShouldFail?: boolean;
   enrollments?: Array<{ userId: number; expired: boolean; revoked: boolean }>;
   currentTag?: string | null;
+  logLabel?: string;
 } = {}, sweepIntervalHours = 24) {
   const dbPath = join(tmpdir(), `test-member-tags-${Date.now()}.db`);
   const db = new Database(dbPath);
@@ -423,6 +455,7 @@ function createTestManager(options: {
     action: 'test-action',
     enabled: true,
     sweepIntervalHours,
+    logLabel: options.logLabel,
   });
 
   return { manager, mocks, db, dbPath };

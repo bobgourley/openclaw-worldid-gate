@@ -261,9 +261,25 @@ describe('parseMemberTagGroups', () => {
     );
   });
 
-  it('should filter empty entries from split', () => {
-    const result = parseMemberTagGroups('-123456,,-789012', '-999999');
-    assert.deepStrictEqual(result, ['-123456', '-789012']);
+  it('should reject empty entries between commas', () => {
+    assert.throws(
+      () => parseMemberTagGroups('-123456,,-789012', '-999999'),
+      (err: any) => err.message.includes('empty entry')
+    );
+  });
+
+  it('should reject a trailing comma', () => {
+    assert.throws(
+      () => parseMemberTagGroups('-123456,', '-999999'),
+      (err: any) => err.message.includes('empty entry')
+    );
+  });
+
+  it('should reject whitespace-only MEMBER_TAG_GROUPS', () => {
+    assert.throws(
+      () => parseMemberTagGroups(' , ', '-123456'),
+      (err: any) => err.message.includes('cannot be empty')
+    );
   });
 
   it('should reject floating point numbers', () => {

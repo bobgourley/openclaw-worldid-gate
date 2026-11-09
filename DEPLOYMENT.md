@@ -318,7 +318,6 @@ export WORLDID_ACTION=openclaw-admission     # Action identifier
 
 # Telegram Configuration (from @BotFather)
 export TELEGRAM_BOT_TOKEN=123456:ABC-DEF     # Bot token
-export TELEGRAM_BOT_USERNAME=YourBotName     # Bot username (without @, for group command filtering)
 export TELEGRAM_WEBHOOK_SECRET=random_secret # Webhook validation secret
 
 # Service Configuration

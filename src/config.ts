@@ -180,10 +180,14 @@ export function parseMemberTagGroups(groupsStr: string | undefined, allowedGroup
     return [allowedGroup];
   }
 
-  const entries = groupsStr.split(',').map(s => s.trim()).filter(s => s.length > 0);
-  
-  if (entries.length === 0) {
+  const entries = groupsStr.split(',').map(s => s.trim());
+
+  if (entries.length === 0 || entries.every(s => s.length === 0)) {
     throw new Error('MEMBER_TAG_GROUPS cannot be empty');
+  }
+
+  if (entries.some(s => s.length === 0)) {
+    throw new Error('MEMBER_TAG_GROUPS contains an empty entry');
   }
 
   const seen = new Set<string>();

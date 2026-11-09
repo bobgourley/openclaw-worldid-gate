@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { unlink, writeFile, chmod, mkdir, stat } from 'node:fs/promises';
 import { existsSync, statSync } from 'node:fs';
+import { execFile } from 'node:child_process';
 import Database from 'better-sqlite3';
 import { MemberTagManager } from './member-tag-manager.js';
 import { StatusSocketServer, loadStatusSecret } from './status-socket-server.js';
@@ -635,9 +636,7 @@ describe('PR 8 Review Regression Tests', () => {
   });
 
   describe('Skill script exit codes', () => {
-    it.skip('should exit 0 on successful 200 response', async () => {
-      // Skipped: execSync + bash + curl interaction causes test hang
-      // Server API is tested directly in status-socket-server.test.ts
+    it('should exit 0 on successful 200 response', async () => {
       const socketPath = join(tmpdir(), `test-skill-200-${Date.now()}.sock`);
       const secretFile = join(tmpdir(), `test-secret-${Date.now()}.txt`);
       
@@ -669,16 +668,13 @@ describe('PR 8 Review Regression Tests', () => {
         try {
           await server.start();
           
-          // Set environment variables
-          process.env.WORLDID_STATUS_SOCKET = socketPath;
-          process.env.WORLDID_STATUS_SECRET_FILE = secretFile;
+          const result = await runSkill(['123'], {
+            WORLDID_STATUS_SOCKET: socketPath,
+            WORLDID_STATUS_SECRET_FILE: secretFile,
+          });
+          assert.strictEqual(result.code, 0, 'Should exit 0 on 200');
           
-          // Run skill script
-          const { execSync } = await import('child_process');
-          const scriptPath = join(process.cwd(), 'deploy/openclaw-skill/worldid-status/query-worldid-status');
-          const result = execSync(`bash ${scriptPath} 123`, { encoding: 'utf8' });
-          
-          const json = JSON.parse(result);
+          const json = JSON.parse(result.stdout);
           assert.strictEqual(json.verified, true);
           assert.strictEqual(json.state, 'active');
         } finally {
@@ -696,8 +692,7 @@ describe('PR 8 Review Regression Tests', () => {
       }
     });
 
-    it.skip('should exit 2 on 401 authentication failure', async () => {
-      // Skipped: execSync + bash + curl interaction causes test hang
+    it('should exit 2 on 401 authentication failure', async () => {
       const socketPath = join(tmpdir(), `test-skill-401-${Date.now()}.sock`);
       const secretFile = join(tmpdir(), `test-secret-${Date.now()}.txt`);
       const wrongSecretFile = join(tmpdir(), `test-wrong-secret-${Date.now()}.txt`);
@@ -724,18 +719,11 @@ describe('PR 8 Review Regression Tests', () => {
           await server.start();
           
           // Use wrong secret
-          process.env.WORLDID_STATUS_SOCKET = socketPath;
-          process.env.WORLDID_STATUS_SECRET_FILE = wrongSecretFile;
-          
-          const { execSync } = await import('child_process');
-          const scriptPath = join(process.cwd(), 'deploy/openclaw-skill/worldid-status/query-worldid-status');
-          
-          try {
-            execSync(`bash ${scriptPath} 123`, { encoding: 'utf8' });
-            assert.fail('Should have exited with code 2');
-          } catch (error: any) {
-            assert.strictEqual(error.status, 2);
-          }
+          const result = await runSkill(['123'], {
+            WORLDID_STATUS_SOCKET: socketPath,
+            WORLDID_STATUS_SECRET_FILE: wrongSecretFile,
+          });
+          assert.strictEqual(result.code, 2, 'Should exit 2 on 401');
         } finally {
           await server.stop();
         }
@@ -754,8 +742,7 @@ describe('PR 8 Review Regression Tests', () => {
       }
     });
 
-    it.skip('should exit 3 on missing socket', async () => {
-      // Skipped: execSync + bash + curl interaction causes test hang
+    it('should exit 3 on missing socket', async () => {
       const socketPath = join(tmpdir(), `test-missing-socket-${Date.now()}.sock`);
       const secretFile = join(tmpdir(), `test-secret-${Date.now()}.txt`);
       
@@ -764,18 +751,11 @@ describe('PR 8 Review Regression Tests', () => {
         await chmod(secretFile, 0o600);
         
         // Don't create server - socket doesn't exist
-        process.env.WORLDID_STATUS_SOCKET = socketPath;
-        process.env.WORLDID_STATUS_SECRET_FILE = secretFile;
-        
-        const { execSync } = await import('child_process');
-        const scriptPath = join(process.cwd(), 'deploy/openclaw-skill/worldid-status/query-worldid-status');
-        
-        try {
-          execSync(`bash ${scriptPath} 123`, { encoding: 'utf8', stdio: 'pipe' });
-          assert.fail('Should have exited with code 3');
-        } catch (error: any) {
-          assert.strictEqual(error.status, 3, 'Should exit 3 on missing socket');
-        }
+        const result = await runSkill(['123'], {
+          WORLDID_STATUS_SOCKET: socketPath,
+          WORLDID_STATUS_SECRET_FILE: secretFile,
+        });
+        assert.strictEqual(result.code, 3, 'Should exit 3 on missing socket');
       } finally {
         delete process.env.WORLDID_STATUS_SOCKET;
         delete process.env.WORLDID_STATUS_SECRET_FILE;
@@ -823,3 +803,18 @@ describe('PR 8 Review Regression Tests', () => {
     });
   });
 });
+
+/**
+ * Run the skill script asynchronously. A synchronous exec blocked the event
+ * loop, so the in-process status socket server could never answer and the
+ * tests hung.
+ */
+function runSkill(args: string[], env: NodeJS.ProcessEnv): Promise<{ code: number; stdout: string; stderr: string }> {
+  const scriptPath = join(process.cwd(), 'deploy/openclaw-skill/worldid-status/query-worldid-status');
+  return new Promise((resolve) => {
+    execFile('bash', [scriptPath, ...args], { env: { ...process.env, ...env }, timeout: 15000, encoding: 'utf8' }, (error: any, stdout, stderr) => {
+      const code = error ? (typeof error.code === 'number' ? error.code : -1) : 0;
+      resolve({ code, stdout: String(stdout), stderr: String(stderr) });
+    });
+  });
+}

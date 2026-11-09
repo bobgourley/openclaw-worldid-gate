@@ -17,48 +17,35 @@ const { resolve } = require('node:path');
 function validateEnvironment() {
   const errors = [];
   
-  // Required: OPENCLAW_ALLOWED_GROUP
-  const allowedGroup = process.env.OPENCLAW_ALLOWED_GROUP;
+  // Required: OPENCLAW_ALLOWED_GROUP (values are never echoed: they are Telegram ids)
+  const isNegativeInt = (v) => /^-[1-9][0-9]*$/.test(v);
+  const allowedGroup = (process.env.OPENCLAW_ALLOWED_GROUP || '').trim();
   if (!allowedGroup) {
     errors.push('OPENCLAW_ALLOWED_GROUP is required');
-  } else {
-    // Must be a negative integer
-    const parsed = parseInt(allowedGroup, 10);
-    if (isNaN(parsed) || !Number.isInteger(parsed) || parsed >= 0) {
-      errors.push(`OPENCLAW_ALLOWED_GROUP must be a negative integer (got: ${allowedGroup})`);
-    }
+  } else if (!isNegativeInt(allowedGroup)) {
+    errors.push('OPENCLAW_ALLOWED_GROUP must be a negative integer');
   }
-  
-  // Optional: MEMBER_TAG_GROUPS
+
+  // Optional: MEMBER_TAG_GROUPS (strict: no empty entries, no duplicates)
   const memberTagGroups = process.env.MEMBER_TAG_GROUPS;
-  if (memberTagGroups) {
-    const entries = memberTagGroups.split(',').map(s => s.trim()).filter(s => s.length > 0);
+  if (memberTagGroups !== undefined) {
+    const entries = memberTagGroups.split(',').map(s => s.trim());
     const seen = new Set();
-    
-    for (const entry of entries) {
-      const num = parseInt(entry, 10);
-      
-      if (isNaN(num) || !Number.isInteger(num)) {
-        errors.push(`MEMBER_TAG_GROUPS entry "${entry}" is not a valid integer`);
-        continue;
+    entries.forEach((entry, i) => {
+      if (!entry) {
+        errors.push(`MEMBER_TAG_GROUPS entry ${i + 1} is empty`);
+      } else if (!isNegativeInt(entry)) {
+        errors.push(`MEMBER_TAG_GROUPS entry ${i + 1} must be a negative integer`);
+      } else if (seen.has(entry)) {
+        errors.push(`MEMBER_TAG_GROUPS entry ${i + 1} is a duplicate`);
+      } else {
+        seen.add(entry);
       }
-      
-      if (num >= 0) {
-        errors.push(`MEMBER_TAG_GROUPS entry "${entry}" must be negative`);
-        continue;
-      }
-      
-      if (seen.has(entry)) {
-        errors.push(`MEMBER_TAG_GROUPS contains duplicate entry: ${entry}`);
-        continue;
-      }
-      
-      seen.add(entry);
-    }
-    
+    });
+
     // Invariant: MEMBER_TAG_GROUPS must include OPENCLAW_ALLOWED_GROUP
     if (allowedGroup && !seen.has(allowedGroup)) {
-      errors.push(`MEMBER_TAG_GROUPS must include OPENCLAW_ALLOWED_GROUP (${allowedGroup})`);
+      errors.push('MEMBER_TAG_GROUPS must include OPENCLAW_ALLOWED_GROUP');
     }
   }
   

@@ -27,7 +27,6 @@ const config = {
   
   // Telegram configuration (REQUIRED in production)
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || 'unconfigured_test_token',
-  telegramBotUsername: process.env.TELEGRAM_BOT_USERNAME || '',
   telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || 'unconfigured_test_webhook_secret',
   enrollmentBaseUrl: process.env.ENROLLMENT_BASE_URL || 'http://127.0.0.1:3000',
   
@@ -240,7 +239,9 @@ async function main(): Promise<void> {
 
   // Wire member tag managers after enrollment service is created
   if (openclawIntegrationConfig.memberTags.enabled && telegramApiClient) {
-    for (const targetChatId of openclawIntegrationConfig.memberTags.targetChatIds) {
+    const tagGroupCount = openclawIntegrationConfig.memberTags.targetChatIds.length;
+    for (const [groupIndex, targetChatId] of openclawIntegrationConfig.memberTags.targetChatIds.entries()) {
+      const logLabel = `group ${groupIndex + 1}/${tagGroupCount}`;
       const manager = new MemberTagManager({
         telegramClient: telegramApiClient,
         enrollmentService,
@@ -250,12 +251,13 @@ async function main(): Promise<void> {
         action: config.action,
         enabled: true, // Initially enabled, will be disabled by sweeper if permission check fails
         sweepIntervalHours: openclawIntegrationConfig.memberTags.sweepIntervalHours,
+        logLabel,
       });
       
       memberTagManagers.push(manager);
       
       // Always start sweeper (it will re-check permissions and enable itself when granted)
-      console.log(`[MemberTag] Starting sweeper for group (interval: ${openclawIntegrationConfig.memberTags.sweepIntervalHours}h)`);
+      console.log(`[MemberTag] Starting sweeper for ${logLabel} (interval: ${openclawIntegrationConfig.memberTags.sweepIntervalHours}h)`);
       manager.startSweeper();
     }
     
@@ -301,27 +303,14 @@ async function main(): Promise<void> {
     console.log(`  Profile: ${config.openclawProfile}`);
   }
   
-  // Build known group IDs (all tag groups + allowed group)
-  const knownGroupIds: number[] = [];
-  if (openclawIntegrationConfig.memberTags.enabled) {
-    for (const chatIdStr of openclawIntegrationConfig.memberTags.targetChatIds) {
-      const chatId = parseInt(chatIdStr, 10);
-      if (!isNaN(chatId)) {
-        knownGroupIds.push(chatId);
-      }
-    }
-  }
-  
   const telegramBotHandler = new TelegramBotHandler({
     botToken: config.telegramBotToken,
-    botUsername: config.telegramBotUsername,
     enrollmentService,
     transport: telegramTransport,
     enrollmentBaseUrl: config.enrollmentBaseUrl,
     webhookSecret: config.telegramWebhookSecret,
     openclawConfig,
     allowedGroupId: config.openclawAllowedGroupId,
-    knownGroupIds,
   });
 
   // Create HTTP service with bot handler

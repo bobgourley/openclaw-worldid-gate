@@ -39,6 +39,9 @@ export interface MemberTagManagerConfig {
   
   /** Sweep interval in hours (default 24) */
   sweepIntervalHours?: number;
+
+  /** Non-identifying label for logs, e.g. "group 1/2" (never a chat id) */
+  logLabel?: string;
 }
 
 /**
@@ -70,6 +73,7 @@ export class MemberTagManager {
   private featureEnabled: boolean; // Mutable, re-checked on each sweep
   private readonly sweepIntervalHours: number;
   private sweeperInterval: NodeJS.Timeout | null = null;
+  private readonly logPrefix: string;
 
   constructor(config: MemberTagManagerConfig) {
     this.telegramClient = config.telegramClient;
@@ -80,6 +84,7 @@ export class MemberTagManager {
     this.action = config.action;
     this.featureEnabled = config.enabled;
     this.sweepIntervalHours = config.sweepIntervalHours || 24;
+    this.logPrefix = config.logLabel ? `[MemberTag] ${config.logLabel}:` : '[MemberTag]';
 
     // Validate tag text
     if (this.tagText.length > 16) {
@@ -557,18 +562,15 @@ export class MemberTagManager {
     // Re-check permissions each cycle (allows granting rights without restart)
     const permCheck = await this.checkPermissions();
     if (!permCheck.success) {
-      if (this.featureEnabled) {
-        console.log('[MemberTag] Permission check failed, tagging disabled until granted');
-        this.featureEnabled = false;
-      }
+      // Logged every cycle so operators can see per-group state (no ids logged)
+      console.log(`${this.logPrefix} Permission check failed (can_manage_tags missing), tagging disabled until granted`);
+      this.featureEnabled = false;
       return;
     }
 
     // Permission check passed
-    if (!this.featureEnabled) {
-      console.log('[MemberTag] Permission check passed, tagging enabled');
-      this.featureEnabled = true;
-    }
+    console.log(`${this.logPrefix} Permission check passed (can_manage_tags), tagging enabled`);
+    this.featureEnabled = true;
 
     // Reconcile all tags
     await this.reconcileAllTags();
