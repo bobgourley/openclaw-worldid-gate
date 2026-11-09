@@ -503,6 +503,45 @@ export class EnrollmentService {
           ON session_nullifier_claims(telegram_user_id, action)
         `);
 
+        // Add mode column to challenge_sessions (durably binds challenge to renewal or reactivation)
+        // CRITICAL: Challenge created before revocation must fail even if mode was 'reactivation'
+        // Defensive: Only alter if table exists (handles incomplete v1 schemas in tests)
+        const challengeTableExists = this.db.prepare(`
+          SELECT name FROM sqlite_master WHERE type='table' AND name='challenge_sessions'
+        `).get() as any;
+
+        if (challengeTableExists) {
+          this.db.exec(`
+            ALTER TABLE challenge_sessions ADD COLUMN mode TEXT DEFAULT NULL
+          `);
+        }
+
+        // Append-only revocation event history (never update/delete, only insert)
+        // CRITICAL: Mutable reactivated_at columns insufficient across repeated cycles
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS revocation_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_user_id INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            event_at INTEGER NOT NULL,
+            event_at_iso TEXT NOT NULL,
+            generation INTEGER NOT NULL,
+            triggered_by TEXT,
+            notes TEXT
+          ) STRICT
+        `);
+
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_revocation_events_user
+          ON revocation_events(telegram_user_id, action)
+        `);
+
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_revocation_events_time
+          ON revocation_events(event_at)
+        `);
+
         // Backfill protocol_version for existing enrollments
         // Mark existing enrollments as UNKNOWN protocol (not v4)
         this.db.exec(`
@@ -688,7 +727,9 @@ export class EnrollmentService {
     // Use SDK adapter to create session-only challenge (no action)
     const { signedChallenge, expectedNonce } = this.challengeAdapter.createSessionChallenge();
 
-    // Store challenge session with CURRENT generation (prevents pre-revoke completion)
+    // Store challenge session with CURRENT generation and DURABLE MODE BINDING
+    // CRITICAL: Mode is bound at challenge creation and checked at verification
+    // A renewal challenge created before revocation must NEVER succeed after revocation
     const now = this.clock.nowSeconds();
     const expiresAt = now + this.challengeTtlSeconds;
     const generation = this.getNextGeneration();
@@ -702,8 +743,9 @@ export class EnrollmentService {
         expires_at,
         created_at,
         created_at_seconds,
-        generation
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        generation,
+        mode
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       expectedNonce,
       authenticatedUserId,
@@ -712,7 +754,8 @@ export class EnrollmentService {
       expiresAt,
       this.clock.nowISO(),
       now,
-      generation
+      generation,
+      mode // Durably bind mode to challenge
     );
 
     return { signedChallenge };
@@ -1151,6 +1194,31 @@ export class EnrollmentService {
       
       const enrollmentResult = enrollmentStmt.run(this.clock.nowISO(), now, generation, telegramUserId, this.action);
       const hadEnrollment = enrollmentResult.changes > 0;
+
+      // 2a. Record revocation in append-only event log
+      if (hadEnrollment) {
+        this.db.prepare(`
+          INSERT INTO revocation_events (
+            telegram_user_id,
+            action,
+            event_type,
+            event_at,
+            event_at_iso,
+            generation,
+            triggered_by,
+            notes
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          telegramUserId,
+          this.action,
+          'revoked',
+          now,
+          this.clock.nowISO(),
+          generation,
+          'admin',
+          'Enrollment revoked via revokeEnrollment()'
+        );
+      }
       
       // 3. Delete all pending challenges (atomic with fence and enrollment)
       const challengeStmt = this.db.prepare(`
@@ -1408,8 +1476,9 @@ export class EnrollmentService {
       const txNow = this.clock.nowSeconds();
 
       // Re-check challenge still exists (race protection)
+      // CRITICAL: Load challenge mode to verify it matches enrollment state AT VERIFICATION TIME
       const recheckChallenge = this.db.prepare(`
-        SELECT nonce, telegram_user_id, expires_at, generation
+        SELECT nonce, telegram_user_id, expires_at, generation, mode
         FROM challenge_sessions
         WHERE nonce = ?
       `).get(request.idkitResult.nonce) as any;
@@ -1426,6 +1495,8 @@ export class EnrollmentService {
         throw new Error('Challenge account mismatch in transaction');
       }
 
+      const challengeMode = recheckChallenge.mode || 'renewal'; // Default for challenges without mode
+
       // Check generation fence (independent of enrollment state)
       const fenceCheck = this.db.prepare(`
         SELECT fence_generation
@@ -1435,6 +1506,23 @@ export class EnrollmentService {
 
       if (fenceCheck && recheckChallenge.generation < fenceCheck.fence_generation) {
         throw new Error('Challenge predates revocation fence (fresh verification required)');
+      }
+
+      // CRITICAL: Check current enrollment state matches challenge mode
+      // A renewal challenge MUST NOT succeed if enrollment was revoked after challenge creation
+      const currentEnrollmentState = this.db.prepare(`
+        SELECT revoked, revoked_generation
+        FROM enrollments
+        WHERE telegram_user_id = ? AND action = ?
+      `).get(authenticatedUserId, this.action) as any;
+
+      if (currentEnrollmentState) {
+        if (challengeMode === 'renewal' && currentEnrollmentState.revoked === 1) {
+          throw new Error('Renewal challenge invalid: enrollment revoked after challenge creation');
+        }
+        if (challengeMode === 'reactivation' && currentEnrollmentState.revoked !== 1) {
+          throw new Error('Reactivation challenge invalid: enrollment not revoked at verification time');
+        }
       }
 
       // Check session nullifier replay (composite key: session_nullifier + action)
@@ -1472,19 +1560,39 @@ export class EnrollmentService {
       // Consume challenge (delete)
       this.db.prepare('DELETE FROM challenge_sessions WHERE nonce = ?').run(request.idkitResult.nonce);
 
-      // Check if enrollment is currently revoked
-      const currentEnrollment = this.db.prepare(`
-        SELECT revoked, revoked_at_seconds
-        FROM enrollments
-        WHERE telegram_user_id = ? AND action = ?
-      `).get(authenticatedUserId, this.action) as any;
-
       const newExpiresAt = txNow + this.enrollmentTtlSeconds;
       let wasReactivated = false;
 
-      if (currentEnrollment && currentEnrollment.revoked === 1) {
-        // Enrollment is revoked - this is a reactivation with fresh post-revoke challenge
-        // Update enrollment: clear revoked flag, set new expiry, record reactivation
+      if (challengeMode === 'reactivation') {
+        // Reactivation: clear revoked flag, record in append-only event log
+        // CRITICAL: Generation fence is NEVER cleared (monotonic fence)
+        // Append-only audit preserves all revocation/reactivation cycles
+        
+        // Record reactivation event in append-only history
+        this.db.prepare(`
+          INSERT INTO revocation_events (
+            telegram_user_id,
+            action,
+            event_type,
+            event_at,
+            event_at_iso,
+            generation,
+            triggered_by,
+            notes
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          authenticatedUserId,
+          this.action,
+          'reactivated',
+          txNow,
+          this.clock.nowISO(),
+          recheckChallenge.generation,
+          'session_verification',
+          `Session proof verified for revoked enrollment`
+        );
+
+        // Clear revoked flag in enrollment (operational state)
+        // Note: reactivated_at/by remain for display, but revocation_events is source of truth
         this.db.prepare(`
           UPDATE enrollments
           SET revoked = 0,
@@ -1503,12 +1611,6 @@ export class EnrollmentService {
           authenticatedUserId,
           this.action
         );
-
-        // Clear generation fence (no longer needed after reactivation)
-        this.db.prepare(`
-          DELETE FROM generation_fences
-          WHERE telegram_user_id = ? AND action = ?
-        `).run(authenticatedUserId, this.action);
 
         wasReactivated = true;
       } else {

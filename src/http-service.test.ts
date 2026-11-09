@@ -473,6 +473,7 @@ describe('HttpService Integration', () => {
       const sessionChallenge = await sessionChallengeResponse.json();
 
       // Create session verification result
+      // Note: session_nullifier must match the nullifier from original enrollment
       const sessionVerifyResult = {
         protocol_version: '4.0',
         nonce: sessionChallenge.signedChallenge.nonce,
@@ -480,7 +481,7 @@ describe('HttpService Integration', () => {
         responses: [
           {
             identifier: 'proof_of_human',
-            session_nullifier: ['1234567890abcdef1234567890abcdef', TEST_ACTION],
+            session_nullifier: ['12345678901234567890', TEST_ACTION],
             issuer_schema_id: 1,
             verifiable_credential: {
               expires_at_min: Math.floor(Date.now() / 1000) + 86400,
@@ -497,7 +498,12 @@ describe('HttpService Integration', () => {
         body: JSON.stringify({ initData, idkitResult: sessionVerifyResult }),
       });
 
-      assert.equal(verifyResponse.status, 200);
+      if (verifyResponse.status !== 200) {
+        const errorData = await verifyResponse.json();
+        console.error('Session verify failed:', errorData);
+        assert.fail(`Expected status 200, got ${verifyResponse.status}: ${JSON.stringify(errorData)}`);
+      }
+
       const data = await verifyResponse.json();
       assert.equal(data.success, true);
       assert.equal(data.telegramUserId, userId);

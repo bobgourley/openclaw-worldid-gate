@@ -330,6 +330,8 @@ export class HttpService {
         success: true,
         telegramUserId: result.telegramUserId,
         expiresAt: result.expiresAt,
+        sessionId: result.sessionId,
+        protocolVersion: result.protocolVersion,
       });
     } else {
       // Map errors to appropriate HTTP status codes
