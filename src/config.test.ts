@@ -194,3 +194,82 @@ describe('Config validation', () => {
     assert.ok(errors.length >= 4, `Expected at least 4 errors but got ${errors.length}`);
   });
 });
+
+import { parseMemberTagGroups } from './config.js';
+
+describe('parseMemberTagGroups', () => {
+
+  it('should default to OPENCLAW_ALLOWED_GROUP when MEMBER_TAG_GROUPS unset', () => {
+    const result = parseMemberTagGroups(undefined, '-123456');
+    assert.deepStrictEqual(result, ['-123456']);
+  });
+
+  it('should throw when both MEMBER_TAG_GROUPS and OPENCLAW_ALLOWED_GROUP unset', () => {
+    assert.throws(
+      () => parseMemberTagGroups(undefined, undefined),
+      (err: any) => err.message.includes('MEMBER_TAG_GROUPS or OPENCLAW_ALLOWED_GROUP must be set')
+    );
+  });
+
+  it('should parse single group', () => {
+    const result = parseMemberTagGroups('-123456', '-999999');
+    assert.deepStrictEqual(result, ['-123456']);
+  });
+
+  it('should parse multiple groups', () => {
+    const result = parseMemberTagGroups('-123456,-789012,-345678', '-999999');
+    assert.deepStrictEqual(result, ['-123456', '-789012', '-345678']);
+  });
+
+  it('should handle whitespace around entries', () => {
+    const result = parseMemberTagGroups(' -123456 , -789012 , -345678 ', '-999999');
+    assert.deepStrictEqual(result, ['-123456', '-789012', '-345678']);
+  });
+
+  it('should reject empty MEMBER_TAG_GROUPS', () => {
+    assert.throws(
+      () => parseMemberTagGroups('', '-123456'),
+      (err: any) => err.message.includes('cannot be empty')
+    );
+  });
+
+  it('should reject non-integer entries', () => {
+    assert.throws(
+      () => parseMemberTagGroups('-123456,abc,-789012', '-999999'),
+      (err: any) => err.message.includes('not a valid integer')
+    );
+  });
+
+  it('should reject positive integers', () => {
+    assert.throws(
+      () => parseMemberTagGroups('-123456,123456', '-999999'),
+      (err: any) => err.message.includes('must be negative')
+    );
+  });
+
+  it('should reject zero', () => {
+    assert.throws(
+      () => parseMemberTagGroups('-123456,0', '-999999'),
+      (err: any) => err.message.includes('must be negative')
+    );
+  });
+
+  it('should reject duplicate entries', () => {
+    assert.throws(
+      () => parseMemberTagGroups('-123456,-789012,-123456', '-999999'),
+      (err: any) => err.message.includes('duplicate entry')
+    );
+  });
+
+  it('should filter empty entries from split', () => {
+    const result = parseMemberTagGroups('-123456,,-789012', '-999999');
+    assert.deepStrictEqual(result, ['-123456', '-789012']);
+  });
+
+  it('should reject floating point numbers', () => {
+    assert.throws(
+      () => parseMemberTagGroups('-123456.5', '-999999'),
+      (err: any) => err.message.includes('not a valid integer')
+    );
+  });
+});
