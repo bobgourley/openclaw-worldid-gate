@@ -8,8 +8,8 @@ import { createHmac } from 'node:crypto';
 const TEST_BOT_TOKEN = '1234567890:ABCdefGHIjklMNOpqrsTUVwxyz1234567890';
 const TEST_SIGNING_KEY = '0000000000000000000000000000000000000000000000000000000000000001';
 const TEST_USER_ID = 987654321;
-const TEST_APP_ID = 'app_b466e1f63a70a695b6d990d261e31b6a';
-const TEST_RP_ID = 'rp_223416a2a76673a1';
+const TEST_APP_ID = 'app_staging_0123456789abcdef0123456789ab';
+const TEST_RP_ID = 'rp_0123456789abcdef';
 
 function createValidInitData(userId: number, botToken: string): string {
   const user = JSON.stringify({ 

@@ -27,7 +27,7 @@
 
 4. **Admission Gate**
    - Hard cutover already enforced via existing action mismatch check
-   - When config changes from `openclaw-verify` to `openclaw-enroll-v2`:
+   - When config changes from `openclaw-legacy` to `openclaw-session-v1`:
      - Old enrollments automatically rejected
      - Users must re-enroll (intentional design)
 
@@ -153,7 +153,7 @@
    - Monitoring setup
 
 5. **Portal Action Creation** (Operator Task)
-   - Create `openclaw-enroll-v2` in World ID Developer Portal
+   - Create `openclaw-session-v1` in World ID Developer Portal
    - Enable session support
    - Test in staging
 

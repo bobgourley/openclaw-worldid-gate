@@ -79,7 +79,7 @@ Store these securely (you'll need them for environment configuration):
 1. Open Telegram and search for [@BotFather](https://t.me/BotFather)
 2. Send `/newbot` command
 3. Follow prompts to name your bot (example: "My World ID Gate Bot")
-4. Choose username (example: `MyWorldIDGateBot`)
+4. Choose username (example: `YourWorldIDGateBot`)
 5. BotFather will reply with your bot token: `123456:ABC-DEF...`
 6. **Save this token securely** (you cannot retrieve it later without regenerating)
 
@@ -118,6 +118,8 @@ help - Show help message
    - Format: `-1001234567890` (negative for groups/supergroups)
 
 **Note**: Member tags are optional. The OpenClaw skill works without tags.
+
+**Group silence**: The gate bot never posts in groups, even if someone types a command at it. It registers `/verify`, `/status`, and `/help` for private chats only. Keep it in a group only if you want optional Human Verified tags.
 
 ## Install and Build
 

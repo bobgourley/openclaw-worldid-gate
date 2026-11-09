@@ -16,7 +16,7 @@ This repository contains two components:
 - **OpenClaw skill integration**: Agents query verification status for any Telegram sender via a private Unix socket
 - **Optional member tags**: Automatically label verified humans in Telegram groups with a "Human Verified" tag
 - **Privacy-preserving**: Stores only a per-app nullifier (no biometric data, no personal identifiers beyond Telegram user ID)
-- **Fail-closed security**: Unverified or unknown users are rejected with zero downstream LLM/history/tool access
+- **Agent-side gating**: OpenClaw agents query the private status socket and decide how to treat unverified senders (recommend fail-closed agent policy)
 
 ### Use Cases
 
@@ -56,7 +56,7 @@ graph TB
 
 ### Components
 
-- **Gate Bot** (public): Telegram bot handling `/verify`, `/status`, `/help` commands
+- **Gate Bot** (public HTTPS webhook; DM-only UX): Telegram bot handling `/verify`, `/status`, `/help` in private chats. It stays completely silent in groups (no replies even if addressed). The command menu is registered for private chats only. Optional member tags are applied quietly without posting messages.
 - **Enrollment Web UI**: IDKit-based proof flow (public HTTPS required)
 - **SQLite Database**: Stores enrollments (Telegram user ID + World ID nullifier + expiration)
 - **Status Socket** (private): Unix domain socket for OpenClaw skill queries
@@ -301,7 +301,7 @@ Create or update `~/.openclaw/workspace/AGENTS.md` to instruct the agent how to 
 
 ### For Telegram Users (Enrollment)
 
-1. Send `/verify` command to the gate bot in a DM
+1. Send `/verify` to the gate bot in a direct message (commands do nothing in groups; the bot stays silent there)
 2. Bot replies with an enrollment link
 3. Open the link (launches web interface with IDKit)
 4. Tap "Verify with World App"
@@ -321,7 +321,7 @@ When an agent receives a Telegram message:
    - `verified: false` → sender is not verified (could be bot, unverified human, or expired enrollment)
 4. Decide how to respond based on verification status
 
-Example agent response: "Yes, you're World ID verified, active until Wed Dec 9, 2026 8:42 AM ET."
+Example agent response: "Yes, you're World ID verified, active until Mon Jan 15, 2027 3:04 PM ET."
 
 ## Configuration Reference
 

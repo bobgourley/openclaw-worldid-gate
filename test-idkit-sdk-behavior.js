@@ -67,9 +67,9 @@ console.log('  - proofOfHuman:', typeof window.proofOfHuman);
 console.log();
 
 // Test configuration matching production
-const testAppId = 'app_b466e1f63a70a695b6d990d261e31b6a';
-const testRpId = 'rp_223416a2a76673a1';
-const testAction = 'openclaw-verify';
+const testAppId = 'app_staging_0123456789abcdef0123456789ab';
+const testRpId = 'rp_0123456789abcdef';
+const testAction = 'openclaw-legacy';
 const testRpContext = {
   rp_id: testRpId,
   nonce: '0x00793fca9e59c103bff52add64608a7994149244cfcd6a77fbdb4bf314063f26',

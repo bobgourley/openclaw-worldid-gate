@@ -1,7 +1,7 @@
 # Session-Based Enrollment Migration Summary
 
 **Status:** Implementation Complete - Awaiting Independent Review  
-**Commit:** `678909a` feat: session-based enrollment with openclaw-enroll-v2 action  
+**Commit:** `678909a` feat: session-based enrollment with openclaw-session-v1 action  
 **Branch:** `cursor/session-migration-v2-0cb6`  
 **Date:** 2026-11-08 23:18 UTC
 
@@ -9,14 +9,14 @@
 
 ## Executive Summary
 
-Implemented **hard cutover migration** to session-based enrollment with new action `openclaw-enroll-v2`. This migration addresses the `nullifier_replayed` blocker by adopting World ID 4.0 session proofs for returning user verification, eliminating the anti-pattern of reusing uniqueness proofs.
+Implemented **hard cutover migration** to session-based enrollment with new action `openclaw-session-v1`. This migration addresses the `nullifier_replayed` blocker by adopting World ID 4.0 session proofs for returning user verification, eliminating the anti-pattern of reusing uniqueness proofs.
 
 ### Key Changes
 
 1. **Schema Evolution**: Extended enrollment store to support session IDs, protocol versioning, and append-only revocation audit trail
 2. **Session Lifecycle**: Implemented creation, verification, revocation, and reactivation with immutable session bindings
 3. **Replay Protection**: Added `session_nullifier_claims` table with composite key `(session_nullifier, action)`
-4. **Hard Cutover**: Legacy action `openclaw-verify` preserved for historical audit but grants no authority post-cutover
+4. **Hard Cutover**: Legacy action `openclaw-legacy` preserved for historical audit but grants no authority post-cutover
 5. **20 Comprehensive Tests**: All pass, covering uniqueness enforcement, session replay, revocation, and persistence
 
 ### Migration Semantics
@@ -159,7 +159,7 @@ interface ResponseItemSession {
 ```typescript
 const request = await IDKit.request({
   app_id,
-  action: 'openclaw-enroll-v2',
+  action: 'openclaw-session-v1',
   session_id: 'create',                 // NEW session
   rp_context,                           // Signed WITH action
   allow_legacy_proofs: false,
@@ -202,7 +202,7 @@ SDK canonicalizes `nullifier_replay` → `nullifier_replayed`.
 {
   "protocol_version": "4.0",
   "nonce": "0xabc123",
-  "action": "openclaw-enroll-v2",
+  "action": "openclaw-session-v1",
   "responses": [
     {
       "identifier": "proof_of_human",
@@ -226,7 +226,7 @@ SDK canonicalizes `nullifier_replay` → `nullifier_replayed`.
     {
       "identifier": "proof_of_human",
       "issuer_schema_id": 1,
-      "session_nullifier": ["0xaaa", "openclaw-enroll-v2"],
+      "session_nullifier": ["0xaaa", "openclaw-session-v1"],
       "expires_at_min": 49012345,
       "proof": ["0x111", "0x222", "0x333", "0x444", "0x555"]
     }
@@ -238,7 +238,7 @@ SDK canonicalizes `nullifier_replay` → `nullifier_replayed`.
 ```json
 {
   "success": true,
-  "action": "openclaw-enroll-v2",      // Only for uniqueness
+  "action": "openclaw-session-v1",      // Only for uniqueness
   "nullifier": "0x2bf...",             // Only for uniqueness
   "session_id": "session_...",         // If session created/proved
   "created_at": "2026-11-08T23:00:00Z",
@@ -356,7 +356,7 @@ Current implementation provides **schema and store layer only**. The following s
 
 ### 2. Portal Action Creation (OPERATOR TASK)
 
-**Action:** `openclaw-enroll-v2`  
+**Action:** `openclaw-session-v1`  
 **Type:** Uniqueness + Session  
 **Configuration:**
 - Credential: Proof of Human (Orb verification)
@@ -369,15 +369,15 @@ Current implementation provides **schema and store layer only**. The following s
 ### 3. Hard Cutover Implementation (NOT IMPLEMENTED)
 
 **Required Changes:**
-- [ ] Update admission gate to check ONLY `openclaw-enroll-v2` action
-- [ ] Reject legacy action `openclaw-verify` enrollments at gate
+- [ ] Update admission gate to check ONLY `openclaw-session-v1` action
+- [ ] Reject legacy action `openclaw-legacy` enrollments at gate
 - [ ] Preserve historical data (do not delete legacy enrollments)
 - [ ] Update UI to show new enrollment flow
 - [ ] Add migration banner for existing users
 
 **Cutover Procedure:**
 1. Deploy schema changes (add columns, preserve existing data)
-2. Enable new enrollment flow (openclaw-enroll-v2)
+2. Enable new enrollment flow (openclaw-session-v1)
 3. Monitor initial enrollments
 4. Hard cutover: Update gate to ONLY check new action
 5. Existing users see "Please re-enroll" message
@@ -478,7 +478,7 @@ npx vitest run src/enrollment-session.test.ts
 
 1. **Code Review**: Independent review of schema changes and test coverage
 2. **Service Integration**: Implement enrollment and verification service methods
-3. **Portal Setup**: Create `openclaw-enroll-v2` action in World ID Developer Portal
+3. **Portal Setup**: Create `openclaw-session-v1` action in World ID Developer Portal
 4. **Integration Tests**: Add end-to-end tests with real SDK (no live API calls)
 5. **Deployment Plan**: Define schema migration procedure with rollback
 
@@ -506,7 +506,7 @@ npx vitest run src/enrollment-session.test.ts
 - `f2ce4f5f` - Diagnostic HTML (SHA256)
 
 **This Change:**
-- `678909a` - Session-based enrollment with openclaw-enroll-v2 action
+- `678909a` - Session-based enrollment with openclaw-session-v1 action
 
 **Clean Delta:**
 - NO unrelated artifacts (diagnostic HTML, investigation docs) in functional code
@@ -548,7 +548,7 @@ npx vitest run src/enrollment-session.test.ts
 
 **Blockers Before Production:**
 1. Implement enrollment and verification service methods
-2. Create `openclaw-enroll-v2` action in World ID Developer Portal
+2. Create `openclaw-session-v1` action in World ID Developer Portal
 3. Add end-to-end integration tests
 4. Define schema migration and rollback procedure
 5. Update frontend UI for session flows

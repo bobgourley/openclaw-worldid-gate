@@ -30,7 +30,7 @@ console.log();
 
 // Generate synthetic session
 const syntheticSigningKey = '0x' + '1'.repeat(64);
-const syntheticAction = 'openclaw-verify';
+const syntheticAction = 'openclaw-legacy';
 const syntheticAppId = 'app_test';
 const syntheticRpId = 'rp_test';
 

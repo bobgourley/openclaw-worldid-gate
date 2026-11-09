@@ -16,7 +16,7 @@ console.log('=== RP Signature Canonical Format Test ===\n');
 
 // Test with known values
 const testSigningKey = '0x' + '1111111111111111111111111111111111111111111111111111111111111111';
-const testAction = 'openclaw-verify';
+const testAction = 'openclaw-legacy';
 const testTTL = 300;
 
 console.log('Test parameters:');

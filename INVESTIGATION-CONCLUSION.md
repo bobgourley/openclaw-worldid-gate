@@ -47,7 +47,7 @@ World App rejects signature with `invalid_rp_signature` error despite all verifi
    - Cannot verify from portal UI
 
 3. **Action Registration**
-   - Action "openclaw-verify" exists (1 historical proof)
+   - Action "openclaw-legacy" exists (1 historical proof)
    - May have been disabled or require re-activation
    - No action management UI visible
 
@@ -81,7 +81,7 @@ World App rejects signature with `invalid_rp_signature` error despite all verifi
 Check in Developer Portal:
 - [ ] RP activation status (not just registration)
 - [ ] App-RP binding activation status
-- [ ] Action "openclaw-verify" active status
+- [ ] Action "openclaw-legacy" active status
 - [ ] Environment scope (production/staging/both)
 - [ ] Any pending approvals or required actions
 
@@ -104,9 +104,9 @@ If all portal checks pass, may be:
 - Protocol version issue
 
 Provide:
-- App ID: `app_b466e1f63a70a695b6d990d261e31b6a`
-- RP ID: `rp_223416a2a76673a1`
-- Action: `openclaw-verify`
+- App ID: `app_staging_0123456789abcdef0123456789ab`
+- RP ID: `rp_0123456789abcdef`
+- Action: `openclaw-legacy`
 - Error: `invalid_rp_signature`
 - Evidence: Signature cryptographically valid, keys match registration
 

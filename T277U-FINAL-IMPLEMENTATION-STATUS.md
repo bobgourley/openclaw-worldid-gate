@@ -71,7 +71,7 @@
 - **Already Enforced** in `admission-gate.ts` (line 133-140):
   - Checks `enrollment.action !== config.action`
   - Rejects enrollments on mismatched action
-  - **Hard cutover automatic:** Change config action from `openclaw-verify` to `openclaw-enroll-v2`
+  - **Hard cutover automatic:** Change config action from `openclaw-legacy` to `openclaw-session-v1`
   - Existing enrollments on old action immediately rejected
   - No code changes required
 
@@ -160,7 +160,7 @@
 #### 4. Portal Action Creation ❌
 
 **Operator Task (Not Code):**
-- Create `openclaw-enroll-v2` action in World ID Developer Portal
+- Create `openclaw-session-v1` action in World ID Developer Portal
 - Configuration:
   - Credential: Proof of Human (Orb verification)
   - Allow session creation: Yes
@@ -264,7 +264,7 @@
    - Monitoring setup
 
 5. **Portal Action** (Priority 1 - Operator Task)
-   - Create `openclaw-enroll-v2` action
+   - Create `openclaw-session-v1` action
    - Configure session support
    - Test in staging first
 
@@ -321,7 +321,7 @@ acb6707 feat: EnrollmentService v3 schema with session support
 dbcb0f0 fix: convert session tests to Node test runner
 60bad1e docs: add concise T277U implementation report for Bob
 e06d485 docs: comprehensive session migration summary
-678909a feat: session-based enrollment with openclaw-enroll-v2 action
+678909a feat: session-based enrollment with openclaw-session-v1 action
 ```
 
 **Total:** 8 commits, +1,627 lines, -122 lines

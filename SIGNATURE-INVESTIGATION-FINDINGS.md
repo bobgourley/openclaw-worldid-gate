@@ -12,7 +12,7 @@ From protected metadata:
 - ✅ Signing key present, valid format (64 hex chars, no whitespace)
 - ✅ App ID and RP ID match expected values
 - ✅ Environment: production
-- ✅ Action: "openclaw-verify"
+- ✅ Action: "openclaw-legacy"
 - ✅ Challenge TTL: 300s
 - ✅ Challenge created successfully
 - ❌ **No proof callback received** (client-side validation failure)

@@ -19,10 +19,10 @@ import type {
  * HTTP verification client configuration.
  */
 export interface WorldIdHttpVerifierConfig {
-  /** App ID (for constructing RpId, e.g., "app_b466e1f63a70a695b6d990d261e31b6a") */
+  /** App ID (for constructing RpId, e.g., "app_staging_0123456789abcdef0123456789ab") */
   appId: `app_${string}`;
 
-  /** RP ID for v4 API (e.g., "rp_223416a2a76673a1") */
+  /** RP ID for v4 API (e.g., "rp_0123456789abcdef") */
   rpId: `rp_${string}`;
 
   /** Expected environment */

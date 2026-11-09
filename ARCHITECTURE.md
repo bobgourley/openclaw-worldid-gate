@@ -174,8 +174,8 @@ function signRequest({ signingKeyHex, action?, ttl? }): RpSignature {
 
 **Environment variables (production)**:
 ```bash
-WORLDID_APP_ID=app_b466e1f63a70a695b6d990d261e31b6a
-WORLDID_RP_ID=rp_223416a2a76673a1
+WORLDID_APP_ID=app_staging_0123456789abcdef0123456789ab
+WORLDID_RP_ID=rp_0123456789abcdef
 WORLDID_SIGNING_KEY_HEX=<32-byte ECDSA private key, hex>
 WORLDID_ENVIRONMENT=production
 WORLDID_ACTION=telegram-bot-human-verification
@@ -909,7 +909,7 @@ This section documents UNRESOLVED integration requirements for World ID verifica
 
 **Repository**: https://github.com/openclaw/openclaw  
 **Commit**: `fc23bc864e4553c2d215e479eeec47b67a0bf943`  
-**Verification**: Commit SHA verified in local clone at `/tmp/openclaw-verify`
+**Verification**: Commit SHA verified in local clone at `/tmp/openclaw-legacy`
 
 **Key Landmarks Verified**:
 - Line 155: First middleware `bot.use(updateTracker.beginUpdate)`

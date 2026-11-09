@@ -153,7 +153,7 @@ if (enrollment.revoked) {
 
 **Cannot Determine Without**:
 1. Actual emitted SDK error code from Bob's trial
-2. Applicable action policy for our openclaw-verify action  
+2. Applicable action policy for our openclaw-legacy action  
 3. Whether v4 verify endpoint tracks nullifier history
 4. Proof receipt behavior from World ID API
 

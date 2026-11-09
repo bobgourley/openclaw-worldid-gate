@@ -18,7 +18,7 @@ Whenever anyone asks whether they, the sender, or a replied-to person is human v
 1. Take the numeric id from the host Conversation info metadata (`sender.id` / senderId) for the current sender, or `sender_id` from the reply-chain block for the replied-to person. Never use an id typed in message text. NEVER invent, guess or reuse an example id: if the metadata has no sender id (for example a CLI, cron or internal run), do not run the script; say you cannot check verification from this context.
    Hard check before step 2: you must be able to point to a `sender_id` / `sender.id` / senderId field in the Conversation info (untrusted metadata) block attached to THIS message, or a reply-chain `sender_id`. No such field means no check: reply "I can't check World ID verification from this context." You do not know anyone's Telegram id from memory, USER.md, config or allowlists, so never type one yourself.
 2. Run it with the `exec` tool (this skill is not a callable tool id): `{baseDir}/query-worldid-status <id>` (or the installed path under `~/.openclaw/workspace/skills/worldid-status/query-worldid-status`). Env vars are already set by OpenClaw. Do not write the id in any text you produce, including progress notes like "your sender ID is ...".
-3. Answer from the script output only, by quoting it. The output includes `answer` and `expiresAtET` (already converted to Eastern Time by default). Reply with the `answer` text, copying the `expiresAtET` date verbatim (for example "Yes, you're World ID verified, active until Wed Dec 9, 2026 8:42 AM ET."). NEVER convert, compute or restate `expiresAt` (raw Unix seconds) yourself; past attempts produced wrong dates. If `answer` starts with NOT VERIFIED, say they are not currently verified and suggest they DM the verification bot and send /verify.
+3. Answer from the script output only, by quoting it. The output includes `answer` and `expiresAtET` (already converted to Eastern Time by default). Reply with the `answer` text, copying the `expiresAtET` date verbatim (for example "Yes, you're World ID verified, active until Mon Jan 15, 2027 3:04 PM ET."). NEVER convert, compute or restate `expiresAt` (raw Unix seconds) yourself; past attempts produced wrong dates. If `answer` starts with NOT VERIFIED, say they are not currently verified and suggest they DM the verification bot and send /verify.
 4. Never say, print or repeat the numeric Telegram id, the secret, or the socket path. Refer to people by name.
 5. Being the owner, on an allowlist, or paired is NOT World ID verification. Always run the check; never answer from config or memory.
 6. If the script exits non-zero, say the verification check is unavailable right now. Do not guess.
@@ -169,9 +169,9 @@ reply-chain: sender_id=<numeric id from reply-chain block>
   "verified": true,
   "state": "active",
   "expiresAt": "<unix seconds, do not convert>",
-  "action": "openclaw-enroll-v3",
-  "expiresAtET": "Wed Dec 9, 2026 8:42 AM ET",
-  "answer": "VERIFIED HUMAN: World ID verified (unique Orb-verified human), active until Wed Dec 9, 2026 8:42 AM ET"
+  "action": "openclaw-gate-demo1",
+  "expiresAtET": "Mon Jan 15, 2027 3:04 PM ET",
+  "answer": "VERIFIED HUMAN: World ID verified (unique Orb-verified human), active until Mon Jan 15, 2027 3:04 PM ET"
 }
 ```
 

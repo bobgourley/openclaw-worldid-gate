@@ -10,9 +10,9 @@ import { signRequest } from '@worldcoin/idkit-server';
 
 // Simulate production signing
 const testKey = '0x' + '1'.repeat(64);
-const testAction = 'openclaw-verify';
-const testAppId = 'app_b466e1f63a70a695b6d990d261e31b6a';
-const testRpId = 'rp_223416a2a76673a1';
+const testAction = 'openclaw-legacy';
+const testAppId = 'app_staging_0123456789abcdef0123456789ab';
+const testRpId = 'rp_0123456789abcdef';
 
 console.log('=== IDKit Request Serialization Test ===\n');
 console.log('Simulating production request path...\n');
@@ -174,7 +174,7 @@ console.log();
 console.log('If World App still rejects with invalid_rp_signature:');
 console.log('1. Verify RP is active/approved (not just registered)');
 console.log('2. Check app_id is correctly bound to rp_id in portal');
-console.log('3. Verify action "openclaw-verify" is registered for this RP');
+console.log('3. Verify action "openclaw-legacy" is registered for this RP');
 console.log('4. Check if environment flag affects RP availability');
 console.log();
 console.log('Portal shows: RP registered, public key matches');

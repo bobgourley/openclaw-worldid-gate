@@ -22,7 +22,7 @@ console.log('=== RP Signature Cryptographic Verification ===\n');
 
 // Known test key for reproducible verification
 const testSigningKeyHex = '0x1111111111111111111111111111111111111111111111111111111111111111';
-const testAction = 'openclaw-verify';
+const testAction = 'openclaw-legacy';
 const testTTL = 300;
 
 // Derive expected public key from signing key

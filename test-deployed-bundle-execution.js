@@ -72,7 +72,7 @@ console.log('Step 2: Creating synthetic test environment...\n');
 
 // Generate synthetic signature using same key as runtime
 const syntheticSigningKey = '0x' + '1'.repeat(64);
-const syntheticAction = 'openclaw-verify';
+const syntheticAction = 'openclaw-legacy';
 
 const rpSig = signRequest({
   signingKeyHex: syntheticSigningKey,
@@ -97,8 +97,8 @@ console.log();
 // Synthetic session matching deployed format
 const syntheticSession = {
   signedChallenge: {
-    appId: 'app_b466e1f63a70a695b6d990d261e31b6a',
-    rpId: 'rp_223416a2a76673a1',
+    appId: 'app_staging_0123456789abcdef0123456789ab',
+    rpId: 'rp_0123456789abcdef',
     nonce: rpSig.nonce,
     createdAt: rpSig.createdAt,
     expiresAt: rpSig.expiresAt,
@@ -107,8 +107,8 @@ const syntheticSession = {
     signalHash: '0x00c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a4',
     environment: 'production'
   },
-  appId: 'app_b466e1f63a70a695b6d990d261e31b6a',
-  rpId: 'rp_223416a2a76673a1',
+  appId: 'app_staging_0123456789abcdef0123456789ab',
+  rpId: 'rp_0123456789abcdef',
   signal: 'telegram:123456'
 };
 

@@ -192,7 +192,7 @@ openclawTriggerPrefix: process.env.OPENCLAW_TRIGGER_PREFIX || '/ask ',
 - Real test execution procedure (5 scenarios)
 
 **Preserve:**
-- Existing bot @OpenClawWorldIDBot
+- Existing bot @YourWorldIDGateBot
 - 30-day TTL policy
 - Account-bound verification
 - SQLite/verifier documentation
@@ -201,10 +201,10 @@ openclawTriggerPrefix: process.env.OPENCLAW_TRIGGER_PREFIX || '/ask ',
 
 1. **OpenClaw CLI availability:** Verify accessible on Mac mini at known path
 2. **Agent configuration:** Pre-configure test agent in OpenClaw
-3. **Test group ID:** Extract actual group ID from "finn talk"
+3. **Test group ID:** Extract actual group ID from your target Telegram group
 4. **Webhook registration:** Register webhook URL with Telegram (requires HTTPS)
 5. **Service deployment:** Run server on Mac mini or accessible host
-6. **Bot token:** Configure actual bot token for @OpenClawWorldIDBot
+6. **Bot token:** Configure actual bot token for @YourWorldIDGateBot
 
 ### Test Commands (Corrected)
 

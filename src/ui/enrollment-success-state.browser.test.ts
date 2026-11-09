@@ -18,7 +18,7 @@ const TEST_BOT_TOKEN = '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11';
 const TEST_APP_ID = 'app_test_0123456789abcdef';
 const TEST_RP_ID = 'rp_test_0123456789';
 const TEST_WEBHOOK_SECRET = 'test_webhook_secret_123';
-const TEST_ACTION = 'openclaw-enroll-v2';
+const TEST_ACTION = 'openclaw-session-v1';
 
 function createValidInitData(userId: number, botToken: string, firstName: string, username: string): string {
   const authDate = Math.floor(Date.now() / 1000);

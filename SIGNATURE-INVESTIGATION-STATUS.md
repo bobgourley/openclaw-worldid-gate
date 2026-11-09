@@ -53,7 +53,7 @@
 Portal shows:
 - RP registered with matching public key
 - App ID and RP ID exist together
-- Action "openclaw-verify" exists (1 historical proof)
+- Action "openclaw-legacy" exists (1 historical proof)
 - "App in review" status (Bob says does NOT prove RP invalid)
 
 Error occurs:
@@ -76,7 +76,7 @@ Error occurs:
 1. **RP Activation**: Is RP "active" vs just "registered"?
 2. **App-RP Binding**: Is binding active or pending?
 3. **Environment Scope**: Is RP available in production, staging, or both?
-4. **Action State**: Is action "openclaw-verify" active or disabled?
+4. **Action State**: Is action "openclaw-legacy" active or disabled?
 5. **Review Status**: Does "App in review" block RP signature validation?
 
 ### Technical Unknowns

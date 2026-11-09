@@ -295,7 +295,7 @@ When ready for production:
 - ✅ Challenge session management with requester binding
 - ✅ Local HTTP service for enrollment API
 
-**Existing Bot**: @OpenClawWorldIDBot already registered (bot token NOT collected in documentation).
+**Existing Bot**: @YourWorldIDGateBot already registered (bot token NOT collected in documentation).
 
 **NOT Tested** (require live integration):
 - Real Telegram webhook/polling with authentic update signatures

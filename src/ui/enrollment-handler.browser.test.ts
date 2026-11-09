@@ -81,9 +81,9 @@ async function setupPage(page: Page, options: {
         body: JSON.stringify({
           nonce: 'test-nonce-123',
           appId: 'app_test',
-          action: 'openclaw-enroll-v2',
+          action: 'openclaw-session-v1',
           signedChallenge: {
-            action: 'openclaw-enroll-v2',
+            action: 'openclaw-session-v1',
             nonce: 'test-nonce-123',
           },
           signal: '123456',

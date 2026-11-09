@@ -6,9 +6,9 @@ This document lists the exact prerequisites and integration steps required befor
 
 ### 1. World Developer Portal Configuration
 
-**Status**: Configuration pending, Bob must complete.
+**Status**: Configuration pending; the operator must complete.
 
-**Required actions** (Bob must complete via World Developer Portal):
+**Required actions** (operator must complete via World Developer Portal):
 1. Create World ID application at https://developer.world.org
 2. Record `app_id` (e.g., `app_xxxxx`)
 3. Record `rp_id` (e.g., `rp_xxxxx`) - Required for verification API calls
@@ -21,18 +21,18 @@ This document lists the exact prerequisites and integration steps required befor
 - World App verification uses existing personal credentials
 
 **Evidence required before integration**:
-- Screenshot or copy of World Developer Portal showing `rp_id` and action
+- Confirmation from World Developer Portal showing `rp_id` and action
 - Confirmation of environment choice (production vs staging)
 
 ### 2. Telegram Bot Token
 
-**Status**: Existing bot @OpenClawWorldIDBot already registered. Bot token NOT collected in documentation.
+**Status**: Create or reuse a dedicated gate bot via @BotFather (example username `@YourWorldIDGateBot`). Bot token NOT collected in documentation.
 
 ### 3. Public HTTPS Endpoint
 
 **Status**: Domain/tunnel provider not chosen, user must select.
 
-**Options for Mac mini public HTTPS**:
+**Options for public HTTPS on the host**:
 - **Option A: Cloudflare Tunnel** (free tier available)
   - Pros: No open firewall ports, automatic TLS, DDoS protection
   - Cons: Requires Cloudflare account, some latency
@@ -358,7 +358,7 @@ npm start
 - ✅ World ID HTTP verification client (production and staging endpoints)
 - ✅ SQLite enrollment store with revocation lifecycle
 - ✅ HTTP server endpoints for enrollment API
-- ✅ 354 unit tests + 3 browser tests passing
+- ✅ Unit and browser tests: see README Testing section (currently 597 unit/integration + browser suite)
 
 **NOT Tested** (require live integration):
 - Real Telegram webhook/polling with authentic update signatures
@@ -370,7 +370,7 @@ npm start
 
 1. **World ID application and Telegram bot already registered**:
    - Existing World ID app and RP registration known (app/RP public IDs and signing secrets NOT collected in documentation)
-   - Existing bot @OpenClawWorldIDBot already registered
+   - Create or reuse a dedicated gate bot (example `@YourWorldIDGateBot`)
    - Refer to official World ID v4/RP proofOfHuman contract and configuration documentation
 
 2. **Choose and provision public HTTPS solution** (NOT YET SELECTED):
@@ -382,7 +382,7 @@ npm start
    - Configure existing app/RP credentials and bot token via secure channel (NOT collected in documentation)
    - Confirm environment choice (production vs staging)
 
-4. **OpenClaw Integration** (AFTER Bob approval):
+4. **OpenClaw Integration** (after operator approval):
    - Implement ingress gate (UNAPPROVED DESIGN)
    - Test end-to-end enrollment flow
 
@@ -418,9 +418,9 @@ WORLDID_STATUS_SOCKET=${HOME}/.worldid-gate/status.sock
 WORLDID_STATUS_SECRET_FILE=${HOME}/.worldid-gate/status-secret.txt
 ```
 
-**WORLDID_STATUS_SOCKET**: Path to Unix domain socket for private enrollment status queries. Must be in a directory owned by `finn` with mode 0700. Socket created with mode 0600 (owner-only).
+**WORLDID_STATUS_SOCKET**: Path to Unix domain socket for private enrollment status queries. Must be in a directory owned by the OpenClaw OS user with mode 0700. Socket created with mode 0600 (owner-only).
 
-**WORLDID_STATUS_SECRET_FILE**: Path to file containing bearer authentication secret (minimum 32 characters). File must have mode 0600 and be owned by `finn`. The secret is loaded at startup and used for constant-time authentication.
+**WORLDID_STATUS_SECRET_FILE**: Path to file containing bearer authentication secret (minimum 32 characters). File must have mode 0600 and be owned by the OpenClaw OS user. The secret is loaded at startup and used for constant-time authentication.
 
 **Important:** Both the gate service and main OpenClaw gateway run as the same OS user, so the socket directory (`~/.worldid-gate`) must be owned by that user with mode 0700, and the secret file must be owned by the same user with mode 0600.
 
@@ -441,7 +441,7 @@ GET /status/:telegramUserId returns:
   "verified": true,
   "state": "active",
   "expiresAt": 1735689600,
-  "action": "openclaw-enroll-v3"
+  "action": "openclaw-gate-demo1"
 }
 ```
 
@@ -515,32 +515,32 @@ Format rules:
 
 ### OpenClaw Skill Configuration
 
-The status query functionality is exposed to OpenClaw agents via a skill at `deploy/openclaw-skill/worldid-status/`.
+The status query functionality is exposed to OpenClaw agents via a skill at `openclaw/skills/worldid-status/`.
 
-**Installation for Agent `main` (Finn):**
+**Installation for your OpenClaw agent:**
 
-1. Create secure directory for socket and secret (owned by finn, mode 0700):
+1. Create secure directory for socket and secret (owned by the OpenClaw OS user, mode 0700):
 
 ```bash
 mkdir -p ~/.worldid-gate
 chmod 0700 ~/.worldid-gate
 ```
 
-2. Create secret file (owned by finn, mode 0600):
+2. Create secret file (owned by the OpenClaw OS user, mode 0600):
 
 ```bash
 # Generate secret with mode 0600 (umask 077 ensures secure permissions)
 (umask 077 && openssl rand -hex 32 > ~/.worldid-gate/status-secret.txt)
 ```
 
-3. Copy the skill to Finn's workspace:
+3. Copy the skill to the agent's workspace:
 
 ```bash
-cp -r /path/to/worldid-gate/deploy/openclaw-skill/worldid-status \
+cp -r /path/to/worldid-gate/openclaw/skills/worldid-status \
       ~/.openclaw/workspace/skills/worldid-status
 ```
 
-4. Add environment variables to Finn's OpenClaw configuration under `skills.entries.worldid-status.env`:
+4. Add environment variables to the agent's OpenClaw configuration under `skills.entries.worldid-status.env`:
 
 ```yaml
 skills:
@@ -551,7 +551,7 @@ skills:
         WORLDID_STATUS_SECRET_FILE: ${HOME}/.worldid-gate/status-secret.txt
 ```
 
-5. Add the skill to Finn's allowlist under `agents.entries.main.skills`:
+5. Add the skill to the agent's allowlist under `agents.entries.<agent-id>.skills`:
 
 ```yaml
 agents:
@@ -561,7 +561,7 @@ agents:
         - worldid-status
 ```
 
-6. Restart Finn to load the skill.
+6. Restart the agent (or rely on skill hot-reload) to load the skill.
 
 **Important:** Both the gate service and the main OpenClaw gateway run as the same OS user. The socket directory (`~/.worldid-gate`) has mode 0700, and the secret file has mode 0600, both owned by that user.
 
@@ -580,7 +580,7 @@ The skill accepts numeric Telegram user IDs only (e.g., `123456789`). It does NO
 - The gate stores enrollments by immutable numeric user IDs only
 - The Telegram Bot API cannot resolve @username to numeric ID without prior interaction
 
-Finn should use only `sender.id` from the Conversation info block or `sender_id` from reply-chain blocks.
+The agent should use only `sender.id` from the Conversation info block or `sender_id` from reply-chain blocks.
 
 ### Schema v4 Migration
 

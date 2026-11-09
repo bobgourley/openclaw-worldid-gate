@@ -2,7 +2,7 @@
  * Session-based enrollment and verification tests.
  *
  * Tests the hard cutover migration to session-bound enrollment with
- * openclaw-enroll-v2 action, covering:
+ * openclaw-session-v1 action, covering:
  * - Uniqueness + session creation during enrollment
  * - Returning user verification with session proofs
  * - Revocation and reactivation
@@ -31,7 +31,7 @@ describe("Session-based enrollment", () => {
       const enrollment: Enrollment = {
         nullifier: "0xabc123",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_5f3a9c2e8d1b0a",
@@ -41,7 +41,7 @@ describe("Session-based enrollment", () => {
 
       await store.createEnrollment(enrollment);
 
-      const found = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
+      const found = await store.findEnrollment(12345, "openclaw-session-v1", new Date());
       assert.ok(found);
       assert.strictEqual(found?.sessionId, "session_5f3a9c2e8d1b0a");
       assert.strictEqual(found?.protocolVersion, "4.0");
@@ -54,7 +54,7 @@ describe("Session-based enrollment", () => {
       const enrollment1: Enrollment = {
         nullifier: "0xabc123",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_duplicate",
@@ -66,7 +66,7 @@ describe("Session-based enrollment", () => {
       const enrollment2: Enrollment = {
         nullifier: "0xdef456",
         telegramUserId: 67890,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_duplicate",
@@ -85,7 +85,7 @@ describe("Session-based enrollment", () => {
       const enrollment1: Enrollment = {
         nullifier: "0xabc123",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_first",
@@ -97,7 +97,7 @@ describe("Session-based enrollment", () => {
       const enrollment2: Enrollment = {
         nullifier: "0xdef456",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_second",
@@ -106,7 +106,7 @@ describe("Session-based enrollment", () => {
 
       await assert.rejects(
         () => store.createEnrollment(enrollment2),
-        /Enrollment for telegramUserId 12345 and action openclaw-enroll-v2 already exists/
+        /Enrollment for telegramUserId 12345 and action openclaw-session-v1 already exists/
       );
     });
 
@@ -116,7 +116,7 @@ describe("Session-based enrollment", () => {
       const enrollment1: Enrollment = {
         nullifier: "0x0000000000000000000000000000000000000000000000000000000000000afa",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_first",
@@ -128,7 +128,7 @@ describe("Session-based enrollment", () => {
       const enrollment2: Enrollment = {
         nullifier: "0x0000000000000000000000000000000000000000000000000000000000000afa",
         telegramUserId: 67890,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_second",
@@ -147,7 +147,7 @@ describe("Session-based enrollment", () => {
       const enrollment1: Enrollment = {
         nullifier: "0xabc123",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_action1",
@@ -168,7 +168,7 @@ describe("Session-based enrollment", () => {
 
       await store.createEnrollment(enrollment2);
 
-      const found1 = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
+      const found1 = await store.findEnrollment(12345, "openclaw-session-v1", new Date());
       const found2 = await store.findEnrollment(12345, "other-action", new Date());
 
       assert.strictEqual(found1?.sessionId, "session_action1");
@@ -183,7 +183,7 @@ describe("Session-based enrollment", () => {
       const enrollment: Enrollment = {
         nullifier: "0xabc123",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_test",
@@ -194,7 +194,7 @@ describe("Session-based enrollment", () => {
 
       const claim: SessionNullifierClaim = {
         sessionNullifier: "0xsession_null_1",
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         sessionId: "session_test",
         enrollmentNullifier: "0xabc123",
         claimedAt: new Date().toISOString(),
@@ -202,7 +202,7 @@ describe("Session-based enrollment", () => {
 
       await store.recordSessionNullifierClaim(claim);
 
-      const isClaimed = await store.isSessionNullifierClaimed("0xsession_null_1", "openclaw-enroll-v2");
+      const isClaimed = await store.isSessionNullifierClaimed("0xsession_null_1", "openclaw-session-v1");
       assert.strictEqual(isClaimed, true);
     });
 
@@ -212,7 +212,7 @@ describe("Session-based enrollment", () => {
       const enrollment: Enrollment = {
         nullifier: "0xabc123",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_test",
@@ -223,7 +223,7 @@ describe("Session-based enrollment", () => {
 
       const claim: SessionNullifierClaim = {
         sessionNullifier: "0xreplayed",
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         sessionId: "session_test",
         enrollmentNullifier: "0xabc123",
         claimedAt: new Date().toISOString(),
@@ -243,7 +243,7 @@ describe("Session-based enrollment", () => {
       const enrollment: Enrollment = {
         nullifier: "0xabc123",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_test",
@@ -254,7 +254,7 @@ describe("Session-based enrollment", () => {
 
       const claim1: SessionNullifierClaim = {
         sessionNullifier: "0xsame_null",
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         sessionId: "session_test",
         enrollmentNullifier: "0xabc123",
         claimedAt: new Date().toISOString(),
@@ -271,7 +271,7 @@ describe("Session-based enrollment", () => {
       await store.recordSessionNullifierClaim(claim1);
       await store.recordSessionNullifierClaim(claim2);
 
-      const isClaimed1 = await store.isSessionNullifierClaimed("0xsame_null", "openclaw-enroll-v2");
+      const isClaimed1 = await store.isSessionNullifierClaimed("0xsame_null", "openclaw-session-v1");
       const isClaimed2 = await store.isSessionNullifierClaimed("0xsame_null", "other-action");
 
       assert.strictEqual(isClaimed1, true);
@@ -286,7 +286,7 @@ describe("Session-based enrollment", () => {
       const enrollment: Enrollment = {
         nullifier: "0xabc123",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_test",
@@ -298,7 +298,7 @@ describe("Session-based enrollment", () => {
       const revoked = await store.revokeEnrollment("0xabc123", "user");
       assert.strictEqual(revoked, true);
 
-      const found = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
+      const found = await store.findEnrollment(12345, "openclaw-session-v1", new Date());
       assert.strictEqual(found, null);
     });
 
@@ -308,7 +308,7 @@ describe("Session-based enrollment", () => {
       const enrollment: Enrollment = {
         nullifier: "0xabc123",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_test",
@@ -318,7 +318,7 @@ describe("Session-based enrollment", () => {
       await store.createEnrollment(enrollment);
       await store.revokeEnrollment("0xabc123", "admin");
 
-      const found = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
+      const found = await store.findEnrollment(12345, "openclaw-session-v1", new Date());
       assert.strictEqual(found, null);
     });
 
@@ -328,7 +328,7 @@ describe("Session-based enrollment", () => {
       const enrollment: Enrollment = {
         nullifier: "0xabc123",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_test",
@@ -350,7 +350,7 @@ describe("Session-based enrollment", () => {
       const enrollment: Enrollment = {
         nullifier: "0xabc123",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_test",
@@ -363,7 +363,7 @@ describe("Session-based enrollment", () => {
       const reactivated = await store.reactivateEnrollment("0xabc123", "admin");
       assert.strictEqual(reactivated, true);
 
-      const found = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
+      const found = await store.findEnrollment(12345, "openclaw-session-v1", new Date());
       assert.ok(found);
       assert.strictEqual(found?.sessionId, "session_test");
     });
@@ -374,7 +374,7 @@ describe("Session-based enrollment", () => {
       const enrollment: Enrollment = {
         nullifier: "0xabc123",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_test",
@@ -393,7 +393,7 @@ describe("Session-based enrollment", () => {
       const enrollment: Enrollment = {
         nullifier: "0xabc123",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_immutable",
@@ -407,7 +407,7 @@ describe("Session-based enrollment", () => {
       const enrollment2: Enrollment = {
         nullifier: "0xdef456",
         telegramUserId: 67890,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_immutable",
@@ -422,13 +422,13 @@ describe("Session-based enrollment", () => {
   });
 
   describe("Hard cutover semantics", () => {
-    it("should allow enrollment on legacy action (openclaw-verify) without session", async () => {
+    it("should allow enrollment on legacy action (openclaw-legacy) without session", async () => {
       const store = new SqliteEnrollmentStore(getTestDb());
 
       const legacyEnrollment: Enrollment = {
         nullifier: "0x000000000000000000000000000000000000000000000000000000000000bead",
         telegramUserId: 12345,
-        action: "openclaw-verify",
+        action: "openclaw-legacy",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         protocolVersion: "UNKNOWN",
@@ -436,7 +436,7 @@ describe("Session-based enrollment", () => {
 
       await store.createEnrollment(legacyEnrollment);
 
-      const found = await store.findEnrollment(12345, "openclaw-verify", new Date());
+      const found = await store.findEnrollment(12345, "openclaw-legacy", new Date());
       assert.ok(found);
       assert.strictEqual(found?.sessionId, null);
     });
@@ -447,7 +447,7 @@ describe("Session-based enrollment", () => {
       const legacyEnrollment: Enrollment = {
         nullifier: "0x000000000000000000000000000000000000000000000000000000000000bead",
         telegramUserId: 12345,
-        action: "openclaw-verify",
+        action: "openclaw-legacy",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         protocolVersion: "UNKNOWN",
@@ -458,7 +458,7 @@ describe("Session-based enrollment", () => {
       const newEnrollment: Enrollment = {
         nullifier: "0xnew",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_new",
@@ -467,8 +467,8 @@ describe("Session-based enrollment", () => {
 
       await store.createEnrollment(newEnrollment);
 
-      const foundLegacy = await store.findEnrollment(12345, "openclaw-verify", new Date());
-      const foundNew = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
+      const foundLegacy = await store.findEnrollment(12345, "openclaw-legacy", new Date());
+      const foundNew = await store.findEnrollment(12345, "openclaw-session-v1", new Date());
 
       assert.strictEqual(foundLegacy?.nullifier, "0x000000000000000000000000000000000000000000000000000000000000bead");
       assert.strictEqual(foundLegacy?.sessionId, null);
@@ -485,7 +485,7 @@ describe("Session-based enrollment", () => {
       const session = {
         nonce: "nonce123",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 300,
         createdAt: new Date().toISOString(),
       };
@@ -506,7 +506,7 @@ describe("Session-based enrollment", () => {
       const session = {
         nonce: "nonce_expired",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) - 100,
         createdAt: new Date().toISOString(),
       };
@@ -525,7 +525,7 @@ describe("Session-based enrollment", () => {
       const enrollment: Enrollment = {
         nullifier: "0xabc123",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_test",
@@ -535,7 +535,7 @@ describe("Session-based enrollment", () => {
 
       await store.createEnrollment(enrollment);
 
-      const found = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
+      const found = await store.findEnrollment(12345, "openclaw-session-v1", new Date());
       assert.strictEqual(found?.migrationGeneration, 2);
     });
 
@@ -545,7 +545,7 @@ describe("Session-based enrollment", () => {
       const enrollment: Enrollment = {
         nullifier: "0xabc123",
         telegramUserId: 12345,
-        action: "openclaw-enroll-v2",
+        action: "openclaw-session-v1",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
         createdAt: new Date().toISOString(),
         sessionId: "session_test",
@@ -554,7 +554,7 @@ describe("Session-based enrollment", () => {
 
       await store.createEnrollment(enrollment);
 
-      const found = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
+      const found = await store.findEnrollment(12345, "openclaw-session-v1", new Date());
       assert.strictEqual(found?.migrationGeneration, 1);
     });
   });

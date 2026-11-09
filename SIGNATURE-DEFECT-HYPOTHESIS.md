@@ -3,11 +3,11 @@
 ## Evidence Summary
 
 ### Portal Evidence (4:56 PM ET)
-- ✅ App ID: `app_b466e1f63a70a695b6d990d261e31b6a`
-- ✅ RP ID: `rp_223416a2a76673a1`
+- ✅ App ID: `app_staging_0123456789abcdef0123456789ab`
+- ✅ RP ID: `rp_0123456789abcdef`
 - ✅ Registered public signer: `0x7576AEFb7d97d641EA1626B7fcB3d574a9c4BefD`
 - ✅ Runtime-derived public key: `0x7576aefb7d97d641ea1626b7fcb3d574a9c4befd` (EXACT MATCH, case-insensitive)
-- ✅ Action "openclaw-verify" exists (one historical proof)
+- ✅ Action "openclaw-legacy" exists (one historical proof)
 - ⚠️  "App in review" status (but Bob says does NOT prove RP invalid)
 - ⚠️  Portal shows no environment/active flag
 
@@ -15,7 +15,7 @@
 - ✅ Process PID 53898, parent 53886
 - ✅ Release 4d2ee41 dist/server.js, Node 24.19.0
 - ✅ File mtime 2:44:12 PM EST (4 sec before start at 2:44:16 PM)
-- ✅ Config values: app expected, RP expected, action "openclaw-verify", environment "production"
+- ✅ Config values: app expected, RP expected, action "openclaw-legacy", environment "production"
 - ✅ Time sync: sntp offset +0.034823s (no meaningful skew)
 
 ### Cryptographic Verification
@@ -82,7 +82,7 @@ Verify app_id ↔ rp_id binding status in portal
 ### Hypothesis 4: Action Registration
 
 **Observation**:
-- Action "openclaw-verify" exists with one historical proof
+- Action "openclaw-legacy" exists with one historical proof
 - No action registration UI visible in portal
 
 **Possible Issue**:

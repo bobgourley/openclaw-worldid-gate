@@ -10,8 +10,10 @@ dist/
 *.pem
 config.production.ts
 secrets/
-*.txt
-!package-lock.txt
+.status-secret
+status-secret.txt
+*secret*.txt
+*.pem.bak
 
 # Database files
 *.db

@@ -91,10 +91,10 @@ console.log('Step 3: Creating synthetic test environment...\n');
 
 // Generate synthetic signature using same key as runtime
 const syntheticSigningKey = '0x' + '1'.repeat(64);
-const syntheticAction = 'openclaw-verify';
+const syntheticAction = 'openclaw-legacy';
 const syntheticSignal = 'telegram:123456';
-const syntheticAppId = 'app_b466e1f63a70a695b6d990d261e31b6a';
-const syntheticRpId = 'rp_223416a2a76673a1';
+const syntheticAppId = 'app_staging_0123456789abcdef0123456789ab';
+const syntheticRpId = 'rp_0123456789abcdef';
 
 const rpSig = signRequest({
   signingKeyHex: syntheticSigningKey,

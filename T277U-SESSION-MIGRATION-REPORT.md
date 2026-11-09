@@ -72,12 +72,12 @@
    - Challenge/nonce consumption validation
 
 2. **Portal Action Creation** ❌
-   - Operator must create `openclaw-enroll-v2` in World ID Developer Portal
+   - Operator must create `openclaw-session-v1` in World ID Developer Portal
    - Configuration: Proof of Human, session creation enabled, unlimited verifications
 
 3. **Admission Gate Update** ❌
-   - Update gate to check ONLY `openclaw-enroll-v2` action
-   - Reject legacy `openclaw-verify` at gate (hard cutover)
+   - Update gate to check ONLY `openclaw-session-v1` action
+   - Reject legacy `openclaw-legacy` at gate (hard cutover)
    - Preserve historical data for audit
 
 4. **Frontend UI** ❌
@@ -221,7 +221,7 @@ CREATE TABLE session_nullifier_claims (
 
 - [ ] Independent code review of schema changes
 - [ ] Service layer integration (enrollment + verification methods)
-- [ ] Portal action creation (`openclaw-enroll-v2`)
+- [ ] Portal action creation (`openclaw-session-v1`)
 - [ ] Integration tests (end-to-end flows)
 - [ ] Staging deployment with test enrollments
 - [ ] Database backup procedure documented
@@ -267,7 +267,7 @@ cursor/session-migration-v2-0cb6
 ### Commits
 ```
 e06d485 docs: comprehensive session migration summary
-678909a feat: session-based enrollment with openclaw-enroll-v2 action
+678909a feat: session-based enrollment with openclaw-session-v1 action
 ```
 
 ### Documentation

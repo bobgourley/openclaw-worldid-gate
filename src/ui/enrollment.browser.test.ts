@@ -30,8 +30,8 @@ const TEST_SIGNING_KEY = '000000000000000000000000000000000000000000000000000000
 const TEST_USER_ID = 987654321;
 
 // Valid synthetic IDs (following SDK format requirements)
-const TEST_APP_ID = 'app_b466e1f63a70a695b6d990d261e31b6a'; // 32 hex chars after app_
-const TEST_RP_ID = 'rp_223416a2a76673a1'; // 16 hex chars after rp_
+const TEST_APP_ID = 'app_staging_0123456789abcdef0123456789ab'; // 32 hex chars after app_
+const TEST_RP_ID = 'rp_0123456789abcdef'; // 16 hex chars after rp_
 
 /**
  * Create valid Telegram initData with complete user object and HMAC.
