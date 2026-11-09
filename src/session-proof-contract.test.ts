@@ -17,11 +17,25 @@ import Database from 'better-sqlite3';
 import { EnrollmentService } from './enrollment-service-production.js';
 import { FakeClock } from './clock.js';
 import type { VerifySessionRequest } from './types.js';
+import { createHmac } from 'node:crypto';
+
+// Create valid Telegram initData
+function createValidInitData(userId: number, botToken: string): string {
+  const authDate = Math.floor(Date.now() / 1000);
+  const userJson = JSON.stringify({ id: userId, first_name: "Test" });
+  const dataCheckString = `auth_date=${authDate}\nuser=${userJson}`;
+  
+  const secretKey = createHmac('sha256', 'WebAppData').update(botToken).digest();
+  const hash = createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+  
+  return `auth_date=${authDate}&hash=${hash}&user=${encodeURIComponent(userJson)}`;
+}
 
 describe('Session Proof Contract (World ID 4.0 Specs)', () => {
   it('accepts session proof with different nullifier than enrollment (per spec)', async () => {
     const testDbPath = `/tmp/session-proof-test-${Date.now()}.db`;
     const clock = new FakeClock();
+    const BOT_TOKEN = '123456:ABC-DEF';
     
     // Session ID for enrollment
     const sessionId = 'session_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
@@ -62,13 +76,13 @@ describe('Session Proof Contract (World ID 4.0 Specs)', () => {
       dbPath: testDbPath,
       challengeAdapter: adapter,
       verificationClient: verifier,
-      telegramBotToken: '123456:ABC-DEF',
+      telegramBotToken: BOT_TOKEN,
       action: 'test-action',
       clock,
     });
 
     // Step 1: Enroll user with session creation
-    const initData = 'query_id=test&user={"id":123456}';
+    const initData = createValidInitData(123456, BOT_TOKEN);
     const enrollChallenge = await service.createChallenge(initData);
     assert.ok(enrollChallenge.success, 'Enrollment challenge creation should succeed');
     
@@ -148,7 +162,7 @@ describe('Session Proof Contract (World ID 4.0 Specs)', () => {
       dbPath: testDbPath,
       challengeAdapter: adapter,
       verificationClient: verifier,
-      telegramBotToken: '123456:ABC-DEF',
+      telegramBotToken: BOT_TOKEN,
       action: 'test-action',
       clock,
     });
@@ -244,7 +258,7 @@ describe('Session Proof Contract (World ID 4.0 Specs)', () => {
       dbPath: testDbPath,
       challengeAdapter: adapter,
       verificationClient: verifier,
-      telegramBotToken: '123456:ABC-DEF',
+      telegramBotToken: BOT_TOKEN,
       action: 'test-action',
       clock,
     });
