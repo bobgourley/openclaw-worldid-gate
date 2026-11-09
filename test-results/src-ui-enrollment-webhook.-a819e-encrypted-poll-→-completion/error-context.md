@@ -12,98 +12,14 @@
 # Error details
 
 ```
-Error: expect(locator).toBeVisible() failed
+Error: expect(received).toBeTruthy()
 
-Locator:  locator('#connectorLink')
-Expected: visible
-Received: hidden
-Timeout:  5000ms
-
-Call log:
-  - Expect "toBeVisible" locator('#connectorLink') with timeout 5000ms
-  - waiting for locator('#connectorLink')
-    14 × locator resolved to <a href="#" target="_blank" id="connectorLink" class="connector-link">↵        Or tap to open on this device↵      </a>
-       - unexpected value "hidden"
-
-```
-
-```yaml
-- heading "World ID Verification" [level=1]
-- paragraph: Verify your unique personhood to access this Telegram group
-- text: Unable to connect to World App. Please try again.
-- strong: "Privacy:"
-- text: Only a zero-knowledge proof is verified. Our service receives no raw biometric data.
+Received: false
 ```
 
 # Test source
 
 ```ts
-  276 |       const method = route.request().method();
-  277 |       
-  278 |       // Bridge request creation
-  279 |       if (url.includes('/request') && method === 'POST') {
-  280 |         console.log('[Mock] Bridge POST /request');
-  281 |         await route.fulfill({
-  282 |           status: 200,
-  283 |           contentType: 'application/json',
-  284 |           body: JSON.stringify({ request_id: 'test_req_12345' }),
-  285 |         });
-  286 |         return;
-  287 |       }
-  288 |       
-  289 |       // Bridge poll
-  290 |       if (url.includes('/response/')) {
-  291 |         pollCount++;
-  292 |         console.log(`[Mock] Poll attempt ${pollCount}`);
-  293 | 
-  294 |         if (pollCount <= 2) {
-  295 |           await route.fulfill({
-  296 |             status: 200,
-  297 |             contentType: 'application/json',
-  298 |             body: JSON.stringify({ status: 'initialized' }),
-  299 |           });
-  300 |         } else if (pollCount === 3 && encryptionKey && sessionNonce) {
-  301 |           // Return encrypted success response (protocol v1 format)
-  302 |           // CRITICAL: SDK validates nonce matches RP context
-  303 |           // session_id required when session_id='create' in context
-  304 |           // session_id format: 'session_' + 128 hex chars, bytes 64-66 must be '01'
-  305 |           
-  306 |           // Use extracted session nonce (from RP context)
-  307 |           console.log('[Mock] Building response with nonce:', sessionNonce.substring(0, 20) + '...');
-  308 |           
-  309 |           const successPayload = {
-  310 |             version: 1,
-  311 |             id: 'mock_response_id',
-  312 |             session_id: 'session_' + '0'.repeat(64) + '01' + '0'.repeat(62),
-  313 |             user_presence_completed: true,
-  314 |             responses: [{
-  315 |               identifier: 'proof_of_human',
-  316 |               issuer_schema_id: 1,
-  317 |               proof: '0'.repeat(320),  // 320 hex chars (5 proof elements)
-  318 |               nullifier: 'nil_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-  319 |               expires_at_min: Math.floor(Date.now() / 1000) + 86400,
-  320 |             }],
-  321 |           };
-  322 | 
-  323 |           const payloadString = JSON.stringify(successPayload);
-  324 |           console.log('[Mock] Encrypting payload (length:', payloadString.length, ')');
-  325 |           const encrypted = encryptBridgeResponse(encryptionKey, payloadString);
-  326 | 
-  327 |           console.log('[Mock] Returning encrypted completed response');
-  328 |           await route.fulfill({
-  329 |             status: 200,
-  330 |             contentType: 'application/json',
-  331 |             body: JSON.stringify({
-  332 |               status: 'completed',
-  333 |               response: encrypted,
-  334 |             }),
-  335 |           });
-  336 |         } else {
-  337 |           await route.fulfill({
-  338 |             status: 200,
-  339 |             contentType: 'application/json',
-  340 |             body: JSON.stringify({ status: 'initialized' }),
-  341 |           });
   342 |         }
   343 |         return;
   344 |       }
@@ -138,8 +54,7 @@ Call log:
   373 |     await page.waitForTimeout(2000);
   374 | 
   375 |     const connectorLink = page.locator('#connectorLink');
-> 376 |     await expect(connectorLink).toBeVisible({ timeout: 5000 });
-      |                                 ^ Error: expect(locator).toBeVisible() failed
+  376 |     await expect(connectorLink).toBeVisible({ timeout: 5000 });
   377 | 
   378 |     const connectorHref = await connectorLink.getAttribute('href');
   379 |     expect(connectorHref).toBeTruthy();
@@ -205,7 +120,8 @@ Call log:
   439 |     console.log('Completion POST sent:', completionReceived);
   440 | 
   441 |     // Assertions
-  442 |     expect(completionReceived).toBeTruthy();
+> 442 |     expect(completionReceived).toBeTruthy();
+      |                                ^ Error: expect(received).toBeTruthy()
   443 |     expect(completionPayload).toBeTruthy();
   444 |     expect(completionPayload.initData).toBeTruthy();
   445 |     expect(completionPayload.idkitResult).toBeTruthy();

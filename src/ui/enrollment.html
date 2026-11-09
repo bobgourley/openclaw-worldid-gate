@@ -658,7 +658,7 @@
         
         // Extract RP context from session (signed by backend)
         const rp_context = {
-          rp_id: session.rpId,
+          rp_id: session.signedChallenge.rpId,
           nonce: session.signedChallenge.nonce,
           created_at: session.signedChallenge.createdAt,
           expires_at: session.signedChallenge.expiresAt,
@@ -667,12 +667,12 @@
         
         // Create verification request with session creation
         const request = await IDKit.request({
-          app_id: session.appId,
+          app_id: session.signedChallenge.appId,
           action: session.signedChallenge.action,
           rp_context: rp_context,
           session_id: 'create',
           allow_legacy_proofs: false,
-        }).constraints(CredentialRequest('proof_of_human', { signal: session.signal }));
+        }).constraints(CredentialRequest('proof_of_human', { signal: session.signedChallenge.signal }));
         
         await displayConnectorAndPoll(request, '/api/enrollment/complete');
         

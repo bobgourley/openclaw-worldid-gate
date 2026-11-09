@@ -275,7 +275,11 @@ export class HttpService {
     try {
       const result: CreateChallengeResult = await this.enrollmentService.createChallenge(req.body.initData);
 
+      // Flatten structure for frontend compatibility (top-level fields expected by enrollment.html)
       res.json({
+        appId: result.signedChallenge.appId,
+        rpId: result.signedChallenge.rpId,
+        signal: result.signal,
         signedChallenge: result.signedChallenge,
       });
     } catch (error: any) {

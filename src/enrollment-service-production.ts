@@ -109,6 +109,8 @@ export interface EnrollmentServiceConfig {
 export interface CreateChallengeResult {
   /** Signed RP challenge for frontend IDKit configuration */
   signedChallenge: SignedRpChallenge;
+  /** Signal for frontend IDKit constraints (telegram:userId), omitted for session proofs */
+  signal?: string;
 }
 
 /**
@@ -671,6 +673,7 @@ export class EnrollmentService {
 
     return {
       signedChallenge: serviceChallenge,
+      signal,
     };
   }
 
