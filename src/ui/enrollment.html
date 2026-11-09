@@ -341,7 +341,11 @@
   <!-- Load Telegram WebApp SDK -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-  <script type="module">
+  <!-- Load World ID SDK bundles (IIFE format) -->
+  <script src="/idkit-bundle.js"></script>
+  <script src="/qrcode-bundle.js"></script>
+
+  <script>
     // NO SECRETS IN CLIENT CODE
     // Configuration injected via URL params and Telegram WebApp context
     
@@ -423,8 +427,8 @@
      */
     async function generateQRCode(text, container) {
       try {
-        // Import locally bundled qrcode library
-        const { QRCode } = await import('/qrcode-bundle.js');
+        // Access QRCode from global IIFE bundle
+        const { QRCode } = window.QRCodeBundle;
         
         // Calculate responsive QR size based on viewport
         const viewportHeight = window.innerHeight;
@@ -516,7 +520,8 @@
       const enrollmentStatus = await checkEnrollmentStatus();
       
       // Import IDKit once (reused across flows)
-      const { IDKit, CredentialRequest } = await import('/idkit-bundle.js');
+      // Access IDKit from global IIFE bundle
+      const { IDKit, CredentialRequest } = window.WorldIDKitBundle;
       
       if (enrollmentStatus.status === 'renewal' || enrollmentStatus.status === 'reactivation') {
         // Returning user flow - use session verification
