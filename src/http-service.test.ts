@@ -267,7 +267,7 @@ describe('HttpService Integration', () => {
         body: JSON.stringify({ initData, idkitResult: idkitResult1 }),
       });
 
-      // Second attempt
+      // Second attempt - should reject because user has sessionId
       const response = await fetch(`http://127.0.0.1:${testPort}/api/challenge/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -276,7 +276,7 @@ describe('HttpService Integration', () => {
 
       assert.equal(response.status, 409);
       const data = await response.json();
-      assert.match(data.error, /already enrolled/i);
+      assert.match(data.error, /session verification/i);
     });
   });
 
@@ -311,8 +311,9 @@ describe('HttpService Integration', () => {
       assert.equal(response.status, 200);
       const data = await response.json();
       assert.equal(data.success, true);
-      assert.equal(data.telegramUserId, userId);
+      // No telegramUserId returned (privacy fix)
       assert.ok(data.expiresAt);
+      assert.ok(data.protocolVersion);
     });
 
     it('rejects missing initData', async () => {
@@ -422,13 +423,13 @@ describe('HttpService Integration', () => {
         sessionId3
       );
 
-      const enrollResponse = await fetch(`http://127.0.0.1:${testPort}/api/enrollment/complete`, {
+      await fetch(`http://127.0.0.1:${testPort}/api/enrollment/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ initData, idkitResult: idkitResult1 }),
       });
-      const enrollment = await enrollResponse.json();
-      const sessionId = enrollment.sessionId;
+      // sessionId not returned in response (privacy fix), use the one from enrollment
+      const sessionId = sessionId3;
 
       // Create session challenge
       const sessionChallengeResponse = await fetch(`http://127.0.0.1:${testPort}/api/session/challenge/create`, {
@@ -472,7 +473,7 @@ describe('HttpService Integration', () => {
 
       const data = await verifyResponse.json();
       assert.equal(data.success, true);
-      assert.equal(data.telegramUserId, userId);
+      // No telegramUserId returned (privacy fix)
       assert.ok(data.expiresAt);
     });
 

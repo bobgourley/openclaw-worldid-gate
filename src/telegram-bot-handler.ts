@@ -585,52 +585,6 @@ export class TelegramBotHandler {
   }
 
   /**
-   * Handle /revoke command - self-service removal of user's enrollment.
-   * 
-   * Security:
-   * - Uses only authenticated message.from.id (no caller-supplied target)
-   * - Idempotent (safe to call multiple times)
-   * - Deletes pending challenges to prevent stale re-enrollment
-   * - Does NOT delete World ID credential in World App
-   * 
-   * @param userId - Authenticated Telegram user ID from message.from.id
-   */
-  private async handleRevokeCommand(userId: number): Promise<void> {
-    try {
-      const wasRevoked = await this.enrollmentService.revokeEnrollment(userId);
-
-      if (wasRevoked) {
-        await this.transport.sendMessage(
-          userId,
-          '✅ *Your verification has been revoked.*\n\n' +
-          '*What this means:*\n' +
-          '• Your access to this bot has been removed\n' +
-          '• Any pending verification sessions have been canceled\n' +
-          '• You can verify again anytime by sending /verify\n\n' +
-          '*Important:* This only removes your verification from this bot. ' +
-          'Your World ID credentials in the World App are not affected.\n\n' +
-          'Send /verify to verify again with a fresh proof.',
-          { parse_mode: 'Markdown' }
-        );
-      } else {
-        await this.transport.sendMessage(
-          userId,
-          '✅ *No active verification found.*\n\n' +
-          'You do not have an active verification to revoke.\n\n' +
-          'Send /verify to start World ID verification.',
-          { parse_mode: 'Markdown' }
-        );
-      }
-    } catch (error: any) {
-      console.error('Revoke command error:', error);
-      await this.transport.sendMessage(
-        userId,
-        '❌ Unable to process revocation. Please try again later.'
-      ).catch(err => console.error('Failed to send error:', err));
-    }
-  }
-
-  /**
    * Get session info for UI rendering (validates session ID).
    * 
    * @param sessionId - Session ID from URL

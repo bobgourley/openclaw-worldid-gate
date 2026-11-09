@@ -397,6 +397,11 @@ export class HttpService {
         return;
       }
 
+      if (error.message?.includes('session verification')) {
+        res.status(409).json({ error: 'User must use session verification' });
+        return;
+      }
+
       res.status(500).json({ error: 'Challenge creation failed' });
     }
   }

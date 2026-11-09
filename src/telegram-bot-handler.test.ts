@@ -497,10 +497,8 @@ describe('TelegramBotHandler', () => {
       assert.equal(sentMessages.length, 1);
       // Should offer renewal via proveSession, NOT uniqueness proof with 'create'
       assert.match(sentMessages[0].text, /World ID Verification|verify|Open/i);
-      // Verify createSessionChallenge was called with renewal mode
+      // Verify createSessionChallenge was called (no mode parameter)
       assert.equal(mockEnrollmentService.createSessionChallenge.mock.calls.length, 1);
-      const callArgs = mockEnrollmentService.createSessionChallenge.mock.calls[0].arguments;
-      assert.ok(callArgs[1]?.mode === 'renewal', 'Should use renewal mode for expired user with session_id');
     });
 
     it('handles /status for enrolled user', async () => {

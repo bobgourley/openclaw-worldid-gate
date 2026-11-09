@@ -118,6 +118,9 @@ describe('Production server integration', () => {
     });
 
     await httpService.start();
+    
+    // Get the actual assigned port
+    testPort = httpService.getActualPort();
   });
 
   afterEach(async () => {
