@@ -93,6 +93,7 @@ export class StatusSocketServer {
   private server: http.Server | null = null;
   private readonly config: StatusSocketConfig;
   private readonly rateLimiter = new SocketRateLimiter();
+  private connections: Set<any> = new Set();
 
   constructor(config: StatusSocketConfig) {
     this.config = config;
@@ -134,6 +135,14 @@ export class StatusSocketServer {
 
     this.server = http.createServer(async (req, res) => {
       await this.handleRequest(req, res);
+    });
+
+    // Track connections for clean shutdown
+    this.server.on('connection', (conn) => {
+      this.connections.add(conn);
+      conn.on('close', () => {
+        this.connections.delete(conn);
+      });
     });
 
     return new Promise((resolve, reject) => {
@@ -216,10 +225,13 @@ export class StatusSocketServer {
       return;
     }
 
+    // Destroy all connections immediately
+    for (const conn of this.connections) {
+      conn.destroy();
+    }
+    this.connections.clear();
+
     return new Promise((resolve, reject) => {
-      // Force close all active connections immediately
-      this.server!.closeAllConnections?.();
-      
       this.server!.close(async (error) => {
         if (error) {
           reject(error);

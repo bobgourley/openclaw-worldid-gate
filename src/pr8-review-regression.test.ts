@@ -76,16 +76,17 @@ describe('PR 8 Review Regression Tests', () => {
           sweepIntervalHours: 24,
         });
         
-        // Simulate verifySession calling applyTagToMember
-        // This tests that the mechanism works - if the apply call is removed from verifySession, test fails
-        await manager.applyTagToMember(123);
-        
-        // Verify tag was applied
-        assert.strictEqual(tagCalls.length, 1, 'Tag should be applied for user 123');
-        assert.strictEqual(tagCalls[0].userId, 123);
-        
-        // Clean up
-        manager.stopSweeper();
+        try {
+          // Simulate verifySession calling applyTagToMember
+          // This tests that the mechanism works - if the apply call is removed from verifySession, test fails
+          await manager.applyTagToMember(123);
+          
+          // Verify tag was applied
+          assert.strictEqual(tagCalls.length, 1, 'Tag should be applied for user 123');
+          assert.strictEqual(tagCalls[0].userId, 123);
+        } finally {
+          manager.stopSweeper();
+        }
       } finally {
         db.close();
         await unlink(dbPath).catch(() => {});
@@ -177,22 +178,23 @@ describe('PR 8 Review Regression Tests', () => {
           sweepIntervalHours: 24,
         });
         
-        const result = await manager.reconcileAllTags();
-        
-        // Assert exact counts
-        assert.strictEqual(result.processed, 3, 'Should process 3 enrollments');
-        assert.strictEqual(result.applied, 1, 'Should apply 1 tag (user 100)');
-        assert.strictEqual(result.removed, 2, 'Should remove 2 tags (users 200, 300)');
-        
-        // Assert exact calls
-        assert.strictEqual(tagCalls.length, 1);
-        assert.strictEqual(tagCalls[0].userId, 100);
-        assert.strictEqual(removeCalls.length, 2);
-        assert.ok(removeCalls.some(c => c.userId === 200));
-        assert.ok(removeCalls.some(c => c.userId === 300));
-        
-        // Clean up
-        manager.stopSweeper();
+        try {
+          const result = await manager.reconcileAllTags();
+          
+          // Assert exact counts
+          assert.strictEqual(result.processed, 3, 'Should process 3 enrollments');
+          assert.strictEqual(result.applied, 1, 'Should apply 1 tag (user 100)');
+          assert.strictEqual(result.removed, 2, 'Should remove 2 tags (users 200, 300)');
+          
+          // Assert exact calls
+          assert.strictEqual(tagCalls.length, 1);
+          assert.strictEqual(tagCalls[0].userId, 100);
+          assert.strictEqual(removeCalls.length, 2);
+          assert.ok(removeCalls.some(c => c.userId === 200));
+          assert.ok(removeCalls.some(c => c.userId === 300));
+        } finally {
+          manager.stopSweeper();
+        }
       } finally {
         db.close();
         await unlink(dbPath);
@@ -427,29 +429,32 @@ describe('PR 8 Review Regression Tests', () => {
           sweepIntervalHours: 24,
         });
         
-        // Start sweeper with permission denied
-        manager.startSweeper();
-        await new Promise(resolve => setTimeout(resolve, 300));
-        
-        // Should be disabled
-        let result = await manager.applyTagToMember(123);
-        assert.strictEqual(result.success, false);
-        assert.strictEqual(result.status, 'Tag feature disabled');
-        assert.strictEqual(tagCalls.length, 0);
-        
-        // Grant permission
-        permissionGranted = true;
-        
-        // Trigger another sweep cycle
-        await (manager as any).runSweeperCycle();
-        
-        // Should now be enabled and apply tag
-        result = await manager.applyTagToMember(123);
-        assert.strictEqual(result.success, true);
-        assert.strictEqual(tagCalls.length, 2, 'Should have 2 calls: one from reconcile, one from explicit apply');
-        
-        manager.stopSweeper();
-        await new Promise(resolve => setTimeout(resolve, 100));
+        try {
+          // Start sweeper with permission denied
+          manager.startSweeper();
+          await new Promise(resolve => setTimeout(resolve, 300));
+          
+          // Should be disabled
+          let result = await manager.applyTagToMember(123);
+          assert.strictEqual(result.success, false);
+          assert.strictEqual(result.status, 'Tag feature disabled');
+          assert.strictEqual(tagCalls.length, 0);
+          
+          // Grant permission
+          permissionGranted = true;
+          
+          // Trigger another sweep cycle
+          await (manager as any).runSweeperCycle();
+          
+          // Should now be enabled and apply tag
+          result = await manager.applyTagToMember(123);
+          assert.strictEqual(result.success, true);
+          assert.strictEqual(tagCalls.length, 2, 'Should have 2 calls: one from reconcile, one from explicit apply');
+          
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } finally {
+          manager.stopSweeper();
+        }
       } finally {
         db.close();
         await unlink(dbPath);
@@ -523,25 +528,27 @@ describe('PR 8 Review Regression Tests', () => {
           sweepIntervalHours: 24,
         });
         
-        // Start sweeper (will check permissions and disable itself)
-        manager.startSweeper();
-        
-        // Wait for permission check to complete
-        await new Promise(resolve => setTimeout(resolve, 300));
-        
-        // Try to apply tag
-        const result = await manager.applyTagToMember(123);
-        
-        // Should be disabled due to failed permission check
-        assert.strictEqual(result.success, false);
-        assert.strictEqual(result.status, 'Tag feature disabled');
-        assert.strictEqual(tagCalls.length, 0, 'Should not call setChatMemberTag');
-        assert.strictEqual(removeCalls.length, 0, 'Should not call removeChatMemberTag');
-        
-        manager.stopSweeper();
-        
-        // Wait for sweeper to fully stop
-        await new Promise(resolve => setTimeout(resolve, 100));
+        try {
+          // Start sweeper (will check permissions and disable itself)
+          manager.startSweeper();
+          
+          // Wait for permission check to complete
+          await new Promise(resolve => setTimeout(resolve, 300));
+          
+          // Try to apply tag
+          const result = await manager.applyTagToMember(123);
+          
+          // Should be disabled due to failed permission check
+          assert.strictEqual(result.success, false);
+          assert.strictEqual(result.status, 'Tag feature disabled');
+          assert.strictEqual(tagCalls.length, 0, 'Should not call setChatMemberTag');
+          assert.strictEqual(removeCalls.length, 0, 'Should not call removeChatMemberTag');
+          
+          // Wait for sweeper to fully stop
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } finally {
+          manager.stopSweeper();
+        }
       } finally {
         db.close();
         await unlink(dbPath);
@@ -604,20 +611,22 @@ describe('PR 8 Review Regression Tests', () => {
           sweepIntervalHours: 24,
         });
         
-        const startTime = Date.now();
-        manager.startSweeper();
-        const elapsed = Date.now() - startTime;
-        
-        // startSweeper should return immediately (< 50ms), regardless of permission check
-        assert.ok(elapsed < 50, `startSweeper should not block (took ${elapsed}ms)`);
-        
-        // The permission check may or may not have completed yet, but startSweeper returned immediately
-        // This test verifies non-blocking behavior, not the permission check itself
-        
-        manager.stopSweeper();
-        
-        // Wait for cleanup
-        await new Promise(resolve => setTimeout(resolve, 200));
+        try {
+          const startTime = Date.now();
+          manager.startSweeper();
+          const elapsed = Date.now() - startTime;
+          
+          // startSweeper should return immediately (< 50ms), regardless of permission check
+          assert.ok(elapsed < 50, `startSweeper should not block (took ${elapsed}ms)`);
+          
+          // The permission check may or may not have completed yet, but startSweeper returned immediately
+          // This test verifies non-blocking behavior, not the permission check itself
+          
+          // Wait for cleanup
+          await new Promise(resolve => setTimeout(resolve, 200));
+        } finally {
+          manager.stopSweeper();
+        }
       } finally {
         db.close();
         await unlink(dbPath);
