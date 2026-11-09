@@ -47,6 +47,13 @@ export const gateConfig: GateConfig = {
 };
 
 /**
+ * Environment interface for testability
+ */
+export interface EnvLike {
+  [key: string]: string | undefined;
+}
+
+/**
  * PLANNED: OpenClaw integration settings (NOT YET IMPLEMENTED)
  * 
  * These settings document the intended OpenClaw integration architecture.
@@ -156,63 +163,70 @@ export interface OpenClawIntegrationConfig {
 }
 
 /**
+ * Load OpenClaw integration config from environment
+ * 
+ * @param env - Environment object (defaults to process.env)
+ * @returns OpenClaw integration configuration
+ */
+export function loadOpenClawConfig(env: EnvLike = process.env): OpenClawIntegrationConfig {
+  // Validate sweep interval if tags are enabled
+  const tagsEnabled = env.MEMBER_TAGS_ENABLED === 'true';
+  let sweepIntervalHours = 24; // Default
+  
+  if (tagsEnabled && env.MEMBER_TAG_SWEEP_INTERVAL_HOURS) {
+    const val = parseInt(env.MEMBER_TAG_SWEEP_INTERVAL_HOURS, 10);
+    if (isNaN(val) || !Number.isInteger(val) || val < 1 || val > 168) {
+      throw new Error(`MEMBER_TAG_SWEEP_INTERVAL_HOURS must be 1-168 (got: ${env.MEMBER_TAG_SWEEP_INTERVAL_HOURS})`);
+    }
+    sweepIntervalHours = val;
+  } else if (tagsEnabled) {
+    sweepIntervalHours = 24; // Default when enabled but not specified
+  }
+  
+  return {
+    verificationBot: {
+      enabled: env.VERIFICATION_BOT_ENABLED === 'true',
+      botToken: env.VERIFICATION_BOT_TOKEN || '',
+      allowedStarterBotUserIds: env.ALLOWED_STARTER_BOT_USER_IDS
+        ? env.ALLOWED_STARTER_BOT_USER_IDS.split(',').map((id) => parseInt(id.trim(), 10))
+        : [],
+    },
+    enrollmentLinks: {
+      enabled: env.ENROLLMENT_LINKS_ENABLED === 'true',
+      ttlSeconds: parseInt(env.ENROLLMENT_LINK_TTL_SECONDS || '300', 10),
+      baseUrl: env.ENROLLMENT_LINK_BASE_URL || '',
+      hmacSecret: env.ENROLLMENT_LINK_HMAC_SECRET || '',
+    },
+    memberTags: {
+      enabled: tagsEnabled,
+      tagText: env.MEMBER_TAG_TEXT || 'Human Verified',
+      requireAdminPermission: 'can_manage_tags',
+      targetChatId: env.OPENCLAW_ALLOWED_GROUP || '',
+      sweepIntervalHours,
+    },
+    selectedGroupIds: {
+      enabled: false,
+      groups: {},
+    },
+    openclawSync: {
+      enabled: false,
+      configPath: env.OPENCLAW_CONFIG_PATH || '',
+      syncMode: 'per-request',
+      periodicSyncIntervalSeconds: 300,
+      failClosedOnSyncError: true,
+    },
+    statusSocket: {
+      enabled: !!(env.WORLDID_STATUS_SOCKET && env.WORLDID_STATUS_SECRET_FILE),
+      socketPath: env.WORLDID_STATUS_SOCKET || '',
+      secretFile: env.WORLDID_STATUS_SECRET_FILE || '',
+    },
+  };
+}
+
+/**
  * PLANNED: OpenClaw integration configuration (INERT)
  */
-export const openclawIntegrationConfig: OpenClawIntegrationConfig = {
-  verificationBot: {
-    enabled: false,
-    botToken: process.env.VERIFICATION_BOT_TOKEN || '',
-    allowedStarterBotUserIds: [],
-  },
-  enrollmentLinks: {
-    enabled: false,
-    ttlSeconds: 300, // 5 minutes
-    baseUrl: process.env.ENROLLMENT_LINK_BASE_URL || '',
-    hmacSecret: process.env.ENROLLMENT_LINK_HMAC_SECRET || '',
-  },
-  memberTags: {
-    enabled: process.env.MEMBER_TAGS_ENABLED === 'true', // Enable after bot admin setup with can_manage_tags
-    tagText: process.env.MEMBER_TAG_TEXT || 'Human Verified', // 14 chars (including space), no emoji
-    requireAdminPermission: 'can_manage_tags',
-    targetChatId: process.env.OPENCLAW_ALLOWED_GROUP || '', // Telegram chat ID or @username (e.g., '@finntalkgroup')
-    sweepIntervalHours: (() => {
-      // Only validate if tags are enabled
-      if (process.env.MEMBER_TAGS_ENABLED !== 'true') {
-        return 24; // Default when disabled, validation not needed
-      }
-      if (!process.env.MEMBER_TAG_SWEEP_INTERVAL_HOURS) {
-        return 24; // Default when not specified
-      }
-      const val = parseInt(process.env.MEMBER_TAG_SWEEP_INTERVAL_HOURS, 10);
-      if (isNaN(val) || !Number.isInteger(val) || val < 1 || val > 168) {
-        throw new Error(`MEMBER_TAG_SWEEP_INTERVAL_HOURS must be 1-168 (got: ${process.env.MEMBER_TAG_SWEEP_INTERVAL_HOURS})`);
-      }
-      return val;
-    })(),
-  },
-  selectedGroupIds: {
-    enabled: false,
-    groups: {
-      // Example: "-1001234567890": { name: "My Group", chatId: -1001234567890, enforceGate: true }
-    },
-  },
-  openclawSync: {
-    enabled: false,
-    configPath: process.env.OPENCLAW_CONFIG_PATH || '',
-    syncMode: 'per-request',
-    periodicSyncIntervalSeconds: 300, // 5 minutes
-    failClosedOnSyncError: true,
-  },
-
-  /**
-   * PLANNED: Private status socket for OpenClaw integration
-   */
-  statusSocket: {
-    enabled: !!(process.env.WORLDID_STATUS_SOCKET && process.env.WORLDID_STATUS_SECRET_FILE),
-    socketPath: process.env.WORLDID_STATUS_SOCKET || '',
-    secretFile: process.env.WORLDID_STATUS_SECRET_FILE || '',
-  },
-};
+export const openclawIntegrationConfig: OpenClawIntegrationConfig = loadOpenClawConfig();
 
 /**
  * Configuration validation with bounded checks

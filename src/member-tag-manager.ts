@@ -544,6 +544,9 @@ export class MemberTagManager {
         console.error('[MemberTag] Periodic sweep failed');
       });
     }, intervalMs);
+    
+    // Don't prevent process exit in production
+    this.sweeperInterval.unref();
   }
 
   /**
