@@ -201,7 +201,7 @@ describe('Challenge Mode Race Conditions', () => {
         session_id: enrollment1.sessionId!,
         responses: [{
           identifier: 'proof_of_human',
-          session_nullifier: ['0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1', TEST_ACTION],
+          session_nullifier: ['0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1', '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
           issuer_schema_id: 1,
           verifiable_credential: {
             expires_at_min: fakeClock.nowSeconds() + 86400,
@@ -273,7 +273,7 @@ describe('Challenge Mode Race Conditions', () => {
         session_id: enrollment!.sessionId!,
         responses: [{
           identifier: 'proof_of_human',
-          session_nullifier: ['0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde2', TEST_ACTION],
+          session_nullifier: ['0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde2', '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'],
           issuer_schema_id: 1,
           verifiable_credential: {
             expires_at_min: fakeClock.nowSeconds() + 86400,
@@ -337,7 +337,7 @@ describe('Challenge Mode Race Conditions', () => {
         session_id: enrollment1.sessionId!,
         responses: [{
           identifier: 'proof_of_human',
-          session_nullifier: ['0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde3', TEST_ACTION],
+          session_nullifier: ['0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde3', '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
           issuer_schema_id: 1,
           verifiable_credential: {
             expires_at_min: fakeClock.nowSeconds() + 86400,
@@ -348,6 +348,9 @@ describe('Challenge Mode Race Conditions', () => {
     });
 
     // Should succeed - mode defaults to renewal, enrollment is active
-    assert.equal(verifyResult.success, true);
+    if (!verifyResult.success) {
+      console.error('Verify failed:', verifyResult.error);
+    }
+    assert.equal(verifyResult.success, true, `Expected success but got: ${verifyResult.error}`);
   });
 });
