@@ -53,11 +53,16 @@ function createStubFetch(responses: Map<string, any>) {
       } as any;
     }
     
-    // Return v4 API format
+    // Echo back signal_hash from request if present (per v4 API spec)
+    const requestSignalHash = body.responses?.[0]?.signal_hash;
+    
+    // Return v4 API format (per https://docs.world.org/api-reference/developer-portal/verify)
     const v4Response = {
       success: true,
       results: [{
         identifier: 'proof_of_human',
+        success: true,
+        signal_hash: requestSignalHash || '0x0',
         nullifier: mockResult.nullifier,
         issuer_schema_id: mockResult.issuer_schema_id || 1,
         expires_at_min: mockResult.expires_at_min,
@@ -131,10 +136,10 @@ describe('Session Proof Contract (World ID 4.0 Specs)', () => {
         protocol_version: '4.0' as const,
         nonce: enrollChallenge.signedChallenge.nonce,
         action: TEST_ACTION,
-        signal_hash: enrollChallenge.signedChallenge.signalHash,
         session_id: sessionId,
         responses: [{
           identifier: 'proof_of_human' as const,
+          signal_hash: enrollChallenge.signedChallenge.signalHash,
           issuer_schema_id: 1,
           nullifier: enrollmentNullifier,
           proof: ['1', '2', '3', '4', '5'],
@@ -236,10 +241,10 @@ describe('Session Proof Contract (World ID 4.0 Specs)', () => {
         protocol_version: '4.0' as const,
         nonce: enrollChallenge.signedChallenge.nonce,
         action: TEST_ACTION,
-        signal_hash: enrollChallenge.signedChallenge.signalHash,
         session_id: sessionId,
         responses: [{
           identifier: 'proof_of_human' as const,
+          signal_hash: enrollChallenge.signedChallenge.signalHash,
           issuer_schema_id: 1,
           nullifier: enrollmentNullifier,
           proof: ['1', '2', '3', '4', '5'],
@@ -333,10 +338,10 @@ describe('Session Proof Contract (World ID 4.0 Specs)', () => {
         protocol_version: '4.0' as const,
         nonce: enrollChallenge.signedChallenge.nonce,
         action: TEST_ACTION,
-        signal_hash: enrollChallenge.signedChallenge.signalHash,
         session_id: sessionId,
         responses: [{
           identifier: 'proof_of_human' as const,
+          signal_hash: enrollChallenge.signedChallenge.signalHash,
           issuer_schema_id: 1,
           nullifier: enrollmentNullifier,
           proof: ['1', '2', '3', '4', '5'],

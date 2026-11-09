@@ -922,7 +922,7 @@ export class EnrollmentService {
       }
       return {
         success: false,
-        error: 'World ID proof verification failed',
+        error: `World ID proof verification failed: ${verificationResult.error || 'missing nullifier in result'}`,
       };
     }
 
@@ -1517,7 +1517,7 @@ export class EnrollmentService {
     if (!verificationResult.success) {
       return {
         success: false,
-        error: 'Session proof verification failed',
+        error: `Session proof verification failed: ${verificationResult.error || 'unknown reason'}`,
       };
     }
 

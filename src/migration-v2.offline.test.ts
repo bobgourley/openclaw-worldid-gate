@@ -157,10 +157,10 @@ describe('Schema V2 Migration and Blockers', () => {
         INSERT INTO generation_counter VALUES (1, 1);
       `);
 
-      // Insert test enrollment
+      // Insert test enrollment with valid 64-char hex nullifier
       db.exec(`
         INSERT INTO enrollments (telegram_user_id, action, nullifier, expires_at, created_at, revoked)
-        VALUES (12345, 'test-migration', '0xtest_nullifier_v1', ${Math.floor(Date.now() / 1000) + 86400}, '2026-11-01T12:00:00Z', 0);
+        VALUES (12345, 'test-migration', '0x${'a'.repeat(64)}', ${Math.floor(Date.now() / 1000) + 86400}, '2026-11-01T12:00:00Z', 0);
       `);
 
       db.close();
@@ -203,7 +203,7 @@ describe('Schema V2 Migration and Blockers', () => {
       `).get() as any;
       assert.ok(claim, 'Existing enrollment must be backfilled to nullifier_claims');
       assert.equal(claim.telegram_user_id, 12345, 'Backfilled claim must have correct user');
-      assert.equal(claim.nullifier, '0xtest_nullifier_v1', 'Backfilled claim must have correct nullifier');
+      assert.equal(claim.nullifier, '0x' + 'a'.repeat(64), 'Backfilled claim must have correct nullifier');
 
       // Verify version updated (v2 + v3 migrations both run)
       const version = dbCheck.prepare(`SELECT MAX(version) as v FROM schema_version`).get() as any;
@@ -302,11 +302,11 @@ describe('Schema V2 Migration and Blockers', () => {
         INSERT INTO generation_counter VALUES (1, 10);
       `);
 
-      // Insert revoked enrollment with generation marker
+      // Insert revoked enrollment with generation marker and valid 64-char hex nullifier
       const revokedAt = Math.floor(Date.now() / 1000);
       db.exec(`
         INSERT INTO enrollments (telegram_user_id, action, nullifier, expires_at, created_at, revoked, revoked_at, revoked_at_seconds, revoked_generation)
-        VALUES (555, 'test-migration', '0xrevoked_nullifier', ${revokedAt + 86400}, '2026-11-01T12:00:00Z', 1, '2026-11-01T13:00:00Z', ${revokedAt}, 5);
+        VALUES (555, 'test-migration', '0x${'b'.repeat(64)}', ${revokedAt + 86400}, '2026-11-01T12:00:00Z', 1, '2026-11-01T13:00:00Z', ${revokedAt}, 5);
       `);
 
       db.close();
