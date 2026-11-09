@@ -158,7 +158,7 @@ test.describe('Enrollment Handler Execution', () => {
     const hasIDKit = await page.evaluate(() => typeof (window as any).WorldIDKitBundle !== 'undefined');
     expect(hasIDKit).toBe(true);
     
-    const hasQRCode = await page.evaluate(() => typeof (window as any).QRCodeBundle !== 'undefined');
+    const hasQRCode = await page.evaluate(() => typeof (window as any).QRCodeLib !== 'undefined');
     expect(hasQRCode).toBe(true);
   });
 
@@ -276,7 +276,7 @@ test.describe('Enrollment Handler Execution', () => {
 
     // Verify QRCode is available
     const hasQRCode = await page.evaluate(() => {
-      return typeof (window as any).QRCodeBundle !== 'undefined';
+      return typeof (window as any).QRCodeLib !== 'undefined';
     });
     expect(hasQRCode).toBe(true);
   });
