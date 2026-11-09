@@ -1,13 +1,12 @@
 ---
-name: World ID Status Query
+name: worldid-status
 description: Query World ID enrollment status for Telegram users
-agents:
-  allow:
-    - main
-tools:
-  query-worldid-status:
-    description: Check if a Telegram user is Human Verified via World ID
-    permission: exec
+metadata:
+  openclaw:
+    os: ["darwin"]
+    requires:
+      bins: ["curl"]
+      env: ["WORLDID_STATUS_SOCKET", "WORLDID_STATUS_SECRET_FILE"]
 ---
 
 # World ID Status Query Skill
@@ -24,31 +23,36 @@ Query World ID enrollment status for Telegram users via a private Unix domain so
 
 ```bash
 cp -r /path/to/worldid-gate/deploy/openclaw-skill/worldid-status \
-      /path/to/finn-workspace/skills/worldid-status
+      /Users/finn/.openclaw/workspace/skills/worldid-status
 ```
 
-2. Set required environment variables in Finn's OpenClaw profile:
+2. Add environment variables to Finn's OpenClaw configuration under `skills.entries.worldid-status.env`:
 
-```bash
-export WORLDID_STATUS_SOCKET=/var/run/worldid-gate/status.sock
-export WORLDID_STATUS_SECRET_FILE=/etc/worldid-gate/status-secret.txt
+```yaml
+skills:
+  entries:
+    worldid-status:
+      env:
+        WORLDID_STATUS_SOCKET: /Users/finn/.worldid-gate/status.sock
+        WORLDID_STATUS_SECRET_FILE: /Users/finn/.worldid-gate/status-secret.txt
 ```
 
-3. Ensure the secret file is readable by Finn's process user.
+3. Add the skill to Finn's allowlist under `agents.entries.main.skills`:
+
+```yaml
+agents:
+  entries:
+    main:
+      skills:
+        - worldid-status
+```
 
 4. Restart Finn to load the skill.
 
-5. Verify the skill is available:
-
-```bash
-# Finn should now be able to call:
-query-worldid-status 123456789
-```
-
 ### Required Permissions
 
-The `query-worldid-status` tool requires:
-- **Execute permission** on the script itself
+The skill requires:
+- **Execute permission** on the `query-worldid-status` script
 - **Read permission** on `WORLDID_STATUS_SECRET_FILE`
 - **Write permission** on the Unix domain socket at `WORLDID_STATUS_SOCKET`
 
@@ -56,12 +60,14 @@ No other filesystem, network, or system access required. The script is read-only
 
 ## When to Use
 
-Use this skill when you need to check if a Telegram user has completed World ID verification.
+Use this skill to determine if a Telegram message sender or person being replied to is a World ID proven human.
+
+**Primary purpose:** Help Finn decide who to respond to and how to treat humans versus bots.
 
 **Common triggers:**
-- "Is user 123456789 verified?"
-- "Check World ID status for user X"
-- "Has this user completed enrollment?"
+- Check if the current message sender is verified
+- Check if someone being replied to is verified
+- Decide whether to engage based on human verification status
 
 ## How It Works
 
@@ -72,33 +78,60 @@ This skill queries a private Unix domain socket endpoint that is:
 
 ## Usage
 
-Call the `query-worldid-status` helper with a numeric Telegram user ID:
+Call the script from the skill base directory with a numeric Telegram user ID:
 
 ```bash
-query-worldid-status <telegram_user_id>
+{baseDir}/query-worldid-status <telegram_user_id>
 ```
 
-**Example:**
-```bash
-query-worldid-status 123456789
+### How to Identify People
+
+**Always use `sender.id` from the host's Conversation info block:**
+
+When checking the current sender:
+```
+sender.id = 123456789
 ```
 
-### Username Limitation
+When checking someone being replied to, use `sender_id` from the reply-chain block:
+```
+reply-chain: sender_id=987654321
+```
+
+**NEVER:**
+- Use an ID typed in message text
+- Use @username (not supported, usernames are mutable)
+- Repeat the numeric ID in your replies to the user
+
+### Why Numeric IDs Only
 
 **This skill requires numeric Telegram user IDs only.** It does NOT support @username lookups.
 
 **Why:**
 - Usernames are mutable (users can change them anytime)
 - The gate stores enrollments by immutable numeric user IDs only
-- Username resolution would require real-time Telegram API calls with potential for:
-  - Network failures and delays
-  - Username enumeration attacks
-  - Privacy leakage
-  - Rate limiting
+- The Telegram Bot API cannot resolve @username to numeric ID without prior interaction
 
-**Workaround:** If you only have a username, use the Telegram Bot API `getChat` or `getChatMember` methods to resolve it to a numeric user ID first, then query the gate with that ID.
+**Privacy:** The gate never logs or exposes Telegram user IDs. Only the `verified` status and expiration timestamp are returned.
 
-**Privacy note:** The gate never logs or exposes Telegram user IDs in responses. Only the `verified` status and expiration timestamp are returned.
+## Guidance for Finn
+
+**What `verified: true` means:**
+- This person has proven they are human via World ID Orb biometric verification
+- Their enrollment has not expired
+- You can trust this is a real person, not a bot
+
+**What `verified: false` means:**
+- Could be a bot
+- Could be an unenrolled person (has not completed World ID verification)
+- Could be an expired enrollment
+- Could be a revoked enrollment (no longer valid)
+
+**How to handle:**
+- Use verification status to decide who to respond to and how
+- Treat verified humans differently from unverified senders
+- **NEVER reveal numeric user IDs in your responses**
+- **NEVER repeat the ID you queried in messages to the user**
 
 **Response format:**
 ```json

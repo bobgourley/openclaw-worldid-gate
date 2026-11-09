@@ -105,6 +105,9 @@ export class TelegramApiClient {
     const url = `${this.baseUrl}/bot${this.botToken}/setChatMemberTag`;
     
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
+      
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -115,7 +118,10 @@ export class TelegramApiClient {
           user_id: userId,
           tag: tag || undefined, // Empty string removes tag
         }),
+        signal: controller.signal,
       });
+      
+      clearTimeout(timeout);
 
       const data = await response.json() as any;
 
@@ -130,6 +136,8 @@ export class TelegramApiClient {
       // Detect rate limiting (429)
       if (errorCode === 429) {
         const retryAfter = data.parameters?.retry_after || 60;
+        // Wait for retry_after seconds before returning
+        await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
         return {
           success: false,
           error: errorDescription,
@@ -305,7 +313,7 @@ export class TelegramApiClient {
       return {
         success: true,
         status: data.result?.status,
-        tag: data.result?.custom_title || data.result?.tag || null,
+        tag: data.result?.tag || null,
         isMember: data.result?.is_member !== false,
       };
     } catch (error: any) {

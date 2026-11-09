@@ -414,13 +414,15 @@ The status socket provides a private interface for enrollment status queries.
 
 ```bash
 # Enable private status socket for OpenClaw integration
-WORLDID_STATUS_SOCKET=/path/to/worldid-status.sock
-WORLDID_STATUS_SECRET_FILE=/path/to/status-secret.txt
+WORLDID_STATUS_SOCKET=/Users/finn/.worldid-gate/status.sock
+WORLDID_STATUS_SECRET_FILE=/Users/finn/.worldid-gate/status-secret.txt
 ```
 
-**WORLDID_STATUS_SOCKET**: Path to Unix domain socket for private enrollment status queries. Must be accessible by OpenClaw process. Created with mode 0600 (owner-only).
+**WORLDID_STATUS_SOCKET**: Path to Unix domain socket for private enrollment status queries. Must be in a directory owned by `finn` with mode 0700. Socket created with mode 0600 (owner-only).
 
-**WORLDID_STATUS_SECRET_FILE**: Path to file containing bearer authentication secret (minimum 32 characters). File must have mode 0600. The secret is loaded at startup and used for constant-time authentication.
+**WORLDID_STATUS_SECRET_FILE**: Path to file containing bearer authentication secret (minimum 32 characters). File must have mode 0600 and be owned by `finn`. The secret is loaded at startup and used for constant-time authentication.
+
+**Important:** Both the gate service and main OpenClaw gateway run as user `finn`, so the socket directory (`/Users/finn/.worldid-gate`) must be owned by finn with mode 0700, and the secret file must be owned by finn with mode 0600.
 
 **Security Notes**:
 - The status socket is NOT mounted on the public HTTP server (port 3000)
@@ -507,53 +509,57 @@ The status query functionality is exposed to OpenClaw agents via a skill at `dep
 
 **Installation for Agent `main` (Finn):**
 
-1. Copy the skill to Finn's workspace:
+1. Create secure directory for socket and secret (owned by finn, mode 0700):
+
+```bash
+mkdir -p /Users/finn/.worldid-gate
+chmod 0700 /Users/finn/.worldid-gate
+```
+
+2. Create secret file (owned by finn, mode 0600):
+
+```bash
+# Generate random 64-character secret
+openssl rand -base64 48 > /Users/finn/.worldid-gate/status-secret.txt
+chmod 0600 /Users/finn/.worldid-gate/status-secret.txt
+chown finn:staff /Users/finn/.worldid-gate/status-secret.txt
+```
+
+3. Copy the skill to Finn's workspace:
 
 ```bash
 cp -r /path/to/worldid-gate/deploy/openclaw-skill/worldid-status \
-      /path/to/finn-workspace/skills/worldid-status
+      /Users/finn/.openclaw/workspace/skills/worldid-status
 ```
 
-2. Add environment variables to Finn's OpenClaw profile:
+4. Add environment variables to Finn's OpenClaw configuration under `skills.entries.worldid-status.env`:
 
-```bash
-export WORLDID_STATUS_SOCKET=/var/run/worldid-gate/status.sock
-export WORLDID_STATUS_SECRET_FILE=/etc/worldid-gate/status-secret.txt
+```yaml
+skills:
+  entries:
+    worldid-status:
+      env:
+        WORLDID_STATUS_SOCKET: /Users/finn/.worldid-gate/status.sock
+        WORLDID_STATUS_SECRET_FILE: /Users/finn/.worldid-gate/status-secret.txt
 ```
 
-3. Ensure the secret file is readable by Finn's process user:
-
-```bash
-# If Finn runs as user 'openclaw':
-chown root:openclaw /etc/worldid-gate/status-secret.txt
-chmod 640 /etc/worldid-gate/status-secret.txt
-```
-
-4. Restart Finn to load the skill.
-
-**Agent Access Control:**
-
-The skill YAML frontmatter restricts access to agent `main` only:
+5. Add the skill to Finn's allowlist under `agents.entries.main.skills`:
 
 ```yaml
 agents:
-  allow:
-    - main
+  entries:
+    main:
+      skills:
+        - worldid-status
 ```
 
-Other agents (e.g., `worldid-e2e`) cannot access this skill.
+6. Restart Finn to load the skill.
+
+**Important:** Both the gate service and the main OpenClaw gateway run as user `finn`. The socket directory (`/Users/finn/.worldid-gate`) has mode 0700, and the secret file has mode 0600, both owned by finn.
 
 **Tool Permission:**
 
-The `query-worldid-status` tool requires:
-
-```yaml
-tools:
-  query-worldid-status:
-    permission: exec
-```
-
-This grants **execute-only permission** on the script. The script:
+The skill executes the `query-worldid-status` script with standard exec permission. The script:
 - Makes no filesystem modifications
 - Writes no files (except mktemp response file, cleaned up on exit)
 - Reads only the secret file and socket
@@ -564,9 +570,9 @@ This grants **execute-only permission** on the script. The script:
 The skill accepts numeric Telegram user IDs only (e.g., `123456789`). It does NOT support @username lookups because:
 - Usernames are mutable (can be changed by users)
 - The gate stores enrollments by immutable numeric user IDs only
-- Username resolution would require real-time Telegram API calls with privacy/reliability risks
+- The Telegram Bot API cannot resolve @username to numeric ID without prior interaction
 
-If an agent has only a username, it must use the Telegram Bot API to resolve it to a numeric user ID first.
+Finn should use only `sender.id` from the Conversation info block or `sender_id` from reply-chain blocks.
 
 ### Schema v4 Migration
 
@@ -600,16 +606,20 @@ No manual intervention required.
 
 ### Required Launcher Changes
 
-`bin/launch-private-service.cjs` must pass through these new environment variables:
+**Note:** `bin/launch-private-service.cjs` is NOT in this repository. It lives on the Mac mini deployment machine.
+
+The launcher must pass through these new environment variables:
 
 **Status Socket:**
-- `WORLDID_STATUS_SOCKET`
-- `WORLDID_STATUS_SECRET_FILE`
+- `WORLDID_STATUS_SOCKET` (path to Unix domain socket, e.g., `/Users/finn/.worldid-gate/status.sock`)
+- `WORLDID_STATUS_SECRET_FILE` (path to secret file with mode 0600, e.g., `/Users/finn/.worldid-gate/status-secret.txt`)
 
 **Member Tags:**
-- `MEMBER_TAGS_ENABLED`
-- `MEMBER_TAG_TEXT`
-- `MEMBER_TAG_SWEEP_INTERVAL_HOURS`
+- `MEMBER_TAGS_ENABLED` (set to `true` to enable, default `false`)
+- `MEMBER_TAG_TEXT` (text to display on tags, default `Human Verified`, max 16 chars, no emoji)
+- `MEMBER_TAG_SWEEP_INTERVAL_HOURS` (reconciliation interval, 1-168 hours, default 24)
+
+**Socket and secret paths must use Finn's home directory** (`/Users/finn/`) not `/etc` or `/var/run`, since both the gate service and main OpenClaw gateway run as user `finn`.
 
 ### Security Checklist
 

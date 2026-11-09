@@ -67,7 +67,7 @@ export class MemberTagManager {
   private readonly targetChatId: number | string;
   private readonly tagText: string;
   private readonly action: string;
-  private readonly enabled: boolean;
+  private featureEnabled: boolean; // Mutable, re-checked on each sweep
   private readonly sweepIntervalHours: number;
   private sweeperInterval: NodeJS.Timeout | null = null;
 
@@ -78,7 +78,7 @@ export class MemberTagManager {
     this.targetChatId = config.targetChatId;
     this.tagText = config.tagText;
     this.action = config.action;
-    this.enabled = config.enabled;
+    this.featureEnabled = config.enabled;
     this.sweepIntervalHours = config.sweepIntervalHours || 24;
 
     // Validate tag text
@@ -102,7 +102,7 @@ export class MemberTagManager {
    */
   async applyTagToMember(telegramUserId: number): Promise<TagOperationResult> {
     // Feature gate
-    if (!this.enabled) {
+    if (!this.featureEnabled) {
       return {
         success: false,
         status: 'Tag feature disabled',
@@ -288,7 +288,7 @@ export class MemberTagManager {
    */
   async removeTagFromMember(telegramUserId: number): Promise<TagOperationResult> {
     // Feature gate
-    if (!this.enabled) {
+    if (!this.featureEnabled) {
       return {
         success: false,
         status: 'Tag feature disabled',
@@ -411,7 +411,7 @@ export class MemberTagManager {
     skipped: number;
     failed: number;
   }> {
-    if (!this.enabled) {
+    if (!this.featureEnabled) {
       return { processed: 0, applied: 0, removed: 0, skipped: 0, failed: 0 };
     }
 
@@ -483,7 +483,7 @@ export class MemberTagManager {
    * @returns Result indicating permission status
    */
   async checkPermissions(timeoutMs: number = 5000): Promise<TagOperationResult> {
-    if (!this.enabled) {
+    if (!this.featureEnabled) {
       return {
         success: false,
         status: 'Tag feature disabled',
@@ -523,10 +523,11 @@ export class MemberTagManager {
   /**
    * Start expiry sweeper (applies missing tags and removes tags from expired enrollments).
    * Runs initial sweep immediately, then at configured interval (default 24 hours).
+   * Always starts regardless of initial permission state, so tagging can enable itself later.
    */
   startSweeper(): void {
-    if (!this.enabled || this.sweeperInterval) {
-      return;
+    if (this.sweeperInterval) {
+      return; // Already running
     }
 
     // Run initial sweep in background (don't block startup)
@@ -545,13 +546,23 @@ export class MemberTagManager {
 
   /**
    * Run one sweeper cycle: re-check permissions and reconcile all tags.
+   * Updates featureEnabled flag based on current permission state.
    */
   private async runSweeperCycle(): Promise<void> {
     // Re-check permissions each cycle (allows granting rights without restart)
     const permCheck = await this.checkPermissions();
     if (!permCheck.success) {
-      console.log('[MemberTag] Permission check failed during sweep, skip');
+      if (this.featureEnabled) {
+        console.log('[MemberTag] Permission check failed, tagging disabled until granted');
+        this.featureEnabled = false;
+      }
       return;
+    }
+
+    // Permission check passed
+    if (!this.featureEnabled) {
+      console.log('[MemberTag] Permission check passed, tagging enabled');
+      this.featureEnabled = true;
     }
 
     // Reconcile all tags

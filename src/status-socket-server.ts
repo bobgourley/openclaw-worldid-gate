@@ -190,6 +190,11 @@ export class StatusSocketServer {
         resolve(false); // Socket not live
       });
 
+      client.on('timeout', () => {
+        client.destroy();
+        resolve(false); // Timeout means not live
+      });
+
       client.end();
     });
   }

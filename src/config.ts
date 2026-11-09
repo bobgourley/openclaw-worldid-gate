@@ -174,9 +174,12 @@ export const openclawIntegrationConfig: OpenClawIntegrationConfig = {
     requireAdminPermission: 'can_manage_tags',
     targetChatId: process.env.OPENCLAW_ALLOWED_GROUP || '', // Telegram chat ID or @username (e.g., '@finntalkgroup')
     sweepIntervalHours: (() => {
-      const val = parseInt(process.env.MEMBER_TAG_SWEEP_INTERVAL_HOURS || '24', 10);
-      if (!Number.isInteger(val) || val < 1 || val > 168) {
-        return 24; // Default to 24 if invalid
+      if (!process.env.MEMBER_TAG_SWEEP_INTERVAL_HOURS) {
+        return 24; // Default when not specified
+      }
+      const val = parseInt(process.env.MEMBER_TAG_SWEEP_INTERVAL_HOURS, 10);
+      if (isNaN(val) || !Number.isInteger(val) || val < 1 || val > 168) {
+        throw new Error(`MEMBER_TAG_SWEEP_INTERVAL_HOURS must be 1-168 (got: ${process.env.MEMBER_TAG_SWEEP_INTERVAL_HOURS})`);
       }
       return val;
     })(),
