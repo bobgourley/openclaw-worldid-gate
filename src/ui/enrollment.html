@@ -376,7 +376,7 @@
 <body>
   <div class="container">
     <h1>World ID Verification</h1>
-    <p class="subtitle">Verify your unique personhood to access this Telegram group</p>
+    <p class="subtitle">Verify your unique personhood with your World ID</p>
     
     <div id="status" class="loading">
       <div class="spinner"></div>
@@ -454,6 +454,7 @@
     
     <div class="info">
       <strong>Privacy:</strong> Only a zero-knowledge proof is verified. Our service receives no raw biometric data.
+      Learn more at <a id="learnMoreLink" href="https://www.toolsforhumanity.com/" target="_blank" rel="noopener noreferrer">https://www.toolsforhumanity.com/</a>
     </div>
   </div>
 
@@ -477,6 +478,24 @@
     
     const statusEl = document.getElementById('status');
     const buttonEl = document.getElementById('verifyButton');
+
+    // Open Tools for Humanity link externally inside Telegram Mini Apps.
+    // Prefer WebApp.openLink; fall back to the normal anchor (target=_blank).
+    (function wireLearnMoreLink() {
+      const link = document.getElementById('learnMoreLink');
+      if (!link) return;
+      link.addEventListener('click', function (event) {
+        const url = link.href;
+        try {
+          if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.openLink === 'function') {
+            event.preventDefault();
+            window.Telegram.WebApp.openLink(url);
+          }
+        } catch (_) {
+          // Keep default anchor navigation.
+        }
+      });
+    })();
     
     // Check for Telegram WebApp SDK (must be loaded before use)
     if (typeof window.Telegram === 'undefined' || !window.Telegram.WebApp) {
