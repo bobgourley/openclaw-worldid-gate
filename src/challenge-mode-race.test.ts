@@ -239,7 +239,7 @@ describe('Challenge Mode Race Conditions', () => {
           identifier: 'proof_of_human',
           signal_hash: 'test_signal_hash_2',
           proof: ['1', '2', '3'],
-          nullifier: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1_2',
+          nullifier: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde2',
           issuer_schema_id: 1,
           expires_at_min: fakeClock.nowSeconds() + 86400,
         }],
@@ -273,7 +273,7 @@ describe('Challenge Mode Race Conditions', () => {
         session_id: enrollment!.sessionId!,
         responses: [{
           identifier: 'proof_of_human',
-          session_nullifier: ['0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1_2', TEST_ACTION],
+          session_nullifier: ['0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde2', TEST_ACTION],
           issuer_schema_id: 1,
           verifiable_credential: {
             expires_at_min: fakeClock.nowSeconds() + 86400,
@@ -306,7 +306,7 @@ describe('Challenge Mode Race Conditions', () => {
           identifier: 'proof_of_human',
           signal_hash: 'test_signal_hash_3',
           proof: ['1', '2', '3'],
-          nullifier: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1_3',
+          nullifier: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde3',
           issuer_schema_id: 1,
           expires_at_min: fakeClock.nowSeconds() + 86400,
         }],
@@ -337,7 +337,7 @@ describe('Challenge Mode Race Conditions', () => {
         session_id: enrollment1.sessionId!,
         responses: [{
           identifier: 'proof_of_human',
-          session_nullifier: ['0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1_3', TEST_ACTION],
+          session_nullifier: ['0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde3', TEST_ACTION],
           issuer_schema_id: 1,
           verifiable_credential: {
             expires_at_min: fakeClock.nowSeconds() + 86400,
