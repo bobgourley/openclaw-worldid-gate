@@ -273,7 +273,7 @@ describe("SqliteEnrollmentStore", () => {
     const store = new SqliteEnrollmentStore(getTestDb());
 
     const enrollment: Enrollment = {
-      nullifier: "0xduplicate",
+      nullifier: "0x0000000000000000000000000000000000000000000000000000000000dup111",
       telegramUserId: 111222,
       action: "test",
       expiresAt: Math.floor(Date.now() / 1000) + 2592000,
@@ -284,7 +284,7 @@ describe("SqliteEnrollmentStore", () => {
 
     // Try to create enrollment with same nullifier but different user
     const duplicate: Enrollment = {
-      nullifier: "0xduplicate",
+      nullifier: "0x0000000000000000000000000000000000000000000000000000000000dup111",
       telegramUserId: 333444, // Different user
       action: "test",
       expiresAt: Math.floor(Date.now() / 1000) + 2592000,
@@ -303,7 +303,7 @@ describe("SqliteEnrollmentStore", () => {
     const store = new SqliteEnrollmentStore(getTestDb());
 
     const enrollment: Enrollment = {
-      nullifier: "0xfirst",
+      nullifier: "0x00000000000000000000000000000000000000000000000000000000000f1257",
       telegramUserId: 555666,
       action: "verify-human-2026",
       expiresAt: Math.floor(Date.now() / 1000) + 2592000,
@@ -314,7 +314,7 @@ describe("SqliteEnrollmentStore", () => {
 
     // Try to create second enrollment for same user+action
     const duplicate: Enrollment = {
-      nullifier: "0xsecond", // Different nullifier
+      nullifier: "0x000000000000000000000000000000000000000000000000000000000052ec0d", // Different nullifier
       telegramUserId: 555666, // Same user
       action: "verify-human-2026", // Same action
       expiresAt: Math.floor(Date.now() / 1000) + 2592000,
@@ -342,7 +342,7 @@ describe("SqliteEnrollmentStore", () => {
     const store = new SqliteEnrollmentStore(getTestDb());
 
     const enrollment: Enrollment = {
-      nullifier: "0xexpired",
+      nullifier: "0x0000000000000000000000000000000000000000000000000000000000exp1ed",
       telegramUserId: 777888,
       action: "test",
       expiresAt: Math.floor(Date.now() / 1000) - 10, // Expired 10 seconds ago
@@ -365,7 +365,7 @@ describe("SqliteEnrollmentStore", () => {
     const store = new SqliteEnrollmentStore(getTestDb());
 
     const enrollment: Enrollment = {
-      nullifier: "0xdelete-me",
+      nullifier: "0x000000000000000000000000000000000000000000000000000000000de1e7e",
       telegramUserId: 111222,
       action: "test",
       expiresAt: Math.floor(Date.now() / 1000) + 2592000,
@@ -374,7 +374,7 @@ describe("SqliteEnrollmentStore", () => {
 
     await store.createEnrollment(enrollment);
 
-    const deleted = await store.deleteEnrollment("0xdelete-me");
+    const deleted = await store.deleteEnrollment("0x000000000000000000000000000000000000000000000000000000000de1e7e");
     assert.equal(deleted, true);
 
     // Enrollment should be gone
@@ -387,7 +387,7 @@ describe("SqliteEnrollmentStore", () => {
   it("returns false when deleting non-existent enrollment", async () => {
     const store = new SqliteEnrollmentStore(getTestDb());
 
-    const deleted = await store.deleteEnrollment("0xnon-existent");
+    const deleted = await store.deleteEnrollment("0x00000000000000000000000000000000000000000000000000000000000000ee");
     assert.equal(deleted, false);
 
     store.close();
@@ -400,7 +400,7 @@ describe("SqliteEnrollmentStore", () => {
 
     // Create old expired enrollment
     const oldEnrollment: Enrollment = {
-      nullifier: "0xold",
+      nullifier: "0x000000000000000000000000000000000000000000000000000000000000001d",
       telegramUserId: 333444,
       action: "test",
       expiresAt: now - 100,
@@ -409,7 +409,7 @@ describe("SqliteEnrollmentStore", () => {
 
     // Create recent enrollment
     const recentEnrollment: Enrollment = {
-      nullifier: "0xrecent",
+      nullifier: "0x0000000000000000000000000000000000000000000000000000000000eced07",
       telegramUserId: 555666,
       action: "test",
       expiresAt: now + 2592000,
@@ -444,7 +444,7 @@ describe("SqliteEnrollmentStore", () => {
     // First instance: create enrollment
     const store1 = new SqliteEnrollmentStore({ dbPath });
     const enrollment: Enrollment = {
-      nullifier: "0xpersistent",
+      nullifier: "0x00000000000000000000000000000000000000000000000000000000005157ed",
       telegramUserId: 999000,
       action: "test",
       expiresAt: Math.floor(Date.now() / 1000) + 2592000,
@@ -457,7 +457,7 @@ describe("SqliteEnrollmentStore", () => {
     const store2 = new SqliteEnrollmentStore({ dbPath });
     const found = await store2.findEnrollment(999000, "test", new Date());
     assert.ok(found);
-    assert.equal(found.nullifier, "0xpersistent");
+    assert.equal(found.nullifier, "0x00000000000000000000000000000000000000000000000000000000005157ed");
     store2.close();
 
     // Clean up
@@ -478,7 +478,7 @@ describe("SqliteEnrollmentStore", () => {
     );
 
     await assert.rejects(
-      async () => store.createEnrollment({ nullifier: "0xtest", telegramUserId: 0 } as any),
+      async () => store.createEnrollment({ nullifier: "0x00000000000000000000000000000000000000000000000000000000007e5701", telegramUserId: 0 } as any),
       /telegramUserId must be positive safe integer/,
     );
 
@@ -489,7 +489,7 @@ describe("SqliteEnrollmentStore", () => {
     const store = new SqliteEnrollmentStore(getTestDb());
 
     const enrollment: Enrollment = {
-      nullifier: "0xstale",
+      nullifier: "0x000000000000000000000000000000000000000000000000000000000057a1e1",
       telegramUserId: 111222,
       action: "verify-human-2026",
       expiresAt: Math.floor(Date.now() / 1000) + 5, // Expires in 5 seconds
@@ -512,7 +512,7 @@ describe("SqliteEnrollmentStore", () => {
     const store = new SqliteEnrollmentStore(getTestDb());
 
     const enrollment: Enrollment = {
-      nullifier: "0xunique",
+      nullifier: "0x0000000000000000000000000000000000000000000000000000000000un1234",
       telegramUserId: 111111,
       action: "test",
       expiresAt: Math.floor(Date.now() / 1000) + 2592000,
@@ -523,7 +523,7 @@ describe("SqliteEnrollmentStore", () => {
 
     // Concurrent attempt to create enrollment with same nullifier
     const replay: Enrollment = {
-      nullifier: "0xunique", // Same nullifier
+      nullifier: "0x0000000000000000000000000000000000000000000000000000000000un1234", // Same nullifier
       telegramUserId: 222222, // Different user (replay attack)
       action: "test",
       expiresAt: Math.floor(Date.now() / 1000) + 2592000,
@@ -538,7 +538,7 @@ describe("SqliteEnrollmentStore", () => {
     // Original enrollment should still exist for original user
     const found = await store.findEnrollment(111111, "test", new Date());
     assert.ok(found);
-    assert.equal(found.nullifier, "0xunique");
+    assert.equal(found.nullifier, "0x0000000000000000000000000000000000000000000000000000000000un1234");
 
     // Attacker should not have enrollment
     const attackerFound = await store.findEnrollment(222222, "test", new Date());
@@ -551,7 +551,7 @@ describe("SqliteEnrollmentStore", () => {
     const store = new SqliteEnrollmentStore(getTestDb());
 
     const enrollment: Enrollment = {
-      nullifier: "0xfirst",
+      nullifier: "0x00000000000000000000000000000000000000000000000000000000000f1257",
       telegramUserId: 333333,
       action: "verify-human-2026",
       expiresAt: Math.floor(Date.now() / 1000) + 2592000,
@@ -562,7 +562,7 @@ describe("SqliteEnrollmentStore", () => {
 
     // Attempt to create second enrollment for same user+action with different nullifier
     const mismatch: Enrollment = {
-      nullifier: "0xsecond",
+      nullifier: "0x000000000000000000000000000000000000000000000000000000000052ec0d",
       telegramUserId: 333333, // Same user
       action: "verify-human-2026", // Same action
       expiresAt: Math.floor(Date.now() / 1000) + 2592000,
@@ -577,7 +577,7 @@ describe("SqliteEnrollmentStore", () => {
     // Original enrollment should remain unchanged
     const found = await store.findEnrollment(333333, "verify-human-2026", new Date());
     assert.ok(found);
-    assert.equal(found.nullifier, "0xfirst");
+    assert.equal(found.nullifier, "0x00000000000000000000000000000000000000000000000000000000000f1257");
 
     store.close();
   });
@@ -589,7 +589,7 @@ describe("SqliteEnrollmentStore", () => {
     const thirtyDays = 30 * 24 * 60 * 60;
 
     const enrollment: Enrollment = {
-      nullifier: "0xttl-test",
+      nullifier: "0x000000000000000000000000000000000000000000000000000000000077117e",
       telegramUserId: 444444,
       action: "test",
       expiresAt: now + thirtyDays, // 30 days from now
@@ -616,7 +616,7 @@ describe("SqliteEnrollmentStore", () => {
     const originalExpiry = now + 1000;
 
     const enrollment: Enrollment = {
-      nullifier: "0xfixed-expiry",
+      nullifier: "0x0000000000000000000000000000000000000000000000000000000000f1eed1",
       telegramUserId: 555555,
       action: "test",
       expiresAt: originalExpiry,

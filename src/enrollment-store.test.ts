@@ -138,7 +138,7 @@ describe("InMemoryEnrollmentStore", () => {
   it("rejects duplicate nullifier creation", async () => {
     const store = new InMemoryEnrollmentStore();
     const enrollment: Enrollment = {
-      nullifier: "0xdup",
+      nullifier: "0x0000000000000000000000000000000000000000000000000000000000dup111",
       telegramUserId: 123,
       action: "action",
       expiresAt: Math.floor(Date.now() / 1000) + 86400,
@@ -156,7 +156,7 @@ describe("InMemoryEnrollmentStore", () => {
   it("rejects duplicate (telegramUserId, action) creation", async () => {
     const store = new InMemoryEnrollmentStore();
     const enrollment: Enrollment = {
-      nullifier: "0xfirst",
+      nullifier: "0x00000000000000000000000000000000000000000000000000000000000f1257",
       telegramUserId: 999,
       action: "verify-human",
       expiresAt: Math.floor(Date.now() / 1000) + 86400,
@@ -168,7 +168,7 @@ describe("InMemoryEnrollmentStore", () => {
     await assert.rejects(
       store.createEnrollment({
         ...enrollment,
-        nullifier: "0xsecond",
+        nullifier: "0x000000000000000000000000000000000000000000000000000000000052ec0d",
       }),
       /Enrollment for telegramUserId 999 and action verify-human already exists/,
     );
@@ -178,7 +178,7 @@ describe("InMemoryEnrollmentStore", () => {
     const store = new InMemoryEnrollmentStore();
     const now = new Date();
     const enrollment: Enrollment = {
-      nullifier: "0xfind",
+      nullifier: "0x000000000000000000000000000000000000000000000000000000000000f1de",
       telegramUserId: 777,
       action: "verify-human",
       expiresAt: Math.floor(now.getTime() / 1000) + 86400,
@@ -189,7 +189,7 @@ describe("InMemoryEnrollmentStore", () => {
 
     const found = await store.findEnrollment(777, "verify-human", now);
     assert.ok(found);
-    assert.equal(found.nullifier, "0xfind");
+    assert.equal(found.nullifier, "0x000000000000000000000000000000000000000000000000000000000000f1de");
     assert.equal(found.telegramUserId, 777);
   });
 
@@ -204,7 +204,7 @@ describe("InMemoryEnrollmentStore", () => {
     const store = new InMemoryEnrollmentStore();
     const past = new Date(Date.now() - 86400000);
     const enrollment: Enrollment = {
-      nullifier: "0xexpired",
+      nullifier: "0x0000000000000000000000000000000000000000000000000000000000exp1ed",
       telegramUserId: 888,
       action: "verify-human",
       expiresAt: Math.floor(past.getTime() / 1000),
@@ -221,7 +221,7 @@ describe("InMemoryEnrollmentStore", () => {
   it("deletes enrollment by nullifier", async () => {
     const store = new InMemoryEnrollmentStore();
     const enrollment: Enrollment = {
-      nullifier: "0xdelete",
+      nullifier: "0x000000000000000000000000000000000000000000000000000000000de1e7e",
       telegramUserId: 555,
       action: "action",
       expiresAt: Math.floor(Date.now() / 1000) + 86400,
@@ -230,7 +230,7 @@ describe("InMemoryEnrollmentStore", () => {
 
     await store.createEnrollment(enrollment);
 
-    const deleted = await store.deleteEnrollment("0xdelete");
+    const deleted = await store.deleteEnrollment("0x000000000000000000000000000000000000000000000000000000000de1e7e");
     assert.ok(deleted);
 
     const found = await store.findEnrollment(555, "action", new Date());
@@ -240,7 +240,7 @@ describe("InMemoryEnrollmentStore", () => {
   it("returns false when deleting non-existent enrollment", async () => {
     const store = new InMemoryEnrollmentStore();
 
-    const deleted = await store.deleteEnrollment("0xnonexistent");
+    const deleted = await store.deleteEnrollment("0x00000000000000000000000000000000000000000000000000000000000000ee");
     assert.ok(!deleted);
   });
 
@@ -249,7 +249,7 @@ describe("InMemoryEnrollmentStore", () => {
     const now = Math.floor(Date.now() / 1000);
 
     await store.createEnrollment({
-      nullifier: "0xold1",
+      nullifier: "0x0000000000000000000000000000000000000000000000000000000000001d01",
       telegramUserId: 1,
       action: "action",
       expiresAt: now - 100,
@@ -257,7 +257,7 @@ describe("InMemoryEnrollmentStore", () => {
     });
 
     await store.createEnrollment({
-      nullifier: "0xold2",
+      nullifier: "0x0000000000000000000000000000000000000000000000000000000000001d02",
       telegramUserId: 2,
       action: "action",
       expiresAt: now - 50,
@@ -265,7 +265,7 @@ describe("InMemoryEnrollmentStore", () => {
     });
 
     await store.createEnrollment({
-      nullifier: "0xfresh",
+      nullifier: "0x000000000000000000000000000000000000000000000000000000000000f5e5",
       telegramUserId: 3,
       action: "action",
       expiresAt: now + 86400,
@@ -285,7 +285,7 @@ describe("InMemoryEnrollmentStore", () => {
     const userId = 321;
 
     await store.createEnrollment({
-      nullifier: "0xaction1",
+      nullifier: "0x000000000000000000000000000000000000000000000000000000000ac71001",
       telegramUserId: userId,
       action: "action-one",
       expiresAt: Math.floor(Date.now() / 1000) + 86400,
@@ -293,7 +293,7 @@ describe("InMemoryEnrollmentStore", () => {
     });
 
     await store.createEnrollment({
-      nullifier: "0xaction2",
+      nullifier: "0x000000000000000000000000000000000000000000000000000000000ac71002",
       telegramUserId: userId,
       action: "action-two",
       expiresAt: Math.floor(Date.now() / 1000) + 86400,
@@ -305,7 +305,7 @@ describe("InMemoryEnrollmentStore", () => {
 
     assert.ok(found1);
     assert.ok(found2);
-    assert.equal(found1.nullifier, "0xaction1");
-    assert.equal(found2.nullifier, "0xaction2");
+    assert.equal(found1.nullifier, "0x000000000000000000000000000000000000000000000000000000000ac71001");
+    assert.equal(found2.nullifier, "0x000000000000000000000000000000000000000000000000000000000ac71002");
   });
 });
