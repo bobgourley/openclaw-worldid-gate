@@ -66,18 +66,31 @@ The Playwright tests run the actual code in real browsers with proper API stubbi
 
 **Rationale**: The Playwright test exercises the full SDK flow with real browser execution, including connectorURI generation and QR display.
 
+## New Playwright Tests (P1 Coverage Gaps)
+
+These tests were added to address coverage gaps from the removed JSDOM tests:
+
+| Test File | Test Name | Coverage |
+|-----------|-----------|----------|
+| `src/ui/enrollment-xss.browser.test.ts` | Error messages rendered via textContent do not execute injected scripts | XSS safety: error messages use textContent, not innerHTML |
+| `src/ui/enrollment-initdata.browser.test.ts` | Missing Telegram initData disables verification | Fail-closed behavior when opened in external browser |
+| `src/ui/enrollment-bundle-failure.browser.test.ts` | IDKit bundle load failure shows safe error message | Graceful degradation when bundle fails to load |
+
+**Note**: Challenge field validation tests (missing app_id, rp_id, nonce, signature) were not implemented as the page relies on backend validation rather than frontend checks.
+
 ## Summary
 
 - **Total JSDOM tests removed**: 27 tests across 5 files
 - **Renamed**: 1 file (`enrollment-handler-playwright.test.ts` → `enrollment-handler.browser.test.ts`)
 - **Removed**: 5 files
-- **Playwright coverage**: All scenarios covered by existing browser tests
+- **New Playwright tests added**: 4 tests for P1 coverage gaps
+- **Playwright coverage**: All scenarios covered by browser tests
 
 ## Test Count Changes
 
 - **Before**: 531 tests (504 pass, 27 fail)
-- **After**: 504 tests (all passing)
-- **Browser tests**: 19 Playwright tests (all passing)
+- **After JSDOM cleanup**: 497 tests (all passing)
+- **After P1 additions**: 497 JSDOM + 33 Playwright tests (all passing)
 
 ## Verification
 
