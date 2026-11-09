@@ -76,8 +76,8 @@ describe('Production server integration', () => {
   let testDbPath: string;
 
   beforeEach(async () => {
-    // Use random port for each test
-    testPort = 13000 + Math.floor(Math.random() * 1000);
+    // Use port 0 to let OS assign an available port
+    testPort = 0;
     testDbPath = `/tmp/test-enrollment-${Date.now()}-${Math.random()}.db`;
 
     // Create services with throwaway config

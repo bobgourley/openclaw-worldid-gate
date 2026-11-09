@@ -53,10 +53,18 @@ const config = {
 
 // Validate enrollment TTL (fail-closed: exit on invalid values)
 function validateEnrollmentTtl(): void {
+  const rawValue = process.env.WORLDID_ENROLLMENT_TTL_DAYS;
+  
+  // Strict format validation: must be digits only, no empty strings
+  if (rawValue !== undefined && (rawValue === '' || !/^\d+$/.test(rawValue))) {
+    console.error('FATAL: WORLDID_ENROLLMENT_TTL_DAYS must contain only digits, got:', rawValue);
+    process.exit(1);
+  }
+  
   const ttlDays = config.enrollmentTtlDays;
   
   if (!Number.isFinite(ttlDays) || isNaN(ttlDays)) {
-    console.error('FATAL: WORLDID_ENROLLMENT_TTL_DAYS must be a finite number, got:', process.env.WORLDID_ENROLLMENT_TTL_DAYS);
+    console.error('FATAL: WORLDID_ENROLLMENT_TTL_DAYS must be a finite number, got:', rawValue);
     process.exit(1);
   }
   
@@ -240,7 +248,7 @@ async function main(): Promise<void> {
     
     console.log('OpenClaw integration enabled:');
     console.log(`  Agent: ${config.openclawAgent}`);
-    console.log(`  Allowed group: ${config.openclawAllowedGroupId}`);
+    console.log(`  Allowed group: <configured>`);
     console.log(`  Profile: ${config.openclawProfile}`);
   }
   

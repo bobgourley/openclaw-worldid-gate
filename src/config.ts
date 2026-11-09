@@ -17,7 +17,7 @@ import type { GateConfig } from './types.js';
 export const CONFIG_BOUNDS = {
   enrollmentTtl: {
     minimum: 60, // 1 minute
-    default: 2592000, // 30 days
+    default: 432000, // 5 days
     maximum: 31536000, // 1 year
   },
 } as const;

@@ -675,7 +675,7 @@
         // Access IDKit from global IIFE bundle
         const { IDKit, CredentialRequest } = window.WorldIDKitBundle;
         
-        if (enrollmentStatus.status === 'renewal' || enrollmentStatus.status === 'reactivation') {
+        if (enrollmentStatus.status === 'renewal') {
           // Returning user flow - use session verification
           await handleReturningUser(enrollmentStatus, IDKit, CredentialRequest);
         } else if (enrollmentStatus.status === 'new' || enrollmentStatus.status === 'upgrade') {
@@ -713,6 +713,7 @@
         
         if (!response.ok) {
           showError('Failed to create verification challenge. Please try again.');
+          verificationInProgress = false;
           buttonEl.disabled = false;
           return;
         }
@@ -758,18 +759,14 @@
       } catch (error) {
         console.error('New enrollment error:', error);
         showError('Unable to connect to World App. Please try again.');
+        verificationInProgress = false;
         buttonEl.disabled = false;
       }
     }
 
-    // Handle returning user (renewal or reactivation)
+    // Handle returning user (renewal only)
     async function handleReturningUser(enrollmentStatus, IDKit, CredentialRequest) {
-      const isReactivation = enrollmentStatus.status === 'reactivation';
-      const mode = isReactivation ? 'reactivation' : 'renewal';
-      
-      if (isReactivation) {
-        showStatus('Your enrollment was revoked. Confirm reactivation with World ID.', 'warning');
-      } else if (enrollmentStatus.expired) {
+      if (enrollmentStatus.expired) {
         showStatus('Your enrollment expired. Renewing with World ID...', 'loading');
       } else {
         showStatus('Verifying your World ID session...', 'loading');
@@ -784,12 +781,12 @@
           },
           body: JSON.stringify({
             initData: initData,
-            mode: mode,
           }),
         });
         
         if (!response.ok) {
           showError('Failed to create session challenge. Please try again.');
+          verificationInProgress = false;
           buttonEl.disabled = false;
           return;
         }
@@ -827,6 +824,7 @@
       } catch (error) {
         console.error('Returning user error:', error);
         showError('Unable to verify session. Please try again.');
+        verificationInProgress = false;
         buttonEl.disabled = false;
       }
     }
@@ -835,6 +833,7 @@
     async function displayConnectorAndPoll(request, submitEndpoint) {
       if (!request.connectorURI) {
         showError('Failed to generate World App connection. Please try again.');
+        verificationInProgress = false;
         buttonEl.disabled = false;
         return;
       }
@@ -1507,16 +1506,30 @@
         };
         
         // Ensure payload stays under 2KB limit (server has 2KB body limit)
+        // Count bytes, not characters
         let body = JSON.stringify(safeData);
-        if (body.length > 1800) {
-          // Payload too large - truncate non-essential fields
-          // Remove optional fields to shrink payload
-          const minimalData = {
+        let byteSize = new TextEncoder().encode(body).length;
+        
+        if (byteSize > 2000) {
+          // Payload too large - truncate non-essential fields and errorCode
+          let errorCode = safeData.errorCode || '';
+          
+          // Try minimal data first
+          let minimalData = {
             event: safeData.event,
-            errorCode: safeData.errorCode,
+            errorCode: errorCode,
             timestamp: safeData.timestamp,
           };
           body = JSON.stringify(minimalData);
+          byteSize = new TextEncoder().encode(body).length;
+          
+          // If still too large, truncate errorCode
+          while (byteSize > 2000 && errorCode.length > 0) {
+            errorCode = errorCode.substring(0, errorCode.length - 10);
+            minimalData.errorCode = errorCode;
+            body = JSON.stringify(minimalData);
+            byteSize = new TextEncoder().encode(body).length;
+          }
         }
         
         await fetch('/api/diagnostics/client', {

@@ -228,8 +228,6 @@ export class TelegramBotHandler {
       });
     } else if (text === '/status') {
       await this.handleStatusCommand(message.from.id);
-    } else if (text === '/revoke' || text.match(/^\/revoke@\w+$/)) {
-      await this.handleRevokeCommand(message.from.id);
     } else if (text.startsWith('/ask ')) {
       // OpenClaw CLI dispatch command (private chat only)
       if (this.openclawConfig) {
@@ -280,7 +278,7 @@ export class TelegramBotHandler {
       const now = Date.now();
       const recentTime = this.recentDeliveries.get(deliveryKey);
       if (recentTime && now - recentTime < 300000) {
-        console.log(`Duplicate delivery suppressed: ${deliveryKey}`);
+        console.log('Duplicate delivery suppressed');
         return;
       }
 
@@ -402,18 +400,29 @@ export class TelegramBotHandler {
     try {
       // Check existing enrollment
       const existing = await this.enrollmentService.findEnrollment(userId);
-      let challengeMode: 'renewal' | 'reactivation' | undefined;
+      let useRenewal = false;
       
-      // CRITICAL: Any user with a stored session_id MUST use proveSession (renewal or reactivation)
+      // CRITICAL: Any user with a stored session_id MUST use proveSession (renewal)
       // Never fall through to createChallenge (uniqueness proof), which would cause nullifier_replayed
       if (existing && existing.sessionId) {
         if (existing.revoked) {
-          // Revoked user with session: reactivation
-          challengeMode = 'reactivation';
+          // Revoked user: cannot use system
+          await this.transport.sendMessage(
+            userId,
+            '❌ Your enrollment has been revoked.'
+          );
+          return;
         } else {
           // Active or expired user with session: renewal (extends expiry)
-          challengeMode = 'renewal';
+          useRenewal = true;
         }
+      } else if (existing && !existing.revoked && !existing.expired) {
+        // Legacy active user without session (v3): already verified
+        await this.transport.sendMessage(
+          userId,
+          '✅ You are already verified with World ID.'
+        );
+        return;
       }
       // Otherwise: new enrollment (no existing enrollment or no sessionId)
 
@@ -436,9 +445,9 @@ export class TelegramBotHandler {
 
       // Create challenge session (authenticated to this user)
       let challengeResult;
-      if (challengeMode) {
-        // Early renewal or reactivation: use proveSession
-        challengeResult = await this.enrollmentService.createSessionChallenge(initData, { mode: challengeMode });
+      if (useRenewal) {
+        // Early renewal: use proveSession
+        challengeResult = await this.enrollmentService.createSessionChallenge(initData);
       } else {
         // New enrollment: create new uniqueness challenge
         challengeResult = await this.enrollmentService.createChallenge(initData);

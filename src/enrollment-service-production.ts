@@ -143,7 +143,6 @@ export interface CompleteEnrollmentResult {
   expiresAt?: number;
   sessionId?: string;
   protocolVersion?: string;
-  wasReactivated?: boolean;
   error?: string;
 }
 
@@ -195,7 +194,7 @@ export class EnrollmentService {
       throw new Error('Invalid challengeTtlSeconds: must be 60-3600');
     }
 
-    const enrollmentTtl = config.enrollmentTtlSeconds ?? 2592000;
+    const enrollmentTtl = config.enrollmentTtlSeconds ?? 432000;
     if (!Number.isSafeInteger(enrollmentTtl) || enrollmentTtl < 86400 || enrollmentTtl > 31536000) {
       throw new Error('Invalid enrollmentTtlSeconds: must be 86400-31536000 (1-365 days)');
     }
@@ -628,8 +627,18 @@ export class EnrollmentService {
 
     const authenticatedUserId = initDataValidation.user.id;
 
-    // Check for existing active (non-expired, non-revoked) enrollment
+    // Check for existing enrollment with session
+    // CRITICAL: Any user with stored session_id must use renewal/reactivation, never uniqueness proof
     const existingEnrollment = await this.findEnrollment(authenticatedUserId);
+    if (existingEnrollment && existingEnrollment.sessionId) {
+      if (existingEnrollment.revoked) {
+        throw new Error('Enrollment revoked. Use reactivation via session verification.');
+      } else {
+        throw new Error('Enrollment exists with session. Use renewal via session verification.');
+      }
+    }
+    
+    // Also block active enrollments without session (legacy v3)
     if (existingEnrollment && !existingEnrollment.revoked && !existingEnrollment.expired) {
       throw new Error('User already enrolled (policy: one active enrollment per account)');
     }
@@ -712,10 +721,7 @@ export class EnrollmentService {
    * Modes determined by enrollment state. Challenge generation uses current
    * generation (prevents pre-revoke challenges from completing).
    */
-  async createSessionChallenge(initData: string, options?: {
-    /** Explicitly request reactivation for revoked enrollment */
-    mode?: 'renewal' | 'reactivation';
-  }): Promise<CreateChallengeResult> {
+  async createSessionChallenge(initData: string): Promise<CreateChallengeResult> {
     // Authenticate Telegram initData
     const initDataValidation = validateTelegramInitData(initData, this.telegramConfig);
 
@@ -735,29 +741,15 @@ export class EnrollmentService {
       throw new Error('No session ID found (enrollment does not support session verification)');
     }
 
-    // Mode logic: determine what kind of session challenge this is
-    const mode = options?.mode || 'renewal';
-
-    if (mode === 'renewal') {
-      // Ordinary renewal: reject revoked enrollments
-      if (existingEnrollment.revoked) {
-        throw new Error('Enrollment has been revoked (use mode=reactivation for explicit reactivation)');
-      }
-      // Allow expired enrollments for renewal if credential is still valid
-    } else if (mode === 'reactivation') {
-      // Explicit reactivation: REQUIRES revoked enrollment
-      if (!existingEnrollment.revoked) {
-        throw new Error('Enrollment not revoked (use mode=renewal for ordinary session verification)');
-      }
-      // Revoked enrollments allowed for explicit reactivation with authenticated intent
+    // Reject revoked enrollments (no reactivation flow)
+    if (existingEnrollment.revoked) {
+      throw new Error('Enrollment has been revoked');
     }
 
     // Use SDK adapter to create session-only challenge (no action)
     const { signedChallenge, expectedNonce } = this.challengeAdapter.createSessionChallenge();
 
-    // Store challenge session with CURRENT generation and DURABLE MODE BINDING
-    // CRITICAL: Mode is bound at challenge creation and checked at verification
-    // A renewal challenge created before revocation must NEVER succeed after revocation
+    // Store challenge session with renewal mode
     const now = this.clock.nowSeconds();
     const expiresAt = now + this.challengeTtlSeconds;
     const generation = this.getNextGeneration();
@@ -783,7 +775,7 @@ export class EnrollmentService {
       this.clock.nowISO(),
       now,
       generation,
-      mode // Durably bind mode to challenge
+      'renewal' // Only renewal mode supported
     );
 
     return { signedChallenge };
@@ -851,7 +843,6 @@ export class EnrollmentService {
         return {
           success: true,
           expiresAt: sessionResult.expiresAt,
-          wasReactivated: sessionResult.wasReactivated,
         };
       } else {
         return {
@@ -1600,13 +1591,9 @@ export class EnrollmentService {
         WHERE telegram_user_id = ? AND action = ?
       `).get(authenticatedUserId, this.action) as any;
 
-      if (currentEnrollmentState) {
-        if (challengeMode === 'renewal' && currentEnrollmentState.revoked === 1) {
-          throw new Error('Renewal challenge invalid: enrollment revoked after challenge creation');
-        }
-        if (challengeMode === 'reactivation' && currentEnrollmentState.revoked !== 1) {
-          throw new Error('Reactivation challenge invalid: enrollment not revoked at verification time');
-        }
+      // Verify enrollment not revoked (renewal only, no reactivation)
+      if (currentEnrollmentState && currentEnrollmentState.revoked === 1) {
+        throw new Error('Renewal challenge invalid: enrollment revoked');
       }
 
       // Canonicalize session nullifier tuple (256-bit bounded integers)
@@ -1653,73 +1640,20 @@ export class EnrollmentService {
       this.db.prepare('DELETE FROM challenge_sessions WHERE nonce = ?').run(request.idkitResult.nonce);
 
       const newExpiresAt = txNow + this.enrollmentTtlSeconds;
-      let wasReactivated = false;
 
-      if (challengeMode === 'reactivation') {
-        // Reactivation: clear revoked flag, record in append-only event log
-        // CRITICAL: Generation fence is NEVER cleared (monotonic fence)
-        // Append-only audit preserves all revocation/reactivation cycles
-        
-        // Record reactivation event in append-only history
-        this.db.prepare(`
-          INSERT INTO revocation_events (
-            telegram_user_id,
-            action,
-            event_type,
-            event_at,
-            event_at_iso,
-            generation,
-            triggered_by,
-            notes
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          authenticatedUserId,
-          this.action,
-          'reactivated',
-          txNow,
-          this.clock.nowISO(),
-          recheckChallenge.generation,
-          'session_verification',
-          `Session proof verified for revoked enrollment`
-        );
+      // Renewal: update expiry only
+      this.db.prepare(`
+        UPDATE enrollments
+        SET expires_at = ?, created_at = ?
+        WHERE telegram_user_id = ? AND action = ?
+      `).run(
+        newExpiresAt,
+        this.clock.nowISO(),
+        authenticatedUserId,
+        this.action
+      );
 
-        // Clear revoked flag in enrollment (operational state)
-        // Note: reactivated_at/by remain for display, but revocation_events is source of truth
-        this.db.prepare(`
-          UPDATE enrollments
-          SET revoked = 0,
-              revoked_at = NULL,
-              revoked_at_seconds = NULL,
-              revoked_generation = NULL,
-              reactivated_at = ?,
-              reactivated_by = 'session_verification',
-              expires_at = ?,
-              created_at = ?
-          WHERE telegram_user_id = ? AND action = ?
-        `).run(
-          this.clock.nowISO(),
-          newExpiresAt,
-          this.clock.nowISO(),
-          authenticatedUserId,
-          this.action
-        );
-
-        wasReactivated = true;
-      } else {
-        // Ordinary renewal: update expiry only
-        this.db.prepare(`
-          UPDATE enrollments
-          SET expires_at = ?, created_at = ?
-          WHERE telegram_user_id = ? AND action = ?
-        `).run(
-          newExpiresAt,
-          this.clock.nowISO(),
-          authenticatedUserId,
-          this.action
-        );
-      }
-
-      return { expiresAt: newExpiresAt, wasReactivated };
+      return { expiresAt: newExpiresAt };
     });
 
     // Execute transaction

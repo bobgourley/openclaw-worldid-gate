@@ -230,7 +230,7 @@ export class WorldIdHttpVerifier {
       if (expectedContext.sessionId && idkitResult.session_id !== expectedContext.sessionId) {
         return {
           success: false,
-          error: `Session ID mismatch: expected ${expectedContext.sessionId}, got ${idkitResult.session_id}`,
+          error: 'Session ID mismatch',
         };
       }
       

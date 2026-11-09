@@ -127,7 +127,7 @@ describe('HttpService Integration', () => {
     // Generate unique identifiers for each test run
     const uniqueId = Math.floor(Math.random() * 1000000);
     testDbPath = `/tmp/test-http-service-${uniqueId}.db`;
-    testPort = 13579 + (uniqueId % 1000);
+    testPort = 0; // Let OS assign an available port
 
     if (fs.existsSync(testDbPath)) {
       fs.unlinkSync(testDbPath);
@@ -164,6 +164,9 @@ describe('HttpService Integration', () => {
     });
 
     await service.start();
+    
+    // Get the actual assigned port
+    testPort = service.getActualPort();
   });
 
   afterEach(async () => {
@@ -396,43 +399,6 @@ describe('HttpService Integration', () => {
       assert.match(data.error, /no enrollment found/i);
     });
 
-    it('rejects reactivation mode for non-revoked enrollment', async () => {
-      const userId = 23456;
-      const initData = createValidInitData(userId, TEST_BOT_TOKEN);
-
-      // Enroll the user
-      const challenge1Response = await fetch(`http://127.0.0.1:${testPort}/api/challenge/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData }),
-      });
-      const challenge1 = await challenge1Response.json();
-      
-      const sessionId2 = 'session_' + '3333333333333333'.repeat(8);
-      const idkitResult1 = createIDKitResult(
-        challenge1.signedChallenge.nonce,
-        challenge1.signedChallenge.action,
-        '2234567890abcdef1234567890abcdef',
-        sessionId2
-      );
-
-      await fetch(`http://127.0.0.1:${testPort}/api/enrollment/complete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData, idkitResult: idkitResult1 }),
-      });
-
-      // Try reactivation mode on active enrollment
-      const response = await fetch(`http://127.0.0.1:${testPort}/api/session/challenge/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData, mode: 'reactivation' }),
-      });
-
-      assert.equal(response.status, 400);
-      const data = await response.json();
-      assert.match(data.error, /not revoked/i);
-    });
   });
 
   describe('POST /api/session/verify', () => {
