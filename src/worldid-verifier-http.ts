@@ -33,6 +33,9 @@ export interface WorldIdHttpVerifierConfig {
 
   /** Base URL override for testing (default: uses official endpoints) */
   baseUrlOverride?: string;
+
+  /** Fetch function override for testing (default: global fetch) */
+  fetchFn?: typeof fetch;
 }
 
 /**
@@ -46,6 +49,7 @@ export class WorldIdHttpVerifier {
   private readonly environment: string;
   private readonly timeoutMs: number;
   private readonly baseUrl: string;
+  private readonly fetchFn: typeof fetch;
 
   constructor(config: WorldIdHttpVerifierConfig) {
     // Validate app ID
@@ -76,6 +80,9 @@ export class WorldIdHttpVerifier {
 
     // Official primary endpoint (override only for explicit test transport injection)
     this.baseUrl = config.baseUrlOverride ?? 'https://developer.world.org';
+    
+    // Use provided fetch function or global fetch
+    this.fetchFn = config.fetchFn ?? fetch;
   }
 
   /**
@@ -271,7 +278,7 @@ export class WorldIdHttpVerifier {
     const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
-      const apiResponse = await fetch(endpoint, {
+      const apiResponse = await this.fetchFn(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

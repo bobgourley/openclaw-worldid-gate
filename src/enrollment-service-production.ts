@@ -466,14 +466,37 @@ export class EnrollmentService {
     if (currentVersion < 3) {
       // v3: Session-based enrollment support (World ID 4.0 session proofs)
       const migrationTransaction = this.db.transaction(() => {
-        // Add session columns to enrollments table
-        this.db.exec(`
-          ALTER TABLE enrollments ADD COLUMN session_id TEXT
-        `);
+        // CRITICAL: Validate all existing nullifiers are in canonical form (0x + 64 hex)
+        // Fail closed if any legacy nullifiers are non-canonical (no silent re-keying)
+        const allNullifiers = this.db.prepare(`
+          SELECT DISTINCT nullifier FROM enrollments
+          UNION
+          SELECT DISTINCT nullifier FROM nullifier_claims
+        `).all() as any[];
 
-        this.db.exec(`
-          ALTER TABLE enrollments ADD COLUMN protocol_version TEXT
-        `);
+        for (const row of allNullifiers) {
+          const nullifier = row.nullifier;
+          if (!nullifier.startsWith('0x') || nullifier.length !== 66 || !/^0x[0-9a-f]{64}$/i.test(nullifier)) {
+            throw new Error(`Migration fail-closed: Non-canonical nullifier found in database: ${nullifier}. Expected 0x-prefixed 64-character hex. Database must be manually cleaned before migration.`);
+          }
+        }
+
+        // Add session columns to enrollments table (check if they already exist)
+        const enrollmentColumns = this.db.prepare(`PRAGMA table_info(enrollments)`).all() as any[];
+        const hasSessionId = enrollmentColumns.some((col: any) => col.name === 'session_id');
+        const hasProtocolVersion = enrollmentColumns.some((col: any) => col.name === 'protocol_version');
+
+        if (!hasSessionId) {
+          this.db.exec(`
+            ALTER TABLE enrollments ADD COLUMN session_id TEXT
+          `);
+        }
+
+        if (!hasProtocolVersion) {
+          this.db.exec(`
+            ALTER TABLE enrollments ADD COLUMN protocol_version TEXT
+          `);
+        }
 
         // Create unique index on session_id (immutable binding)
         this.db.exec(`
@@ -902,7 +925,7 @@ export class EnrollmentService {
       }
       return {
         success: false,
-        error: 'World ID proof verification failed',
+        error: `World ID proof verification failed: ${verificationResult.error || 'missing nullifier in result'}`,
       };
     }
 
@@ -1497,7 +1520,7 @@ export class EnrollmentService {
     if (!verificationResult.success) {
       return {
         success: false,
-        error: 'Session proof verification failed',
+        error: `Session proof verification failed: ${verificationResult.error || 'unknown reason'}`,
       };
     }
 

@@ -359,4 +359,160 @@ describe('Migration from actual v2 schema', () => {
     db.close();
     cleanupDb(TEST_DB);
   });
+
+  it('rejects non-canonical legacy nullifiers (fail-closed, no re-keying)', () => {
+    const TEST_DB = getTestDb('non-canonical-nullifier');
+    const db = new Database(TEST_DB);
+    
+    // Create v2 schema with non-canonical nullifiers
+    db.exec(`
+      CREATE TABLE schema_version (
+        version INTEGER PRIMARY KEY,
+        applied_at INTEGER NOT NULL,
+        applied_at_iso TEXT NOT NULL
+      ) STRICT;
+
+      INSERT INTO schema_version (version, applied_at, applied_at_iso)
+      VALUES (2, ${Math.floor(Date.now() / 1000)}, '${new Date().toISOString()}');
+
+      CREATE TABLE enrollments (
+        telegram_user_id INTEGER PRIMARY KEY,
+        action TEXT NOT NULL,
+        nullifier TEXT NOT NULL,
+        enrolled_at INTEGER NOT NULL,
+        enrolled_at_iso TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        expires_at_iso TEXT NOT NULL,
+        revoked INTEGER DEFAULT 0,
+        revoked_at INTEGER,
+        revoked_at_iso TEXT,
+        revoked_by TEXT,
+        session_id TEXT,
+        protocol_version TEXT DEFAULT 'UNKNOWN'
+      ) STRICT;
+
+      CREATE TABLE generation_fences (
+        telegram_user_id INTEGER PRIMARY KEY,
+        action TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        updated_at_iso TEXT NOT NULL
+      ) STRICT;
+
+      CREATE TABLE generation_counter (
+        telegram_user_id INTEGER PRIMARY KEY,
+        action TEXT NOT NULL,
+        count INTEGER NOT NULL DEFAULT 1,
+        last_updated INTEGER NOT NULL,
+        last_updated_iso TEXT NOT NULL
+      ) STRICT;
+
+      CREATE TABLE challenge_sessions (
+        nonce TEXT PRIMARY KEY,
+        telegram_user_id INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        signal_hash TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        created_at_seconds INTEGER NOT NULL,
+        generation INTEGER NOT NULL
+      ) STRICT;
+
+      CREATE TABLE nullifier_claims (
+        nullifier TEXT PRIMARY KEY,
+        action TEXT NOT NULL,
+        telegram_user_id INTEGER NOT NULL,
+        claimed_at INTEGER NOT NULL,
+        claimed_at_iso TEXT NOT NULL
+      ) STRICT;
+    `);
+
+    const now = Date.now();
+    const nowSeconds = Math.floor(now / 1000);
+
+    // Insert enrollment with bare decimal nullifier (invalid canonical form)
+    db.prepare(`
+      INSERT INTO enrollments (
+        telegram_user_id, action, nullifier, enrolled_at, enrolled_at_iso,
+        expires_at, expires_at_iso, revoked, session_id, protocol_version
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      111111,
+      'openclaw-enroll',
+      '12345678901234567890', // Bare decimal - NOT 0x-prefixed 64 hex
+      nowSeconds,
+      new Date(now).toISOString(),
+      nowSeconds + 86400 * 30,
+      new Date(now + 86400 * 30 * 1000).toISOString(),
+      0,
+      null,
+      'UNKNOWN'
+    );
+
+    // Insert enrollment with short hex (invalid length)
+    db.prepare(`
+      INSERT INTO enrollments (
+        telegram_user_id, action, nullifier, enrolled_at, enrolled_at_iso,
+        expires_at, expires_at_iso, revoked, session_id, protocol_version
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      222222,
+      'openclaw-enroll',
+      '0xshort', // Short hex - NOT 64 chars
+      nowSeconds,
+      new Date(now).toISOString(),
+      nowSeconds + 86400 * 30,
+      new Date(now + 86400 * 30 * 1000).toISOString(),
+      0,
+      null,
+      'UNKNOWN'
+    );
+
+    // Insert corresponding claims
+    db.prepare(`
+      INSERT INTO nullifier_claims (nullifier, action, telegram_user_id, claimed_at, claimed_at_iso)
+      VALUES (?, ?, ?, ?, ?)
+    `).run('12345678901234567890', 'openclaw-enroll', 111111, nowSeconds, new Date(now).toISOString());
+    
+    db.prepare(`
+      INSERT INTO nullifier_claims (nullifier, action, telegram_user_id, claimed_at, claimed_at_iso)
+      VALUES (?, ?, ?, ?, ?)
+    `).run('0xshort', 'openclaw-enroll', 222222, nowSeconds, new Date(now).toISOString());
+
+    db.close();
+
+    // Attempt to migrate - should fail closed
+    const adapter = {
+      createChallenge: async () => ({ nonce: 'test', signalHash: 'test' }),
+    } as any;
+    const verifier = {
+      verify: async () => ({ success: true, nullifier: '0x' + '1'.repeat(64), issuerSchemaId: 1, expiresAtMin: nowSeconds + 86400 }),
+    } as any;
+
+    try {
+      const service = new EnrollmentService({
+        dbPath: TEST_DB,
+        challengeAdapter: adapter,
+        verificationClient: verifier,
+        telegramBotToken: '123456:ABC-DEF',
+        action: 'openclaw-enroll',
+      });
+      service.close();
+      assert.fail('Should have rejected non-canonical nullifier during migration');
+    } catch (err: any) {
+      // Verify it fails closed
+      assert.match(err.message, /canonical|invalid.*nullifier|hex/i, 'Error should mention canonical form or invalid nullifier');
+    }
+
+    // Verify DB was not modified (no re-keying)
+    const dbCheck = new Database(TEST_DB);
+    const bareDecimalRow = dbCheck.prepare('SELECT nullifier FROM enrollments WHERE telegram_user_id = ?').get(111111) as any;
+    const shortHexRow = dbCheck.prepare('SELECT nullifier FROM enrollments WHERE telegram_user_id = ?').get(222222) as any;
+    
+    assert.equal(bareDecimalRow.nullifier, '12345678901234567890', 'Bare decimal nullifier unchanged (no silent re-keying)');
+    assert.equal(shortHexRow.nullifier, '0xshort', 'Short hex nullifier unchanged (no silent re-keying)');
+    
+    dbCheck.close();
+    cleanupDb(TEST_DB);
+  });
 });

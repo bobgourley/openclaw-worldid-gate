@@ -132,6 +132,8 @@ describe('Real Verifier Session Proof Tests', () => {
       action: null as any,
       nonce: '0xtest',
       signalHash: null as any,
+      expectedMode: 'session',
+      sessionId: 'session_test',
     });
 
     assert.equal(result.success, false);
@@ -165,6 +167,7 @@ describe('Real Verifier Session Proof Tests', () => {
       action: 'wrong-action',
       nonce: '0xtest',
       signalHash: '0x0',
+      expectedMode: 'uniqueness',
     });
 
     assert.equal(result.success, false);

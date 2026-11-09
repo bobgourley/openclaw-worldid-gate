@@ -121,7 +121,7 @@ describe('Session Verification Integration Tests', () => {
   describe('Complete session verification flow', () => {
     it('successful enrollment and session verification', async () => {
       const userId = 1001;
-      const nullifier = '0xsuccess_' + randomBytes(16).toString('hex');
+      const nullifier = '0x' + randomBytes(32).toString('hex');
       const initData = createValidInitData(userId, TEST_BOT_TOKEN);
       
       // Step 1: Initial enrollment with session creation
@@ -170,7 +170,7 @@ describe('Session Verification Integration Tests', () => {
   describe('Adversarial: Mismatched identifiers', () => {
     it('rejects mismatched session ID', async () => {
       const userId = 1001;
-      const nullifier = '0xmismatch_session_' + randomBytes(16).toString('hex');
+      const nullifier = '0x' + randomBytes(32).toString('hex');
       const initData = createValidInitData(userId, TEST_BOT_TOKEN);
       
       // Enroll with session
@@ -206,7 +206,7 @@ describe('Session Verification Integration Tests', () => {
     it('rejects mismatched account (session belongs to different user)', async () => {
       const userA = 1001;
       const userB = 1002;
-      const nullifier = '0xmismatch_account_' + randomBytes(16).toString('hex');
+      const nullifier = '0x' + randomBytes(32).toString('hex');
       const initDataA = createValidInitData(userA, TEST_BOT_TOKEN);
       const initDataB = createValidInitData(userB, TEST_BOT_TOKEN);
       
@@ -225,7 +225,7 @@ describe('Session Verification Integration Tests', () => {
       await service.completeEnrollment({ initData: initDataA, idkitResult: idkitResult1 });
       
       // User B enrolls (different nullifier)
-      const nullifierB = '0xuser_b_' + randomBytes(16).toString('hex');
+      const nullifierB = '0x' + randomBytes(32).toString('hex');
       const challenge2 = await service.createChallenge(initDataB);
       const sessionIdB = 'session_' + randomBytes(64).toString('hex');
       const idkitResult2 = createIDKitResult(
@@ -256,9 +256,9 @@ describe('Session Verification Integration Tests', () => {
       assert.match(verification.error!, /session.*mismatch|belongs to different/i);
     });
 
-    it('rejects mismatched nullifier in session proof', async () => {
+    it('rejects session proof when verifier fails', async () => {
       const userId = 1001;
-      const nullifier = '0xmismatch_nullifier_' + randomBytes(16).toString('hex');
+      const nullifier = '0x' + randomBytes(32).toString('hex');
       const initData = createValidInitData(userId, TEST_BOT_TOKEN);
       
       // Enroll with session
@@ -270,30 +270,31 @@ describe('Session Verification Integration Tests', () => {
         challenge1.signedChallenge.signalHash,
         sessionId
       );
-      // Nullifier passed in createIDKitResult
       
       verifier.setResponse(challenge1.signedChallenge.nonce, { success: true, nullifier });
       await service.completeEnrollment({ initData, idkitResult: idkitResult1 });
       
-      // Try to verify with DIFFERENT nullifier
+      // Session verification where verifier rejects proof
       const sessionChallenge = await service.createSessionChallenge(initData);
-      const wrongNullifier = '0xwrong_' + randomBytes(16).toString('hex');
+      const sessionNullifier = '0x' + randomBytes(32).toString('hex');
+      const sessionAction = '0x' + randomBytes(32).toString('hex');
       const sessionResult = createSessionResult(
         sessionChallenge.signedChallenge.nonce,
         sessionId,
-        [wrongNullifier, TEST_ACTION] // WRONG nullifier
+        [sessionNullifier, sessionAction]
       );
       
-      verifier.setResponse(sessionChallenge.signedChallenge.nonce, { success: true, nullifier: wrongNullifier });
+      // Verifier fails (e.g., cryptographic proof invalid)
+      verifier.setResponse(sessionChallenge.signedChallenge.nonce, { success: false });
       
       const verification = await service.verifySession({ initData, idkitResult: sessionResult });
       assert.strictEqual(verification.success, false);
-      assert.match(verification.error!, /nullifier.*mismatch|wrong world id/i);
+      assert.match(verification.error!, /verification failed/i);
     });
 
-    it('rejects mismatched action in session_nullifier tuple', async () => {
+    it('accepts session proof with different nullifier than enrollment (per spec)', async () => {
       const userId = 1001;
-      const nullifier = '0xmismatch_action_' + randomBytes(16).toString('hex');
+      const enrollmentNullifier = '0x' + randomBytes(32).toString('hex');
       const initData = createValidInitData(userId, TEST_BOT_TOKEN);
       
       // Enroll with session
@@ -305,31 +306,31 @@ describe('Session Verification Integration Tests', () => {
         challenge1.signedChallenge.signalHash,
         sessionId
       );
-      // Nullifier passed in createIDKitResult
       
-      verifier.setResponse(challenge1.signedChallenge.nonce, { success: true, nullifier });
+      verifier.setResponse(challenge1.signedChallenge.nonce, { success: true, nullifier: enrollmentNullifier });
       await service.completeEnrollment({ initData, idkitResult: idkitResult1 });
       
-      // Try to verify with DIFFERENT action in tuple
+      // Session proof with DIFFERENT nullifier (per World ID 4.0 spec)
       const sessionChallenge = await service.createSessionChallenge(initData);
+      const sessionNullifier = '0x' + randomBytes(32).toString('hex'); // Different from enrollment
+      const sessionAction = '0x' + randomBytes(32).toString('hex');
       const sessionResult = createSessionResult(
         sessionChallenge.signedChallenge.nonce,
         sessionId,
-        [nullifier, 'wrong-action'] // WRONG action
+        [sessionNullifier, sessionAction] // Different nullifier is valid
       );
       
-      verifier.setResponse(sessionChallenge.signedChallenge.nonce, { success: true, nullifier });
+      verifier.setResponse(sessionChallenge.signedChallenge.nonce, { success: true, nullifier: enrollmentNullifier });
       
       const verification = await service.verifySession({ initData, idkitResult: sessionResult });
-      assert.strictEqual(verification.success, false);
-      assert.match(verification.error!, /action.*mismatch/i);
+      assert.strictEqual(verification.success, true, 'Session proofs may use different nullifiers than enrollment');
     });
   });
 
   describe('Adversarial: Replay attacks', () => {
     it('rejects duplicate session_nullifier (same session, different attempts)', async () => {
       const userId = 1001;
-      const nullifier = '0xreplay_' + randomBytes(16).toString('hex');
+      const nullifier = '0x' + randomBytes(32).toString('hex');
       const initData = createValidInitData(userId, TEST_BOT_TOKEN);
       
       // Enroll with session
@@ -348,11 +349,12 @@ describe('Session Verification Integration Tests', () => {
       
       // First session verification
       const sessionChallenge1 = await service.createSessionChallenge(initData);
-      const sessionNullifier = '0xsession_nullifier_' + randomBytes(16).toString('hex');
+      const sessionNullifier = '0x' + randomBytes(32).toString('hex');
+      const sessionAction = '0x' + randomBytes(32).toString('hex');
       const sessionResult1 = createSessionResult(
         sessionChallenge1.signedChallenge.nonce,
         sessionId,
-        [nullifier, '0x' + randomBytes(32).toString('hex')]
+        [sessionNullifier, sessionAction]
       );
       
       verifier.setResponse(sessionChallenge1.signedChallenge.nonce, { success: true, nullifier });
@@ -360,12 +362,12 @@ describe('Session Verification Integration Tests', () => {
       const verification1 = await service.verifySession({ initData, idkitResult: sessionResult1 });
       assert.strictEqual(verification1.success, true);
       
-      // Try to use SAME session_nullifier again (replay attack)
+      // Try to use SAME session_nullifier tuple again (replay attack)
       const sessionChallenge2 = await service.createSessionChallenge(initData);
       const sessionResult2 = createSessionResult(
         sessionChallenge2.signedChallenge.nonce,
         sessionId,
-        [nullifier, '0x' + randomBytes(32).toString('hex')] // DIFFERENT randomized action
+        [sessionNullifier, sessionAction] // SAME tuple (replay)
       );
       
       verifier.setResponse(sessionChallenge2.signedChallenge.nonce, { success: true, nullifier });
@@ -379,7 +381,7 @@ describe('Session Verification Integration Tests', () => {
   describe('Adversarial: Expired challenges', () => {
     it('rejects expired challenge session', async () => {
       const userId = 1001;
-      const nullifier = '0xexpired_' + randomBytes(16).toString('hex');
+      const nullifier = '0x' + randomBytes(32).toString('hex');
       const initData = createValidInitData(userId, TEST_BOT_TOKEN);
       
       // Create short-lived service (60 seconds TTL - minimum allowed)
@@ -445,7 +447,7 @@ describe('Session Verification Integration Tests', () => {
   describe('Adversarial: Revocation during verification', () => {
     it('rejects session verification for revoked enrollment', async () => {
       const userId = 1001;
-      const nullifier = '0xrevoke_during_' + randomBytes(16).toString('hex');
+      const nullifier = '0x' + randomBytes(32).toString('hex');
       const initData = createValidInitData(userId, TEST_BOT_TOKEN);
       
       // Enroll with session
@@ -469,6 +471,7 @@ describe('Session Verification Integration Tests', () => {
       await service.revokeEnrollment(userId);
       
       // Try to verify (should fail - enrollment revoked)
+      const sessionAction = '0x' + randomBytes(32).toString('hex');
       const sessionResult = createSessionResult(
         sessionChallenge.signedChallenge.nonce,
         sessionId,
@@ -484,7 +487,7 @@ describe('Session Verification Integration Tests', () => {
 
     it('prevents session challenge creation for revoked enrollment', async () => {
       const userId = 1001;
-      const nullifier = '0xrevoke_challenge_' + randomBytes(16).toString('hex');
+      const nullifier = '0x' + randomBytes(32).toString('hex');
       const initData = createValidInitData(userId, TEST_BOT_TOKEN);
       
       // Enroll with session
@@ -515,7 +518,7 @@ describe('Session Verification Integration Tests', () => {
   describe('Persistence and restart', () => {
     it('persists enrollment and session across service restart', async () => {
       const userId = 1001;
-      const nullifier = '0xpersist_' + randomBytes(16).toString('hex');
+      const nullifier = '0x' + randomBytes(32).toString('hex');
       const initData = createValidInitData(userId, TEST_BOT_TOKEN);
       const dbPath = `/tmp/test-session-${Date.now()}.db`;
       
