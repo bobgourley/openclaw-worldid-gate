@@ -15,20 +15,35 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { EnrollmentService } from './enrollment-service-production.js';
-import { FrozenClock } from './clock.js';
+import { FakeClock } from './clock.js';
 import type { VerifySessionRequest } from './types.js';
 
 describe('Session Proof Contract (World ID 4.0 Specs)', () => {
   it('accepts session proof with different nullifier than enrollment (per spec)', async () => {
-    const db = new Database(':memory:');
-    const clock = new FrozenClock(Date.now());
+    const testDbPath = `/tmp/session-proof-test-${Date.now()}.db`;
+    const clock = new FakeClock();
+    const adapter = {
+      createChallenge: async () => ({
+        nonce: 'test-nonce',
+        signalHash: 'test-signal',
+      }),
+    } as any;
+    const verifier = {
+      verify: async () => ({
+        success: true,
+        nullifier: '0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        issuerSchemaId: 1,
+        expiresAtMin: clock.nowSeconds() + 86400,
+      }),
+    } as any;
     
     const service = new EnrollmentService({
-      db,
+      dbPath: testDbPath,
+      challengeAdapter: adapter,
+      verificationClient: verifier,
+      telegramBotToken: '123456:ABC-DEF',
       action: 'test-action',
-      appId: 'app_test',
       clock,
-      requireProofOfHuman: true,
     });
 
     // Create enrollment with enrollment nullifier
@@ -99,7 +114,7 @@ describe('Session Proof Contract (World ID 4.0 Specs)', () => {
 
   it('accepts session proof with randomized action (per spec)', async () => {
     const db = new Database(':memory:');
-    const clock = new FrozenClock(Date.now());
+    const clock = new FakeClock();
     
     const service = new EnrollmentService({
       db,
@@ -177,7 +192,7 @@ describe('Session Proof Contract (World ID 4.0 Specs)', () => {
 
   it('rejects replayed session nullifier tuple', async () => {
     const db = new Database(':memory:');
-    const clock = new FrozenClock(Date.now());
+    const clock = new FakeClock();
     
     const service = new EnrollmentService({
       db,
