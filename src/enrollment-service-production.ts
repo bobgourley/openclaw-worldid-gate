@@ -143,6 +143,7 @@ export interface CompleteEnrollmentResult {
   expiresAt?: number;
   sessionId?: string;
   protocolVersion?: string;
+  wasReactivated?: boolean;
   error?: string;
 }
 
@@ -831,6 +832,35 @@ export class EnrollmentService {
     }
 
     const authenticatedUser = initDataValidation.user;
+
+    // ROUTE: Detect session proof (renewal/reactivation) vs uniqueness proof (new enrollment)
+    // Session proofs have session_id but no action; uniqueness proofs have action but no/create session_id
+    const hasSessionId = 'session_id' in request.idkitResult && request.idkitResult.session_id;
+    const isCreateSession = hasSessionId && (request.idkitResult as any).session_id === 'create';
+    const isSessionProof = hasSessionId && !isCreateSession && !('action' in request.idkitResult);
+    
+    if (isSessionProof) {
+      // Route to session verification (renewal/reactivation)
+      const sessionResult = await this.verifySession({
+        initData: request.initData,
+        idkitResult: request.idkitResult as any, // Cast to IDKitResultSession
+      });
+      
+      if (sessionResult.success) {
+        return {
+          success: true,
+          expiresAt: sessionResult.expiresAt,
+          wasReactivated: sessionResult.wasReactivated,
+        };
+      } else {
+        return {
+          success: false,
+          error: sessionResult.error || 'Session verification failed',
+        };
+      }
+    }
+
+    // Continue with uniqueness proof flow (new enrollment)
 
     // Step 2: Peek challenge session (read-only, do not consume yet)
     const peekStmt = this.db.prepare(`

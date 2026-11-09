@@ -386,7 +386,6 @@ export class TelegramBotHandler {
       '*Commands:*\n' +
       '/verify - Start World ID verification\n' +
       '/status - Check your verification status\n' +
-      '/revoke - Remove your verification (allows reverification)\n' +
       '/help - Show this help message\n\n' +
       '*Privacy:* Only a zero-knowledge proof is verified. No biometric data is collected or shared.';
 
@@ -405,14 +404,18 @@ export class TelegramBotHandler {
       const existing = await this.enrollmentService.findEnrollment(userId);
       let challengeMode: 'renewal' | 'reactivation' | undefined;
       
-      if (existing && !existing.revoked && !existing.expired) {
-        // Early renewal: offer renewal via proveSession to extend expiry
-        challengeMode = 'renewal';
-      } else if (existing && existing.revoked) {
-        // Reactivation: explicitly marked as revoked
-        challengeMode = 'reactivation';
+      // CRITICAL: Any user with a stored session_id MUST use proveSession (renewal or reactivation)
+      // Never fall through to createChallenge (uniqueness proof), which would cause nullifier_replayed
+      if (existing && existing.sessionId) {
+        if (existing.revoked) {
+          // Revoked user with session: reactivation
+          challengeMode = 'reactivation';
+        } else {
+          // Active or expired user with session: renewal (extends expiry)
+          challengeMode = 'renewal';
+        }
       }
-      // Otherwise: new enrollment (challengeMode undefined)
+      // Otherwise: new enrollment (no existing enrollment or no sessionId)
 
       // Create Mini App initData for authenticated session
       // Note: In production, this would come from Telegram Mini App context
