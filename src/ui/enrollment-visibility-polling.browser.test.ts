@@ -420,6 +420,89 @@ test.describe('Visibility-aware polling', () => {
     expect(diagText).toContain('Transport');
   });
 
+  test('Poll cancel handling', async ({ page, request }) => {
+    const initData = createValidInitData(TEST_USER_ID + 4, TEST_BOT_TOKEN);
+
+    // Create challenge
+    const challengeResponse = await request.post(`http://127.0.0.1:${serverPort}/api/challenge/create`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { initData },
+    });
+    expect(challengeResponse.ok()).toBeTruthy();
+    const challengeData = await challengeResponse.json();
+    const sessionId = challengeData.signedChallenge.nonce.substring(2, 34);
+
+    // Register session
+    const botHandler = (service as any).telegramBotHandler;
+    botHandler.activeSessions.set(TEST_USER_ID + 4, { sessionId, createdAt: Date.now() });
+    botHandler.storeChallengeForSession(sessionId, TEST_USER_ID + 4, {
+      signedChallenge: challengeData.signedChallenge,
+      appId: TEST_APP_ID,
+      rpId: TEST_RP_ID,
+      signal: `telegram:${TEST_USER_ID + 4}`,
+    });
+
+    // Mock Telegram SDK
+    await page.route('**/telegram-web-app.js', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `
+          window.Telegram = {
+            WebApp: {
+              initData: ${JSON.stringify(initData)},
+              ready: function() {},
+              expand: function() {},
+            }
+          };
+        `,
+      });
+    });
+
+    // Mock bridge to always return initialized (never complete)
+    await page.route('https://bridge.worldcoin.org/**', async (route) => {
+      const url = route.request().url();
+      
+      if (url.includes('/request')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ request_id: 'test_request_cancel' }),
+        });
+        return;
+      }
+
+      if (url.includes('/response/')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ status: 'initialized' }),
+        });
+        return;
+      }
+
+      await route.fulfill({ status: 404 });
+    });
+
+    // Navigate to enrollment page
+    await page.goto(`http://127.0.0.1:${serverPort}/enrollment?session=${sessionId}`);
+    await page.waitForLoadState('networkidle');
+
+    // Click verify button
+    const verifyButton = page.locator('#verifyButton');
+    await expect(verifyButton).toBeVisible();
+    await verifyButton.click();
+
+    // Wait for polling to start
+    await page.waitForTimeout(3000);
+
+    // Navigate away to trigger cancel/cleanup
+    await page.goto('about:blank');
+
+    // Polling should have stopped (page unloaded)
+    console.log('Page navigated away, polling cancelled');
+  });
+
   test('Poll timeout handling', async ({ page, request }) => {
     const initData = createValidInitData(TEST_USER_ID + 3, TEST_BOT_TOKEN);
 

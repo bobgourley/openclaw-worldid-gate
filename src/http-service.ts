@@ -643,32 +643,120 @@ export class HttpService {
    * - Proof payloads or any credential data
    * - Request IDs from bridge
    * 
-   * Only aggregated, privacy-safe metrics are allowed.
+   * Only aggregated, privacy-safe metrics from allowlisted schema are logged.
    */
   private async handleClientDiagnostics(req: Request, res: Response): Promise<void> {
-    // Validate request body
+    // Validate request body exists and is object
     if (!req.body || typeof req.body !== 'object') {
-      res.status(400).json({ error: 'Invalid request body' });
+      res.status(204).end();
       return;
     }
 
-    // Extract privacy-safe fields only
-    const safeData = {
-      event: typeof req.body.event === 'string' ? req.body.event : 'unknown',
-      pollCount: typeof req.body.pollCount === 'number' ? req.body.pollCount : 0,
-      visibilityChanges: typeof req.body.visibilityChanges === 'number' ? req.body.visibilityChanges : 0,
-      durationMs: typeof req.body.durationMs === 'number' ? req.body.durationMs : 0,
-      finalStatus: typeof req.body.finalStatus === 'string' ? req.body.finalStatus : 'unknown',
-      errorCode: typeof req.body.errorCode === 'string' ? req.body.errorCode : null,
-      lastStatusClass: typeof req.body.lastStatusClass === 'string' ? req.body.lastStatusClass : null,
-      timestamp: typeof req.body.timestamp === 'number' ? req.body.timestamp : Date.now(),
-    };
+    // Allowlisted event types
+    const ALLOWED_EVENTS = ['poll_complete', 'poll_cancel'];
+    
+    // Allowlisted error codes (IDKit error codes only, no free text)
+    const ALLOWED_ERROR_CODES = [
+      'timeout', 'cancelled', 'connection_failed', 'unexpected_response',
+      'user_rejected', 'verification_rejected', 'credential_unavailable',
+      'world_id_4_not_available', 'rp_signature_expired', 'nullifier_replayed',
+      'invalid_rp_signature', 'max_verifications_reached', null
+    ];
+    
+    // Allowlisted status classes
+    const ALLOWED_STATUS_CLASSES = ['success', 'failure', 'awaiting', 'failed', 'network_error', null];
 
-    // Log privacy-safe diagnostics (console only, no persistent storage in this implementation)
+    // Extract and validate event
+    const event = typeof req.body.event === 'string' && ALLOWED_EVENTS.includes(req.body.event)
+      ? req.body.event
+      : null;
+    
+    if (!event) {
+      // Invalid event type - drop silently
+      res.status(204).end();
+      return;
+    }
+
+    // Extract and validate pollCount (0-1000 range)
+    let pollCount = 0;
+    if (typeof req.body.pollCount === 'number' && Number.isFinite(req.body.pollCount)) {
+      pollCount = Math.max(0, Math.min(1000, Math.floor(req.body.pollCount)));
+    }
+
+    // Extract and validate visibilityChanges (0-100 range)
+    let visibilityChanges = 0;
+    if (typeof req.body.visibilityChanges === 'number' && Number.isFinite(req.body.visibilityChanges)) {
+      visibilityChanges = Math.max(0, Math.min(100, Math.floor(req.body.visibilityChanges)));
+    }
+
+    // Extract and validate durationMs (0-600000 range, max 10 minutes)
+    let durationMs = 0;
+    if (typeof req.body.durationMs === 'number' && Number.isFinite(req.body.durationMs)) {
+      durationMs = Math.max(0, Math.min(600000, Math.floor(req.body.durationMs)));
+    }
+
+    // Extract and validate finalStatus
+    const finalStatus = typeof req.body.finalStatus === 'string' && ALLOWED_STATUS_CLASSES.includes(req.body.finalStatus)
+      ? req.body.finalStatus
+      : null;
+
+    // Extract and validate errorCode
+    const errorCode = typeof req.body.errorCode === 'string' && ALLOWED_ERROR_CODES.includes(req.body.errorCode)
+      ? req.body.errorCode
+      : null;
+
+    // Extract and validate lastStatusClass
+    const lastStatusClass = typeof req.body.lastStatusClass === 'string' && ALLOWED_STATUS_CLASSES.includes(req.body.lastStatusClass)
+      ? req.body.lastStatusClass
+      : null;
+
+    // Extract and validate timestamp (within last 24 hours)
+    const now = Date.now();
+    let timestamp = now;
+    if (typeof req.body.timestamp === 'number' && Number.isFinite(req.body.timestamp)) {
+      const age = now - req.body.timestamp;
+      if (age >= 0 && age <= 86400000) { // Within last 24 hours
+        timestamp = Math.floor(req.body.timestamp);
+      }
+    }
+
+    // Construct privacy-safe diagnostic entry (only allowlisted fields, no unknown fields)
+    const safeData: Record<string, any> = {
+      event,
+      pollCount,
+      visibilityChanges,
+      durationMs,
+    };
+    
+    if (finalStatus) safeData.finalStatus = finalStatus;
+    if (errorCode) safeData.errorCode = errorCode;
+    if (lastStatusClass) safeData.lastStatusClass = lastStatusClass;
+    safeData.timestamp = timestamp;
+
+    // SECURITY: Scan for sensitive patterns that should never appear
+    // If found, log warning and drop the entire event
+    const dataStr = JSON.stringify(safeData);
+    const sensitivePatterns = [
+      /0x[0-9a-f]{64}/i, // Nullifier pattern
+      /session_[0-9a-f]{128}/i, // Session ID pattern
+      /telegram:\d+/i, // Signal pattern
+      /"signature":/i, // Signature field
+      /"nonce":/i, // Nonce field
+    ];
+    
+    for (const pattern of sensitivePatterns) {
+      if (pattern.test(dataStr)) {
+        console.error('[Client Diagnostics] SECURITY: Sensitive pattern detected, dropping event');
+        res.status(204).end();
+        return;
+      }
+    }
+
+    // Log privacy-safe diagnostics (console only, no persistent storage)
     console.log('[Client Diagnostics]', JSON.stringify(safeData));
 
-    // Respond with success
-    res.json({ success: true });
+    // Return 204 No Content (never echo input back)
+    res.status(204).end();
   }
 
   /**

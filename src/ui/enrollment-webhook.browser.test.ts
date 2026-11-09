@@ -536,11 +536,22 @@ test.describe('Full webhook enrollment workflow', () => {
                 const requestObj = {
                   connector: connector,
                   connectorURI: connector.uri,
+                  pollOnce: async function() {
+                    const pollResult = await connector.poll();
+                    return pollResult;
+                  },
                   pollUntilCompletion: async function() {
                     const pollResult = await connector.poll();
                     return pollResult.type === 'confirmed' 
                       ? { success: true, result: pollResult.result }
                       : { success: false, error: 'Verification failed' };
+                  },
+                  getDebugReport: function() {
+                    return {
+                      transport: 'bridge',
+                      package_version: '4.6.0',
+                      request_payload: {}
+                    };
                   }
                 };
                 const thenable = {
@@ -690,11 +701,22 @@ test.describe('Full webhook enrollment workflow', () => {
                 const requestObj = {
                   connector: connector,
                   connectorURI: connector.uri,
+                  pollOnce: async function() {
+                    const pollResult = await connector.poll();
+                    return pollResult;
+                  },
                   pollUntilCompletion: async function() {
                     const pollResult = await connector.poll();
                     return pollResult.type === 'confirmed' 
                       ? { success: true, result: pollResult.result }
                       : { success: false, error: 'Verification failed' };
+                  },
+                  getDebugReport: function() {
+                    return {
+                      transport: 'bridge',
+                      package_version: '4.6.0',
+                      request_payload: {}
+                    };
                   }
                 };
                 const thenable = {
@@ -871,11 +893,22 @@ test.describe('Full webhook enrollment workflow', () => {
                 const requestObj = {
                   connector: connector,
                   connectorURI: connector.uri,
+                  pollOnce: async function() {
+                    const pollResult = await connector.poll();
+                    return pollResult;
+                  },
                   pollUntilCompletion: async function() {
                     const pollResult = await connector.poll();
                     return pollResult.type === 'confirmed' 
                       ? { success: true, result: pollResult.result }
                       : { success: false, error: 'Verification failed' };
+                  },
+                  getDebugReport: function() {
+                    return {
+                      transport: 'bridge',
+                      package_version: '4.6.0',
+                      request_payload: {}
+                    };
                   }
                 };
                 const thenable = {

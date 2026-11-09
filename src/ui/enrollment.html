@@ -877,7 +877,16 @@
           try {
             pollResult = await request.pollOnce();
           } catch (error) {
-            // Treat thrown errors as retryable (network errors, etc.)
+            // Check if error indicates permanent failure (decryption, unexpected response)
+            const errorStr = String(error);
+            if (errorStr.includes('unexpected_response') || errorStr.includes('decrypt')) {
+              // Permanent failure - stop polling
+              diagnostics.errorCode = 'unexpected_response';
+              diagnostics.lastStatusClass = 'failed';
+              result = { success: false, error: 'unexpected_response' };
+              break;
+            }
+            // Treat other thrown errors as retryable (network errors, etc.)
             console.warn('[Poll] Error during pollOnce, will retry:', error);
             diagnostics.lastStatusClass = 'network_error';
             await new Promise(resolve => setTimeout(resolve, pollInterval));
