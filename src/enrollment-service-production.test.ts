@@ -508,7 +508,7 @@ describe('EnrollmentService Production', () => {
     it('prevents cross-account nullifier theft (ownership protection)', async () => {
       const userId1 = 12345;
       const userId2 = 67890;
-      const sharedNullifier = '77777777777777777777';
+      const sharedNullifier = '0x7777777777777777777777777777777777777777777777777777777777777777';
 
       // First account enrolls
       const initData1 = createValidInitData(userId1, TEST_BOT_TOKEN);
