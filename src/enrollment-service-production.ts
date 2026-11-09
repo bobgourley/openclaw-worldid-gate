@@ -1570,7 +1570,7 @@ export class EnrollmentService {
       `).run(
         sessionNullifier,
         sessionAction,
-        enrollment.session_id,
+        enrollment.sessionId,
         authenticatedUserId,
         enrollment.nullifier, // Enrollment nullifier (for reference only, NOT compared to session nullifier)
         txNow,
