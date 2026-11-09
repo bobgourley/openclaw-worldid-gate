@@ -318,6 +318,7 @@ export WORLDID_ACTION=openclaw-admission     # Action identifier
 
 # Telegram Configuration (from @BotFather)
 export TELEGRAM_BOT_TOKEN=123456:ABC-DEF     # Bot token
+export TELEGRAM_BOT_USERNAME=YourBotName     # Bot username (without @, for group command filtering)
 export TELEGRAM_WEBHOOK_SECRET=random_secret # Webhook validation secret
 
 # Service Configuration
@@ -470,7 +471,17 @@ MEMBER_TAG_SWEEP_INTERVAL_HOURS=24
 
 **MEMBER_TAG_SWEEP_INTERVAL_HOURS**: How often to run the reconciliation sweep. Valid range: 1-168 hours. Default: 24 hours. The sweep runs once at startup and then periodically at this interval.
 
-**Note**: OPENCLAW_ALLOWED_GROUP must be set when member tags are enabled. This is the chat where tags will be applied.
+**Note**: OPENCLAW_ALLOWED_GROUP must be set when member tags are enabled.
+
+**MEMBER_TAG_GROUPS**: Comma-separated list of negative integers representing Telegram group/supergroup chat IDs where member tags should be applied. If not set, defaults to OPENCLAW_ALLOWED_GROUP. The list must include OPENCLAW_ALLOWED_GROUP if specified. No duplicates or empty entries allowed. Examples:
+- Single group (default): Omit MEMBER_TAG_GROUPS (uses OPENCLAW_ALLOWED_GROUP)
+- Multiple groups: `MEMBER_TAG_GROUPS="-1001234567890,-1009876543210,-1001111111111"`
+
+Format rules:
+- All entries must be negative integers (Telegram groups have negative IDs)
+- No empty entries (`,, ` is invalid)
+- No duplicates
+- Must include OPENCLAW_ALLOWED_GROUP value if both are set
 
 **Member Tags Behavior:**
 
@@ -617,6 +628,7 @@ The launcher must pass through these new environment variables:
 - `MEMBER_TAGS_ENABLED` (set to `true` to enable, default `false`)
 - `MEMBER_TAG_TEXT` (text to display on tags, default `Human Verified`, max 16 chars, no emoji)
 - `MEMBER_TAG_SWEEP_INTERVAL_HOURS` (reconciliation interval, 1-168 hours, default 24)
+- `MEMBER_TAG_GROUPS` (comma-separated list of negative integers for multi-group tagging, defaults to OPENCLAW_ALLOWED_GROUP if unset)
 
 **Socket and secret paths must use Finn's home directory** (`/Users/finn/`) not `/etc` or `/var/run`, since both the gate service and main OpenClaw gateway run as user `finn`.
 

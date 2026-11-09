@@ -47,6 +47,19 @@ export interface TelegramBotTransport {
    * @param options - Additional options (parse_mode, reply_markup, etc.)
    */
   sendMessage(chatId: number, text: string, options?: any): Promise<void>;
+  
+  /**
+   * Set bot commands for a scope (optional, for command menu registration).
+   * @param commands - Array of command objects {command, description}
+   * @param scope - Scope object (e.g., {type: 'all_private_chats'})
+   */
+  setMyCommands?(commands: Array<{command: string; description: string}>, scope?: any): Promise<void>;
+  
+  /**
+   * Delete bot commands for a scope (optional, for command menu cleanup).
+   * @param scope - Scope object (e.g., {type: 'default'})
+   */
+  deleteMyCommands?(scope?: any): Promise<void>;
 }
 
 /**
@@ -55,6 +68,9 @@ export interface TelegramBotTransport {
 export interface TelegramBotHandlerConfig {
   /** Bot token for authentication */
   botToken: string;
+  
+  /** Bot username (optional, for group command filtering) */
+  botUsername?: string;
   
   /** Enrollment service */
   enrollmentService: EnrollmentService;
@@ -73,6 +89,9 @@ export interface TelegramBotHandlerConfig {
   
   /** Allowed group ID for OpenClaw dispatch (required if openclawConfig set) */
   allowedGroupId?: number;
+  
+  /** Known group IDs (tag groups + allowed group) for silent operation */
+  knownGroupIds?: number[];
 }
 
 /**
@@ -80,12 +99,14 @@ export interface TelegramBotHandlerConfig {
  */
 export class TelegramBotHandler {
   private readonly botToken: string;
+  private readonly botUsername: string;
   private readonly enrollmentService: EnrollmentService;
   private readonly transport: TelegramBotTransport;
   private readonly enrollmentBaseUrl: string;
   private readonly webhookSecret?: string;
   private readonly openclawConfig?: OpenClawDispatchConfig;
   private readonly allowedGroupId?: number;
+  private readonly knownGroupIds: Set<number>;
   private readonly activeSessions: Map<number, { sessionId: string; createdAt: number }> = new Map();
   private readonly recentDeliveries: Map<string, number> = new Map();
 
@@ -104,12 +125,14 @@ export class TelegramBotHandler {
     }
 
     this.botToken = config.botToken;
+    this.botUsername = config.botUsername || '';
     this.enrollmentService = config.enrollmentService;
     this.transport = config.transport;
     this.enrollmentBaseUrl = config.enrollmentBaseUrl;
     this.webhookSecret = config.webhookSecret;
     this.openclawConfig = config.openclawConfig;
     this.allowedGroupId = config.allowedGroupId;
+    this.knownGroupIds = new Set(config.knownGroupIds || []);
     
     // Validate OpenClaw config if provided
     if (this.openclawConfig) {
@@ -129,6 +152,91 @@ export class TelegramBotHandler {
         throw new Error('Allowed group ID must be negative integer (Telegram group format)');
       }
     }
+  }
+
+  /**
+   * Register bot commands for private chats only (make bot invisible in groups).
+   * 
+   * Commands are registered with all_private_chats scope and deleted from
+   * default, all_group_chats, and all_chat_administrators scopes.
+   * 
+   * This is idempotent, best-effort, and logs without sensitive data.
+   */
+  async registerCommandMenu(): Promise<void> {
+    const commands = [
+      { command: 'verify', description: 'Verify your World ID' },
+      { command: 'status', description: 'Check verification status' },
+      { command: 'help', description: 'Show help information' },
+    ];
+
+    try {
+      // Register commands for private chats only
+      if (this.transport.setMyCommands) {
+        await this.transport.setMyCommands(commands, { type: 'all_private_chats' });
+        console.log('[CommandMenu] Registered commands for private chats');
+      }
+    } catch (error) {
+      console.error('[CommandMenu] Failed to register commands for private chats');
+    }
+
+    // Delete commands from group scopes (best-effort, no ids logged)
+    const scopesToClear = [
+      { type: 'default' },
+      { type: 'all_group_chats' },
+      { type: 'all_chat_administrators' },
+    ];
+
+    for (const scope of scopesToClear) {
+      try {
+        if (this.transport.deleteMyCommands) {
+          await this.transport.deleteMyCommands(scope);
+          console.log(`[CommandMenu] Cleared commands for scope: ${scope.type}`);
+        }
+      } catch (error) {
+        console.error(`[CommandMenu] Failed to clear commands for scope: ${scope.type}`);
+      }
+    }
+  }
+
+  /**
+   * Check if a message text is a bot command explicitly addressed to this bot.
+   * 
+   * Examples:
+   * - /verify@MyBot -> true (if botUsername is MyBot)
+   * - /start@MyBot -> true
+   * - /verify -> false (unaddressed)
+   * - /verify@OtherBot -> false (addressed to different bot)
+   * - plain text -> false
+   * 
+   * @param text - Message text
+   * @returns True if this is a command addressed to this bot
+   */
+  private isCommandAddressedToBot(text: string): boolean {
+    if (!text || !text.startsWith('/')) {
+      return false;
+    }
+    
+    // If no bot username configured, cannot detect addressed commands
+    if (!this.botUsername) {
+      return false;
+    }
+    
+    // Extract command with possible @username
+    const firstSpace = text.indexOf(' ');
+    const command = firstSpace === -1 ? text : text.substring(0, firstSpace);
+    
+    // Check if command has @username
+    const atIndex = command.indexOf('@');
+    if (atIndex === -1) {
+      // Unaddressed command in group
+      return false;
+    }
+    
+    // Extract username from command
+    const username = command.substring(atIndex + 1);
+    
+    // Check if it matches this bot's username (case-insensitive)
+    return username.toLowerCase() === this.botUsername.toLowerCase();
   }
 
   /**
@@ -187,23 +295,18 @@ export class TelegramBotHandler {
       return;
     }
 
-    // Handle group messages only if OpenClaw enabled and allowed
+    // Handle group messages (COMPLETELY SILENT)
+    // Per Bob's requirement: bot sends NO messages at all in any group
+    // for any update, making it effectively invisible in groups.
+    // The bot only does silent background work (member tag application).
     if (message.chat.type !== 'private') {
-      const text = message.text?.trim() || '';
-      
-      if (this.openclawConfig && message.chat.id === this.allowedGroupId) {
-        // OpenClaw dispatch in allowed group
-        if (text.startsWith('/ask ')) {
-          await this.handleOpenClawCommand(message.from.id, message.chat.id, text.slice(5).trim(), update.update_id);
-        }
-        // Silently ignore other messages in group
-      } else {
-        // Send error to unauthorized group/channel
-        await this.transport.sendMessage(
-          message.chat.id,
-          '⚠️ World ID verification is only available in private chat with the bot. Please message me directly.'
-        ).catch(err => console.error('Failed to send group error:', err));
-      }
+      // Stay completely silent in all groups for all updates:
+      // - Plain messages
+      // - Mentions of any bot
+      // - Replies to other users
+      // - Unaddressed commands (including /ask, /verify, /start, etc.)
+      // - Addressed commands (including /verify@ThisBot, /start@ThisBot, etc.)
+      // Bot only does silent tag work in groups, no user-visible interaction
       return;
     }
 
@@ -669,6 +772,45 @@ export class TelegramHttpTransport implements TelegramBotTransport {
         chat_id: chatId,
         text,
         ...options,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text().catch(() => 'Unknown error');
+      throw new Error(`Telegram API error: ${response.status} ${error}`);
+    }
+  }
+
+  async setMyCommands(commands: Array<{command: string; description: string}>, scope?: any): Promise<void> {
+    const url = `https://api.telegram.org/bot${this.botToken}/setMyCommands`;
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        commands,
+        scope,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text().catch(() => 'Unknown error');
+      throw new Error(`Telegram API error: ${response.status} ${error}`);
+    }
+  }
+
+  async deleteMyCommands(scope?: any): Promise<void> {
+    const url = `https://api.telegram.org/bot${this.botToken}/deleteMyCommands`;
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        scope,
       }),
     });
 

@@ -229,7 +229,7 @@ describe('OpenClaw Integration', () => {
   });
 
   describe('Group filtering', () => {
-    test('ignores messages in unauthorized group', async () => {
+    test('stays silent on /ask in unauthorized group', async () => {
       const update = {
         update_id: 4,
         message: {
@@ -254,12 +254,11 @@ describe('OpenClaw Integration', () => {
       assert.strictEqual(response.status, 200);
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      // Should send error message
-      assert.strictEqual(mockTransport.sentMessages.length, 1);
-      assert.ok(mockTransport.sentMessages[0].text.includes('private chat'));
+      // Bot must stay completely silent in groups (per Bob's requirement)
+      assert.strictEqual(mockTransport.sentMessages.length, 0);
     });
 
-    test('processes messages in allowed group', async () => {
+    test('stays silent on /ask even in allowed group', async () => {
       // First, enroll the user
       await enrollmentService.directEnroll({
         telegramUserId: 12345,
@@ -293,10 +292,8 @@ describe('OpenClaw Integration', () => {
       // Wait for async processing
       await new Promise(resolve => setTimeout(resolve, 200));
       
-      // Should dispatch and respond
-      assert.strictEqual(mockTransport.sentMessages.length, 1);
-      assert.strictEqual(mockTransport.sentMessages[0].chatId, -1001234567890);
-      assert.strictEqual(mockTransport.sentMessages[0].text, 'Hello from OpenClaw');
+      // Bot must stay completely silent in groups (per Bob's requirement)
+      assert.strictEqual(mockTransport.sentMessages.length, 0);
     });
   });
 
@@ -355,8 +352,8 @@ describe('OpenClaw Integration', () => {
       assert.strictEqual(response.status, 200);
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      assert.strictEqual(mockTransport.sentMessages.length, 1);
-      assert.ok(mockTransport.sentMessages[0].text.includes('verification required'));
+      // Bot must stay completely silent in groups (per Bob's requirement)
+      assert.strictEqual(mockTransport.sentMessages.length, 0);
     });
 
     test('rejects revoked enrollment', async () => {
@@ -392,8 +389,8 @@ describe('OpenClaw Integration', () => {
       assert.strictEqual(response.status, 200);
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      assert.strictEqual(mockTransport.sentMessages.length, 1);
-      assert.ok(mockTransport.sentMessages[0].text.includes('revoked'));
+      // Bot must stay completely silent in groups (per Bob's requirement)
+      assert.strictEqual(mockTransport.sentMessages.length, 0);
     });
 
     test('accepts valid enrollment', async () => {
@@ -428,9 +425,7 @@ describe('OpenClaw Integration', () => {
       assert.strictEqual(response.status, 200);
       await new Promise(resolve => setTimeout(resolve, 200));
       
-      assert.strictEqual(mockTransport.sentMessages.length, 1);
-      assert.strictEqual(mockTransport.sentMessages[0].chatId, -1001234567890);
-      assert.strictEqual(mockTransport.sentMessages[0].text, 'Hello from OpenClaw');
+      assert.strictEqual(mockTransport.sentMessages.length, 0); // Bot stays silent in groups
     });
   });
 
@@ -466,7 +461,7 @@ describe('OpenClaw Integration', () => {
       });
 
       await new Promise(resolve => setTimeout(resolve, 200));
-      assert.strictEqual(mockTransport.sentMessages.length, 1);
+      assert.strictEqual(mockTransport.sentMessages.length, 0); // Bot stays silent in groups
 
       // Second request with same update_id
       mockTransport.reset();
@@ -591,14 +586,13 @@ exit 0
         // Wait for async processing
         await new Promise(resolve => setTimeout(resolve, 300));
 
-        // Read counter file
+        // Bot must stay completely silent in groups (per Bob's requirement)
+        // No CLI invocation, no messages
+        assert.strictEqual(mockTransport.sentMessages.length, 0);
+        
+        // Verify CLI was NOT invoked (bot is silent in groups)
         const finalCount = parseInt(await fs.readFile(counterFile, 'utf8'), 10);
-
-        // Assert CLI was invoked exactly once despite concurrent requests
-        assert.strictEqual(finalCount, 1, 'CLI should be invoked exactly once for concurrent duplicate requests');
-
-        // Should have exactly one response
-        assert.strictEqual(mockTransport.sentMessages.length, 1);
+        assert.strictEqual(finalCount, 0, 'CLI should not be invoked in groups');
 
       } finally {
         await new Promise<void>((resolve) => counterServer.close(() => resolve()));
@@ -648,8 +642,7 @@ exit 0
       await missingBotHandler.handleUpdate(update);
       await new Promise(resolve => setTimeout(resolve, 200));
 
-      assert.strictEqual(mockTransport.sentMessages.length, 1);
-      assert.ok(mockTransport.sentMessages[0].text.includes('failed'));
+      assert.strictEqual(mockTransport.sentMessages.length, 0); // Bot stays silent in groups
     });
 
     test('handles CLI timeout', async () => {
@@ -700,8 +693,7 @@ exit 0
       await slowBotHandler.handleUpdate(update);
       await new Promise(resolve => setTimeout(resolve, 2000));
 
-      assert.strictEqual(mockTransport.sentMessages.length, 1);
-      assert.ok(mockTransport.sentMessages[0].text.includes('timed out'));
+      assert.strictEqual(mockTransport.sentMessages.length, 0); // Bot stays silent in groups
 
       await unlink(slowCliPath).catch(() => {});
     });
@@ -753,8 +745,7 @@ exit 0
       await errorBotHandler.handleUpdate(update);
       await new Promise(resolve => setTimeout(resolve, 200));
 
-      assert.strictEqual(mockTransport.sentMessages.length, 1);
-      assert.ok(mockTransport.sentMessages[0].text.includes('failed'));
+      assert.strictEqual(mockTransport.sentMessages.length, 0); // Bot stays silent in groups
 
       await unlink(errorCliPath).catch(() => {});
     });
@@ -806,8 +797,7 @@ exit 0
       await invalidJsonBotHandler.handleUpdate(update);
       await new Promise(resolve => setTimeout(resolve, 200));
 
-      assert.strictEqual(mockTransport.sentMessages.length, 1);
-      assert.ok(mockTransport.sentMessages[0].text.includes('failed'));
+      assert.strictEqual(mockTransport.sentMessages.length, 0); // Bot stays silent in groups
 
       await unlink(invalidJsonCliPath).catch(() => {});
     });
@@ -859,8 +849,7 @@ exit 0
       await missingPayloadsBotHandler.handleUpdate(update);
       await new Promise(resolve => setTimeout(resolve, 200));
 
-      assert.strictEqual(mockTransport.sentMessages.length, 1);
-      assert.ok(mockTransport.sentMessages[0].text.includes('failed'));
+      assert.strictEqual(mockTransport.sentMessages.length, 0); // Bot stays silent in groups
 
       await unlink(missingPayloadsCliPath).catch(() => {});
     });
@@ -952,8 +941,7 @@ exit 0
       assert.strictEqual(finalCount, 0, 'CLI should not be invoked when enrollment revoked during prep');
 
       // Should send revoked message
-      assert.strictEqual(mockTransport.sentMessages.length, 1);
-      assert.ok(mockTransport.sentMessages[0].text.includes('revoked'));
+      assert.strictEqual(mockTransport.sentMessages.length, 0); // Bot stays silent in groups
 
       await unlink(prepCounterFile).catch(() => {});
       await unlink(prepDelayCliPath).catch(() => {});
@@ -1022,19 +1010,20 @@ exit 0
         },
       };
 
-      // First attempt - spawn succeeds, reply fails
+      // Bot is completely silent in groups (per Bob's requirement)
+      // No CLI invocation at all
       await replyTestBotHandler.handleUpdate(update).catch(() => {});
       await new Promise(resolve => setTimeout(resolve, 200));
 
       const countAfterFirst = parseInt(await fs.readFile(replyCounterFile, 'utf8'), 10);
-      assert.strictEqual(countAfterFirst, 1, 'CLI invoked on first attempt');
+      assert.strictEqual(countAfterFirst, 0, 'CLI should not be invoked in groups');
 
-      // Retry with same update_id - should be suppressed despite reply failure
+      // Retry with same update_id - still no invocation
       await replyTestBotHandler.handleUpdate(update).catch(() => {});
       await new Promise(resolve => setTimeout(resolve, 200));
 
       const countAfterRetry = parseInt(await fs.readFile(replyCounterFile, 'utf8'), 10);
-      assert.strictEqual(countAfterRetry, 1, 'CLI should not be re-invoked after spawn, even if reply failed');
+      assert.strictEqual(countAfterRetry, 0, 'CLI should not be invoked in groups even on retry');
 
       await unlink(replyCounterFile).catch(() => {});
       await unlink(replyTestCliPath).catch(() => {});
@@ -1172,8 +1161,7 @@ exit 0
       await new Promise(resolve => setTimeout(resolve, 200));
 
       // Should report timeout
-      assert.strictEqual(mockTransport.sentMessages.length, 1);
-      assert.ok(mockTransport.sentMessages[0].text.includes('timed out'));
+      assert.strictEqual(mockTransport.sentMessages.length, 0); // Bot stays silent in groups
 
       await unlink(timeoutCliPath).catch(() => {});
     });
@@ -1211,9 +1199,7 @@ exit 0
       assert.strictEqual(response.status, 200);
       await new Promise(resolve => setTimeout(resolve, 200));
 
-      assert.strictEqual(mockTransport.sentMessages.length, 1);
-      assert.strictEqual(mockTransport.sentMessages[0].chatId, -1001234567890);
-      assert.strictEqual(mockTransport.sentMessages[0].text, 'Hello from OpenClaw');
+      assert.strictEqual(mockTransport.sentMessages.length, 0); // Bot stays silent in groups
     });
   });
 });

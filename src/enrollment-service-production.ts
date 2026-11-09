@@ -174,7 +174,7 @@ export class EnrollmentService {
   private challengeTtlSeconds: number;
   private enrollmentTtlSeconds: number;
   private clock: Clock;
-  private memberTagManager?: MemberTagManager;
+  private memberTagManagers: MemberTagManager[];
   private diagnosticLogger?: DiagnosticLogger;
 
   constructor(config: EnrollmentServiceConfig) {
@@ -207,7 +207,7 @@ export class EnrollmentService {
     this.challengeTtlSeconds = challengeTtl;
     this.enrollmentTtlSeconds = enrollmentTtl;
     this.clock = config.clock ?? new SystemClock();
-    this.memberTagManager = config.memberTagManager;
+    this.memberTagManagers = [];
     this.diagnosticLogger = config.diagnosticLogger;
 
     this.telegramConfig = {
@@ -1165,11 +1165,12 @@ export class EnrollmentService {
     // DISPLAY-ONLY: Apply member tag after immutable enrollment succeeds
     // Tag operations are best-effort and NEVER affect enrollment outcome
     // Access control is independent of tag status (enforced at admission gate)
-    if (this.memberTagManager) {
+    for (const manager of this.memberTagManagers) {
       // Non-blocking tag application (failure logged internally)
-      this.memberTagManager.applyTagToMember(enrollment.telegramUserId).catch(error => {
+      // Apply to each group independently (one failure must not stop others)
+      manager.applyTagToMember(enrollment.telegramUserId).catch(error => {
         // Tag failure is logged but does not affect enrollment
-        console.error('[MemberTag] Failed to apply tag (enrollment still valid):', error);
+        console.error('[MemberTag] Failed to apply tag (enrollment still valid)');
       });
     }
 
@@ -1325,10 +1326,13 @@ export class EnrollmentService {
     }
 
     // DISPLAY-ONLY: Remove member tag after revocation (best-effort, non-blocking)
-    if (hadEnrollment && this.memberTagManager) {
-      this.memberTagManager.removeTagFromMember(telegramUserId).catch(error => {
-        console.error('[MemberTag] Failed to remove tag after revocation:', error);
-      });
+    if (hadEnrollment) {
+      for (const manager of this.memberTagManagers) {
+        // Remove from each group independently (one failure must not stop others)
+        manager.removeTagFromMember(telegramUserId).catch(error => {
+          console.error('[MemberTag] Failed to remove tag after revocation');
+        });
+      }
     }
 
     return hadEnrollment;
@@ -1697,8 +1701,9 @@ export class EnrollmentService {
 
     // DISPLAY-ONLY: Apply member tag after successful renewal/reactivation
     // Tag operations are best-effort and NEVER affect session verification outcome
-    if (this.memberTagManager) {
-      this.memberTagManager.applyTagToMember(authenticatedUserId).catch(error => {
+    for (const manager of this.memberTagManagers) {
+      // Apply to each group independently (one failure must not stop others)
+      manager.applyTagToMember(authenticatedUserId).catch(error => {
         console.error('[MemberTag] Failed to apply tag after session verification');
       });
     }

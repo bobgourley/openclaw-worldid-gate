@@ -94,7 +94,8 @@ export interface OpenClawIntegrationConfig {
     enabled: boolean;
     tagText: string; // Max 16 characters, no emoji (Telegram API limit)
     requireAdminPermission: 'can_manage_tags'; // Required bot administrator right
-    targetChatId: number | string; // Telegram chat ID or @username for tag operations
+    targetChatId: number | string; // Telegram chat ID or @username for tag operations (deprecated, use targetChatIds)
+    targetChatIds: string[]; // List of chat IDs for multi-group tag operations
     sweepIntervalHours: number; // How often to run expiry sweeper (default 24 hours)
   };
 
@@ -163,6 +164,66 @@ export interface OpenClawIntegrationConfig {
 }
 
 /**
+ * Parse and validate MEMBER_TAG_GROUPS environment variable.
+ * 
+ * @param groupsStr - Comma-separated list of negative integers
+ * @param allowedGroup - The OPENCLAW_ALLOWED_GROUP as fallback
+ * @returns Array of chat ID strings
+ * @throws Error if parsing fails validation
+ */
+export function parseMemberTagGroups(groupsStr: string | undefined, allowedGroup: string | undefined): string[] {
+  if (groupsStr === undefined) {
+    // Default to OPENCLAW_ALLOWED_GROUP if MEMBER_TAG_GROUPS not set
+    if (!allowedGroup) {
+      throw new Error('MEMBER_TAG_GROUPS or OPENCLAW_ALLOWED_GROUP must be set when member tags enabled');
+    }
+    return [allowedGroup];
+  }
+
+  const entries = groupsStr.split(',').map(s => s.trim()).filter(s => s.length > 0);
+  
+  if (entries.length === 0) {
+    throw new Error('MEMBER_TAG_GROUPS cannot be empty');
+  }
+
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const entry of entries) {
+    // Reject floating point numbers (must not contain decimal point)
+    if (entry.includes('.')) {
+      throw new Error(`MEMBER_TAG_GROUPS entry "${entry}" is not a valid integer`);
+    }
+    
+    // Validate it's a valid integer
+    const num = parseInt(entry, 10);
+    if (isNaN(num) || !Number.isInteger(num)) {
+      throw new Error(`MEMBER_TAG_GROUPS entry "${entry}" is not a valid integer`);
+    }
+    
+    // String representation must match parsed value (rejects "123abc" etc.)
+    if (String(num) !== entry) {
+      throw new Error(`MEMBER_TAG_GROUPS entry "${entry}" is not a valid integer`);
+    }
+
+    // Must be negative
+    if (num >= 0) {
+      throw new Error(`MEMBER_TAG_GROUPS entry "${entry}" must be negative (Telegram groups have negative IDs)`);
+    }
+
+    // Check for duplicates
+    if (seen.has(entry)) {
+      throw new Error(`MEMBER_TAG_GROUPS contains duplicate entry: ${entry}`);
+    }
+
+    seen.add(entry);
+    result.push(entry);
+  }
+
+  return result;
+}
+
+/**
  * Load OpenClaw integration config from environment
  * 
  * @param env - Environment object (defaults to process.env)
@@ -181,6 +242,12 @@ export function loadOpenClawConfig(env: EnvLike = process.env): OpenClawIntegrat
     sweepIntervalHours = val;
   } else if (tagsEnabled) {
     sweepIntervalHours = 24; // Default when enabled but not specified
+  }
+
+  // Parse member tag groups
+  let targetChatIds: string[] = [];
+  if (tagsEnabled) {
+    targetChatIds = parseMemberTagGroups(env.MEMBER_TAG_GROUPS, env.OPENCLAW_ALLOWED_GROUP);
   }
   
   return {
@@ -202,6 +269,7 @@ export function loadOpenClawConfig(env: EnvLike = process.env): OpenClawIntegrat
       tagText: env.MEMBER_TAG_TEXT || 'Human Verified',
       requireAdminPermission: 'can_manage_tags',
       targetChatId: env.OPENCLAW_ALLOWED_GROUP || '',
+      targetChatIds,
       sweepIntervalHours,
     },
     selectedGroupIds: {

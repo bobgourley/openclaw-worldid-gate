@@ -231,7 +231,7 @@ describe('TelegramBotHandler', () => {
       assert.equal(sentMessages.length, 0);
     });
 
-    it('rejects group message with error', async () => {
+    it('stays silent on unaddressed command in group', async () => {
       const handler = new TelegramBotHandler({
         botToken: 'test_token',
         enrollmentService: mockEnrollmentService,
@@ -252,12 +252,10 @@ describe('TelegramBotHandler', () => {
 
       await handler.handleUpdate(update);
 
-      assert.equal(sentMessages.length, 1);
-      assert.equal(sentMessages[0].chatId, 456);
-      assert.match(sentMessages[0].text, /private chat/i);
+      assert.equal(sentMessages.length, 0, 'Bot must stay silent on unaddressed command in group');
     });
 
-    it('rejects supergroup message with error', async () => {
+    it('stays silent on unaddressed command in supergroup', async () => {
       const handler = new TelegramBotHandler({
         botToken: 'test_token',
         enrollmentService: mockEnrollmentService,
@@ -278,8 +276,134 @@ describe('TelegramBotHandler', () => {
 
       await handler.handleUpdate(update);
 
-      assert.equal(sentMessages.length, 1);
-      assert.match(sentMessages[0].text, /private chat/i);
+      assert.equal(sentMessages.length, 0, 'Bot must stay silent on unaddressed command in supergroup');
+    });
+
+    it('stays silent on command addressed to this bot', async () => {
+      const handler = new TelegramBotHandler({
+        botToken: 'test_token',
+        botUsername: 'TestBot',
+        enrollmentService: mockEnrollmentService,
+        transport: mockTransport,
+        enrollmentBaseUrl: 'https://example.com',
+      });
+
+      const update: TelegramUpdate = {
+        update_id: 1,
+        message: {
+          message_id: 1,
+          from: { id: 123, is_bot: false, first_name: 'Test' },
+          chat: { id: 456, type: 'group' },
+          date: 1234567890,
+          text: '/verify@TestBot',
+        },
+      };
+
+      await handler.handleUpdate(update);
+
+      assert.equal(sentMessages.length, 0, 'Bot must stay completely silent in groups (no messages at all)');
+    });
+
+    it('stays silent on command addressed to different bot', async () => {
+      const handler = new TelegramBotHandler({
+        botToken: 'test_token',
+        botUsername: 'TestBot',
+        enrollmentService: mockEnrollmentService,
+        transport: mockTransport,
+        enrollmentBaseUrl: 'https://example.com',
+      });
+
+      const update: TelegramUpdate = {
+        update_id: 1,
+        message: {
+          message_id: 1,
+          from: { id: 123, is_bot: false, first_name: 'Test' },
+          chat: { id: 456, type: 'group' },
+          date: 1234567890,
+          text: '/verify@OtherBot',
+        },
+      };
+
+      await handler.handleUpdate(update);
+
+      assert.equal(sentMessages.length, 0, 'Bot must stay silent when command addressed to different bot');
+    });
+
+    it('stays silent on plain message in group', async () => {
+      const handler = new TelegramBotHandler({
+        botToken: 'test_token',
+        botUsername: 'TestBot',
+        enrollmentService: mockEnrollmentService,
+        transport: mockTransport,
+        enrollmentBaseUrl: 'https://example.com',
+      });
+
+      const update: TelegramUpdate = {
+        update_id: 1,
+        message: {
+          message_id: 1,
+          from: { id: 123, is_bot: false, first_name: 'Test' },
+          chat: { id: 456, type: 'group' },
+          date: 1234567890,
+          text: 'Hello everyone!',
+        },
+      };
+
+      await handler.handleUpdate(update);
+
+      assert.equal(sentMessages.length, 0, 'Bot must stay silent on plain message in group');
+    });
+
+    it('stays silent on plain message in known tag group', async () => {
+      const handler = new TelegramBotHandler({
+        botToken: 'test_token',
+        botUsername: 'TestBot',
+        enrollmentService: mockEnrollmentService,
+        transport: mockTransport,
+        enrollmentBaseUrl: 'https://example.com',
+        knownGroupIds: [-123456, -789012],
+      });
+
+      const update: TelegramUpdate = {
+        update_id: 1,
+        message: {
+          message_id: 1,
+          from: { id: 123, is_bot: false, first_name: 'Test' },
+          chat: { id: -123456, type: 'supergroup' },
+          date: 1234567890,
+          text: 'Hello everyone!',
+        },
+      };
+
+      await handler.handleUpdate(update);
+
+      assert.equal(sentMessages.length, 0, 'Bot must stay silent on plain message in known tag group');
+    });
+
+    it('stays silent on plain message in unknown group', async () => {
+      const handler = new TelegramBotHandler({
+        botToken: 'test_token',
+        botUsername: 'TestBot',
+        enrollmentService: mockEnrollmentService,
+        transport: mockTransport,
+        enrollmentBaseUrl: 'https://example.com',
+        knownGroupIds: [-123456],
+      });
+
+      const update: TelegramUpdate = {
+        update_id: 1,
+        message: {
+          message_id: 1,
+          from: { id: 123, is_bot: false, first_name: 'Test' },
+          chat: { id: -999999, type: 'supergroup' },
+          date: 1234567890,
+          text: 'Hello everyone!',
+        },
+      };
+
+      await handler.handleUpdate(update);
+
+      assert.equal(sentMessages.length, 0, 'Bot must stay silent on plain message in unknown group');
     });
 
     it('rejects unknown command', async () => {
@@ -641,6 +765,116 @@ describe('TelegramBotHandler', () => {
       assert.equal(sentMessages.length, 1);
       assert.equal(sentMessages[0].chatId, 12345);
       assert.match(sentMessages[0].text, /Unknown command/i);
+    });
+  });
+
+  describe('addressed command detection (bot stays silent in groups)', () => {
+    it('stays silent on command addressed to this bot', async () => {
+      const handler = new TelegramBotHandler({
+        botToken: 'test_token',
+        botUsername: 'MyTestBot',
+        enrollmentService: mockEnrollmentService,
+        transport: mockTransport,
+        enrollmentBaseUrl: 'https://example.com',
+      });
+
+      const update: TelegramUpdate = {
+        update_id: 1,
+        message: {
+          message_id: 1,
+          from: { id: 123, is_bot: false, first_name: 'Test' },
+          chat: { id: -456, type: 'supergroup' },
+          date: 1234567890,
+          text: '/start@MyTestBot',
+        },
+      };
+
+      await handler.handleUpdate(update);
+
+      assert.equal(sentMessages.length, 0, 'Bot must stay completely silent in groups');
+    });
+
+    it('stays silent on addressed command with arguments', async () => {
+      const handler = new TelegramBotHandler({
+        botToken: 'test_token',
+        botUsername: 'MyTestBot',
+        enrollmentService: mockEnrollmentService,
+        transport: mockTransport,
+        enrollmentBaseUrl: 'https://example.com',
+      });
+
+      const update: TelegramUpdate = {
+        update_id: 1,
+        message: {
+          message_id: 1,
+          from: { id: 123, is_bot: false, first_name: 'Test' },
+          chat: { id: -456, type: 'supergroup' },
+          date: 1234567890,
+          text: '/verify@MyTestBot please help',
+        },
+      };
+
+      await handler.handleUpdate(update);
+
+      assert.equal(sentMessages.length, 0, 'Bot must stay completely silent in groups');
+    });
+  });
+
+  describe('command menu registration', () => {
+    it('registers commands for private chats only', async () => {
+      const commandCalls: any[] = [];
+      const deleteCalls: any[] = [];
+
+      const testTransport: TelegramBotTransport = {
+        sendMessage: mock.fn(async () => {}),
+        setMyCommands: mock.fn(async (commands: any, scope: any) => {
+          commandCalls.push({ commands, scope });
+        }),
+        deleteMyCommands: mock.fn(async (scope: any) => {
+          deleteCalls.push({ scope });
+        }),
+      };
+
+      const handler = new TelegramBotHandler({
+        botToken: 'test_token',
+        enrollmentService: mockEnrollmentService,
+        transport: testTransport,
+        enrollmentBaseUrl: 'https://example.com',
+      });
+
+      await handler.registerCommandMenu();
+
+      // Should register for private chats
+      assert.equal(commandCalls.length, 1);
+      assert.equal(commandCalls[0].scope.type, 'all_private_chats');
+      assert.equal(commandCalls[0].commands.length, 3);
+      assert.ok(commandCalls[0].commands.some((c: any) => c.command === 'verify'));
+      assert.ok(commandCalls[0].commands.some((c: any) => c.command === 'status'));
+      assert.ok(commandCalls[0].commands.some((c: any) => c.command === 'help'));
+
+      // Should delete from group scopes
+      assert.equal(deleteCalls.length, 3);
+      assert.ok(deleteCalls.some((c: any) => c.scope.type === 'default'));
+      assert.ok(deleteCalls.some((c: any) => c.scope.type === 'all_group_chats'));
+      assert.ok(deleteCalls.some((c: any) => c.scope.type === 'all_chat_administrators'));
+    });
+
+    it('handles transport without command methods gracefully', async () => {
+      const minimalTransport: TelegramBotTransport = {
+        sendMessage: mock.fn(async () => {}),
+      };
+
+      const handler = new TelegramBotHandler({
+        botToken: 'test_token',
+        enrollmentService: mockEnrollmentService,
+        transport: minimalTransport,
+        enrollmentBaseUrl: 'https://example.com',
+      });
+
+      // Should not throw
+      await assert.doesNotReject(async () => {
+        await handler.registerCommandMenu();
+      });
     });
   });
 });
