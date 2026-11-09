@@ -97,14 +97,8 @@ export class WorldIdHttpVerifier {
     if (!expectedContext || typeof expectedContext !== 'object') {
       return { success: false, error: 'Invalid expectedContext: must be object' };
     }
-    if (!expectedContext.action || typeof expectedContext.action !== 'string' || expectedContext.action.length === 0) {
-      return { success: false, error: 'Invalid expectedContext.action: must be non-empty string' };
-    }
     if (!expectedContext.nonce || typeof expectedContext.nonce !== 'string' || expectedContext.nonce.length === 0) {
       return { success: false, error: 'Invalid expectedContext.nonce: must be non-empty string' };
-    }
-    if (!expectedContext.signalHash || typeof expectedContext.signalHash !== 'string' || expectedContext.signalHash.length === 0) {
-      return { success: false, error: 'Invalid expectedContext.signalHash: must be non-empty string (server-trusted requester binding)' };
     }
 
     // Validate IDKitResult structure (fail-closed)
@@ -132,12 +126,12 @@ export class WorldIdHttpVerifier {
       return { success: false, error: 'Ambiguous multi-response batch (policy: single credential)' };
     }
 
-    // Validate server-trusted expected context matches IDKitResult
-    if (idkitResult.action !== expectedContext.action) {
-      return {
-        success: false,
-        error: `Action mismatch: expected ${expectedContext.action}, got ${idkitResult.action}`,
-      };
+    // Discriminate between uniqueness and session proofs
+    const isSessionProof = 'session_id' in idkitResult && !('action' in idkitResult);
+    const isUniquenessProof = 'action' in idkitResult;
+
+    if (!isSessionProof && !isUniquenessProof) {
+      return { success: false, error: 'Cannot determine proof type (missing both action and session_id)' };
     }
 
     if (idkitResult.nonce !== expectedContext.nonce) {
@@ -149,16 +143,6 @@ export class WorldIdHttpVerifier {
 
     const response = idkitResult.responses[0];
 
-    // Validate signal hash if provided
-    if (expectedContext.signalHash) {
-      if (response.signal_hash !== expectedContext.signalHash) {
-        return {
-          success: false,
-          error: 'Signal hash mismatch: proof not bound to expected signal',
-        };
-      }
-    }
-
     // Validate credential type
     if (expectedContext.requireProofOfHuman !== false) {
       if (response.identifier !== 'proof_of_human' || response.issuer_schema_id !== 1) {
@@ -169,15 +153,81 @@ export class WorldIdHttpVerifier {
       }
     }
 
-    // Validate nullifier format (0x-prefixed hex)
-    if (!response.nullifier || !response.nullifier.startsWith('0x')) {
-      return {
-        success: false,
-        error: 'Invalid nullifier: expected 0x-prefixed hex string',
-      };
+    // UNIQUENESS PROOF VALIDATION
+    if (isUniquenessProof) {
+      // Validate expectedContext for uniqueness proofs
+      if (!expectedContext.action || typeof expectedContext.action !== 'string' || expectedContext.action.length === 0) {
+        return { success: false, error: 'Invalid expectedContext.action: required for uniqueness proofs' };
+      }
+      if (!expectedContext.signalHash || typeof expectedContext.signalHash !== 'string' || expectedContext.signalHash.length === 0) {
+        return { success: false, error: 'Invalid expectedContext.signalHash: required for uniqueness proofs' };
+      }
+
+      // Validate action matches
+      if (idkitResult.action !== expectedContext.action) {
+        return {
+          success: false,
+          error: `Action mismatch: expected ${expectedContext.action}, got ${idkitResult.action}`,
+        };
+      }
+
+      // Validate signal hash
+      if (response.signal_hash !== expectedContext.signalHash) {
+        return {
+          success: false,
+          error: 'Signal hash mismatch: proof not bound to expected signal',
+        };
+      }
+
+      // Validate nullifier field exists (uniqueness proofs)
+      if (!('nullifier' in response) || !response.nullifier || !response.nullifier.startsWith('0x')) {
+        return {
+          success: false,
+          error: 'Invalid nullifier: expected 0x-prefixed hex string',
+        };
+      }
     }
 
-    // Forward IDKit result as-is to v4 API (no field remapping required)
+    // SESSION PROOF VALIDATION
+    if (isSessionProof) {
+      // Session proofs do NOT have action field (per World ID 4.0 spec)
+      // Session proofs have session_nullifier tuple, NOT nullifier field
+      
+      // Validate session_nullifier tuple exists
+      if (!('session_nullifier' in response) || !Array.isArray(response.session_nullifier)) {
+        return {
+          success: false,
+          error: 'Invalid session response: session_nullifier tuple required',
+        };
+      }
+
+      if (response.session_nullifier.length !== 2) {
+        return {
+          success: false,
+          error: 'Invalid session_nullifier: must be 2-element tuple',
+        };
+      }
+
+      // Validate both elements are hex strings
+      const [sessionNullifier, sessionAction] = response.session_nullifier;
+      if (!sessionNullifier || !sessionNullifier.startsWith('0x')) {
+        return {
+          success: false,
+          error: 'Invalid session_nullifier[0]: expected 0x-prefixed hex string',
+        };
+      }
+      if (!sessionAction || !sessionAction.startsWith('0x')) {
+        return {
+          success: false,
+          error: 'Invalid session_nullifier[1]: expected 0x-prefixed hex string',
+        };
+      }
+    }
+
+    // Forward IDKit result as-is to v4 API
+    // Per https://docs.world.org/api-reference/developer-portal/verify:
+    // - Uniqueness proofs: require protocol_version, nonce, action, responses
+    // - Session proofs: require protocol_version, nonce, session_id, responses
     const verifyRequest: V4VerifyRequest = idkitResult;
 
     // Call v4 Developer Portal API (primary endpoint only, test override explicit)
@@ -277,7 +327,9 @@ export class WorldIdHttpVerifier {
             error: `Result item ${i} has invalid success field`,
           };
         }
-        if (typeof item.nullifier !== 'string' || item.nullifier.length === 0) {
+        // Nullifier field is required for uniqueness proofs, optional for session proofs
+        // Session proofs may only return success status (binding verified via session_id)
+        if (isUniquenessProof && (typeof item.nullifier !== 'string' || item.nullifier.length === 0)) {
           return {
             success: false,
             error: `Result item ${i} has invalid nullifier`,
@@ -313,62 +365,71 @@ export class WorldIdHttpVerifier {
         };
       }
 
-      // Validate nullifier format (strict 256-bit hex validation)
-      if (!credentialResult.nullifier.startsWith('0x')) {
-        return {
-          success: false,
-          error: 'Invalid nullifier format: must start with 0x',
-        };
-      }
-
-      const nullifierHex = credentialResult.nullifier.slice(2);
-      if (!/^[0-9a-f]{64}$/i.test(nullifierHex)) {
-        return {
-          success: false,
-          error: 'Invalid nullifier format: must be 0x followed by 64 hex characters (256-bit)',
-        };
-      }
-
-      // Verify nullifier consistency (strict bounded numerical normalization)
-      let requestNullifier: bigint;
-      let responseNullifier: bigint;
-
-      try {
-        requestNullifier = BigInt(response.nullifier);
-        if (requestNullifier < 0n) {
-          return { success: false, error: 'Request nullifier is negative' };
+      // UNIQUENESS PROOF: Validate nullifier format and consistency
+      if (isUniquenessProof) {
+        // Validate nullifier format (strict 256-bit hex validation)
+        if (!credentialResult.nullifier || !credentialResult.nullifier.startsWith('0x')) {
+          return {
+            success: false,
+            error: 'Invalid nullifier format: must start with 0x',
+          };
         }
-        // 2^256 - 1 maximum
-        if (requestNullifier > 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffn) {
-          return { success: false, error: 'Request nullifier exceeds 256-bit maximum' };
+
+        const nullifierHex = credentialResult.nullifier.slice(2);
+        if (!/^[0-9a-f]{64}$/i.test(nullifierHex)) {
+          return {
+            success: false,
+            error: 'Invalid nullifier format: must be 0x followed by 64 hex characters (256-bit)',
+          };
         }
-      } catch {
-        return { success: false, error: 'Request nullifier is not a valid number' };
+
+        // Verify nullifier consistency (strict bounded numerical normalization)
+        let requestNullifier: bigint;
+        let responseNullifier: bigint;
+
+        try {
+          requestNullifier = BigInt(response.nullifier);
+          if (requestNullifier < 0n) {
+            return { success: false, error: 'Request nullifier is negative' };
+          }
+          // 2^256 - 1 maximum
+          if (requestNullifier > 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffn) {
+            return { success: false, error: 'Request nullifier exceeds 256-bit maximum' };
+          }
+        } catch {
+          return { success: false, error: 'Request nullifier is not a valid number' };
+        }
+
+        try {
+          responseNullifier = BigInt(credentialResult.nullifier);
+          if (responseNullifier < 0n) {
+            return { success: false, error: 'Response nullifier is negative' };
+          }
+          if (responseNullifier > 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffn) {
+            return { success: false, error: 'Response nullifier exceeds 256-bit maximum' };
+          }
+        } catch {
+          return { success: false, error: 'Response nullifier is not a valid number' };
+        }
+
+        if (requestNullifier !== responseNullifier) {
+          return {
+            success: false,
+            error: 'Nullifier mismatch between request and response',
+          };
+        }
       }
 
-      try {
-        responseNullifier = BigInt(credentialResult.nullifier);
-        if (responseNullifier < 0n) {
-          return { success: false, error: 'Response nullifier is negative' };
-        }
-        if (responseNullifier > 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffn) {
-          return { success: false, error: 'Response nullifier exceeds 256-bit maximum' };
-        }
-      } catch {
-        return { success: false, error: 'Response nullifier is not a valid number' };
-      }
+      // SESSION PROOF: No nullifier validation required
+      // API validates session binding cryptographically
+      // Service will use session_nullifier tuple from response for replay protection
 
-      if (requestNullifier !== responseNullifier) {
-        return {
-          success: false,
-          error: 'Nullifier mismatch between request and response',
-        };
-      }
-
-      // Success: return verified nullifier (0x-prefixed hex from response)
+      // Success: return verified result
+      // For uniqueness proofs: return nullifier
+      // For session proofs: nullifier may be undefined (service uses session_nullifier from response)
       return {
         success: true,
-        nullifier: credentialResult.nullifier,
+        nullifier: credentialResult.nullifier || undefined,
         issuerSchemaId: response.issuer_schema_id,
         expiresAtMin: response.expires_at_min,
       };

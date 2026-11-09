@@ -26,6 +26,7 @@ import type {
 } from './worldid-types.js';
 import type { MemberTagManager } from './member-tag-manager.js';
 import type { DiagnosticLogger } from './diagnostic-logger.js';
+import { canonicalizeNullifier, canonicalizeSessionNullifierTuple } from './nullifier-canonical.js';
 
 /**
  * Clock interface for deterministic testing.
@@ -973,12 +974,16 @@ export class EnrollmentService {
         throw new Error('Challenge predates revocation in transaction');
       }
 
+      // Canonicalize uniqueness nullifier (256-bit bounded integer normalization)
+      // Per reviewer: normalize hex/decimal representation before storage/lookup
+      const canonicalNullifier = canonicalizeNullifier(verificationResult.nullifier);
+
       // Check immutable nullifier ownership (permanent claim)
       const nullifierOwnerCheck = this.db.prepare(`
         SELECT telegram_user_id
         FROM nullifier_claims
         WHERE nullifier = ? AND action = ?
-      `).get(verificationResult.nullifier, this.action) as any;
+      `).get(canonicalNullifier, this.action) as any;
 
       if (nullifierOwnerCheck && nullifierOwnerCheck.telegram_user_id !== authenticatedUser.id) {
         if (correlationId) {
@@ -994,7 +999,7 @@ export class EnrollmentService {
             INSERT INTO nullifier_claims (nullifier, action, telegram_user_id, claimed_at, claimed_at_iso)
             VALUES (?, ?, ?, ?, ?)
           `).run(
-            verificationResult.nullifier,
+            canonicalNullifier,
             this.action,
             authenticatedUser.id,
             txNow,
@@ -1016,7 +1021,7 @@ export class EnrollmentService {
       const protocolVersion = request.idkitResult.protocol_version ?? '4.0';
       
       const enrollment = {
-        nullifier: verificationResult.nullifier!,
+        nullifier: canonicalNullifier,
         telegramUserId: authenticatedUser.id,
         action: this.action,
         expiresAt: enrollmentExpiresAt,
@@ -1541,6 +1546,10 @@ export class EnrollmentService {
         }
       }
 
+      // Canonicalize session nullifier tuple (256-bit bounded integers)
+      // Per reviewer: normalize both elements before storage/lookup to prevent replay alias
+      const [canonicalSessionNullifier, canonicalSessionAction] = canonicalizeSessionNullifierTuple([sessionNullifier, sessionAction]);
+
       // Check session nullifier replay (composite key: session_nullifier + randomized action)
       // Per World ID 4.0: session_nullifier is a tuple [nullifier, action] where action
       // is randomized per proof. The complete tuple provides replay protection.
@@ -1548,7 +1557,7 @@ export class EnrollmentService {
         SELECT session_nullifier, action
         FROM session_nullifier_claims
         WHERE session_nullifier = ? AND action = ?
-      `).get(sessionNullifier, sessionAction) as any;
+      `).get(canonicalSessionNullifier, canonicalSessionAction) as any;
 
       if (replayCheck) {
         throw new Error('Session nullifier already used (replay attack detected)');
@@ -1568,8 +1577,8 @@ export class EnrollmentService {
           claimed_at_iso
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(
-        sessionNullifier,
-        sessionAction,
+        canonicalSessionNullifier,
+        canonicalSessionAction,
         enrollment.sessionId,
         authenticatedUserId,
         enrollment.nullifier, // Enrollment nullifier (for reference only, NOT compared to session nullifier)

@@ -188,6 +188,45 @@
       transform: translateY(-1px);
     }
     
+    #diagnostics {
+      display: none;
+      margin-top: 20px;
+      padding: 16px;
+      background: #f7fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    #diagnostics.visible {
+      display: block;
+    }
+    .diag-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 6px 0;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .diag-row:last-child {
+      border-bottom: none;
+    }
+    .diag-label {
+      font-weight: 600;
+      color: #4a5568;
+    }
+    .diag-value {
+      font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+      color: #2d3748;
+    }
+    .diag-value.pass {
+      color: #22c55e;
+    }
+    .diag-value.fail {
+      color: #ef4444;
+    }
+    .diag-value.unknown {
+      color: #718096;
+    }
+    
     @media (max-width: 480px) {
       body {
         padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
@@ -332,6 +371,61 @@
     <button id="verifyButton" class="button hidden" disabled>
       Connect World App
     </button>
+    
+    <div id="diagnostics">
+      <div class="diag-row">
+        <span class="diag-label">Error Code:</span>
+        <span class="diag-value" id="diagErrorCode">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">SDK Version:</span>
+        <span class="diag-value" id="diagSdkVersion">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">Transport:</span>
+        <span class="diag-value" id="diagTransport">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">Environment Match:</span>
+        <span class="diag-value" id="diagEnvMatch">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">Action Match:</span>
+        <span class="diag-value" id="diagActionMatch">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">App ID Match:</span>
+        <span class="diag-value" id="diagAppIdMatch">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">RP ID Match:</span>
+        <span class="diag-value" id="diagRpIdMatch">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">Nonce Match:</span>
+        <span class="diag-value" id="diagNonceMatch">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">Signature Match:</span>
+        <span class="diag-value" id="diagSignatureMatch">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">CreatedAt Match:</span>
+        <span class="diag-value" id="diagCreatedAtMatch">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">ExpiresAt Match:</span>
+        <span class="diag-value" id="diagExpiresAtMatch">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">Timestamp Valid:</span>
+        <span class="diag-value" id="diagTimestampValid">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">TTL (seconds):</span>
+        <span class="diag-value" id="diagTtl">-</span>
+      </div>
+    </div>
     
     <div class="info">
       <strong>Privacy:</strong> Only a zero-knowledge proof is verified. Our service receives no raw biometric data.
