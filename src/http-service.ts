@@ -466,10 +466,19 @@ export class HttpService {
   }
 
   /**
-   * Handle enrollment query request.
-   *
+   * Handle enrollment status request (authenticated).
+   * 
+   * Server-driven flow decision:
+   * - new: No enrollment exists (fresh v2 enrollment)
+   * - upgrade: Historical UNKNOWN/no-session enrollment (fresh v2 enrollment)
+   * - renewal: Active or expired enrollment with saved session
+   * - reactivation: Revoked enrollment with saved session
+   * 
+   * Session ID returned ONLY when needed by frontend for proveSession flow.
+   * NEVER returned for new/upgrade flows (no session exists yet).
+   * 
    * Request body: { initData: string }
-   * Response: { enrolled: boolean, expiresAt?: number }
+   * Response: { status: string, sessionId?: string, expiresAt?: number }
    */
   private async handleQueryEnrollment(req: Request, res: Response): Promise<void> {
     // Validate request body
@@ -483,14 +492,57 @@ export class HttpService {
       return;
     }
 
-    // Authenticate initData to extract user ID
-    // NOTE: This duplicates authentication - in production, use a shared auth middleware
-    // For now, we'll create a challenge and extract the user ID from the error
-    // (This is a temporary workaround for query endpoint authentication)
+    // Authenticate initData via service (extracts user ID)
+    try {
+      // Use findEnrollment which authenticates initData internally
+      const enrollment = await this.enrollmentService.findEnrollmentByInitData(req.body.initData);
 
-    // Query enrollment
-    // TODO: Implement proper initData authentication without challenge creation
-    res.status(501).json({ error: 'Query endpoint not yet implemented (requires auth refactor)' });
+      if (!enrollment) {
+        // No enrollment - fresh v2 enrollment flow
+        res.json({
+          status: 'new',
+        });
+        return;
+      }
+
+      // Check protocol version and session presence
+      if (!enrollment.protocolVersion || enrollment.protocolVersion === 'UNKNOWN' || !enrollment.sessionId) {
+        // Historical enrollment without session - upgrade to v2
+        res.json({
+          status: 'upgrade',
+        });
+        return;
+      }
+
+      // Enrollment has session - check revocation status
+      if (enrollment.revoked) {
+        // Revoked with saved session - explicit reactivation flow
+        res.json({
+          status: 'reactivation',
+          sessionId: enrollment.sessionId, // Needed for proveSession
+          expiresAt: enrollment.expiresAt,
+        });
+        return;
+      }
+
+      // Active or expired enrollment with saved session - renewal flow
+      res.json({
+        status: 'renewal',
+        sessionId: enrollment.sessionId, // Needed for proveSession
+        expiresAt: enrollment.expiresAt,
+        expired: enrollment.expired,
+      });
+    } catch (error: any) {
+      console.error('Enrollment status error:', error);
+      
+      // Map authentication errors
+      if (error.message?.includes('initData validation failed')) {
+        res.status(401).json({ error: 'Authentication failed' });
+        return;
+      }
+
+      res.status(500).json({ error: 'Enrollment status check failed' });
+    }
   }
 
   /**

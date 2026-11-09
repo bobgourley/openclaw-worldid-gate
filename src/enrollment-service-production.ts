@@ -1250,6 +1250,26 @@ export class EnrollmentService {
   }
 
   /**
+   * Find enrollment by authenticated initData.
+   * 
+   * Authenticates initData and returns enrollment for authenticated user.
+   * Returns null if no enrollment found.
+   * Throws error if authentication fails.
+   */
+  async findEnrollmentByInitData(initData: string): Promise<EnrollmentQuery | null> {
+    // Authenticate Telegram initData
+    const initDataValidation = validateTelegramInitData(initData, this.telegramConfig);
+    if (!initDataValidation.valid || !initDataValidation.user) {
+      throw new Error(`Telegram initData validation failed: ${initDataValidation.error}`);
+    }
+
+    const authenticatedUserId = initDataValidation.user.id;
+
+    // Find enrollment for authenticated user
+    return this.findEnrollment(authenticatedUserId);
+  }
+
+  /**
    * Close the database connection.
    */
   close(): void {

@@ -509,48 +509,85 @@
     // Expose generateQRCode for testing
     window.generateQRCode = generateQRCode;
 
-    async function handleVerification() {
-      const session = window.enrollmentSession;
-      if (!session) {
-        showError('Session expired. Please request a new verification link.');
-        return;
+    // Check enrollment status (server-driven flow decision)
+    async function checkEnrollmentStatus() {
+      try {
+        const response = await fetch('/api/enrollment/query', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            initData: initData,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to check enrollment status');
+        }
+
+        return await response.json();
+      } catch (error) {
+        console.error('Status check error:', error);
+        return { status: 'new' }; // Default to new enrollment on error
       }
-      
+    }
+
+    async function handleVerification() {
       if (!initData) {
         showError('Telegram authentication required. Please open from the bot.');
         return;
       }
       
       buttonEl.disabled = true;
-      showStatus('Connecting to World App...', 'loading');
+      showStatus('Checking enrollment status...', 'loading');
+
+      // Check current enrollment status (server decides flow)
+      const enrollmentStatus = await checkEnrollmentStatus();
+      
+      // Import IDKit once (reused across flows)
+      const { IDKit, CredentialRequest } = await import('/idkit-bundle.js');
+      
+      if (enrollmentStatus.status === 'renewal' || enrollmentStatus.status === 'reactivation') {
+        // Returning user flow - use session verification
+        await handleReturningUser(enrollmentStatus, IDKit, CredentialRequest);
+      } else {
+        // New or upgrade flow - create fresh enrollment with session
+        await handleNewEnrollment(IDKit, CredentialRequest);
+      }
+    }
+
+    // Handle new enrollment (initial or upgrade from UNKNOWN)
+    async function handleNewEnrollment(IDKit, CredentialRequest) {
+      showStatus('Initializing World ID verification...', 'loading');
       
       try {
-        // Import locally bundled IDKit Core SDK (from installed @worldcoin/idkit-core)
-        const { IDKit, CredentialRequest } = await import('/idkit-bundle.js');
+        // Fetch challenge from backend
+        const response = await fetch('/api/challenge/create', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            initData: initData,
+          }),
+        });
         
-        // Validate required fields from session (fail-closed, no synthetic fallbacks)
-        if (!session.rpId) {
-          showError('Invalid session: missing RP ID. Please request a new verification.');
-          return;
-        }
-        if (!session.signedChallenge.nonce) {
-          showError('Invalid session: missing nonce. Please request a new verification.');
-          return;
-        }
-        if (!session.signedChallenge.createdAt) {
-          showError('Invalid session: missing timestamp. Please request a new verification.');
-          return;
-        }
-        if (!session.signedChallenge.expiresAt) {
-          showError('Invalid session: missing expiry. Please request a new verification.');
-          return;
-        }
-        if (!session.signedChallenge.signature) {
-          showError('Invalid session: missing signature. Please request a new verification.');
+        if (!response.ok) {
+          showError('Failed to create verification challenge. Please try again.');
+          buttonEl.disabled = false;
           return;
         }
         
-        // Extract RP context from session (signed by backend, no fallbacks)
+        const session = await response.json();
+        
+        if (!session.signedChallenge) {
+          showError('Invalid challenge response from server. Please try again.');
+          buttonEl.disabled = false;
+          return;
+        }
+        
+        // Extract RP context from session (signed by backend)
         const rp_context = {
           rp_id: session.rpId,
           nonce: session.signedChallenge.nonce,
@@ -559,7 +596,7 @@
           signature: session.signedChallenge.signature,
         };
         
-        // Create verification request using official IDKit API with session creation
+        // Create verification request with session creation
         const request = await IDKit.request({
           app_id: session.appId,
           action: session.signedChallenge.action,
@@ -568,52 +605,114 @@
           allow_legacy_proofs: false,
         }).constraints(CredentialRequest('proof_of_human', { signal: session.signal }));
         
-        // CRITICAL: Display connectorURI in tappable DOM element BEFORE polling
-        if (!request.connectorURI) {
-          showError('Failed to generate World App connection. Please try again.');
-          buttonEl.disabled = false;
-          return;
-        }
-        
-        // Display connectorURI as QR code and link
-        const connectorDisplay = document.getElementById('connectorDisplay');
-        const connectorLink = document.getElementById('connectorLink');
-        const qrCodeEl = document.getElementById('qrCode');
-        
-        // Generate QR code from connectorURI
-        await generateQRCode(request.connectorURI, qrCodeEl);
-        
-        connectorLink.href = request.connectorURI;
-        connectorDisplay.classList.remove('hidden');
-        
-        showStatus('Scan QR code with World App on your phone', 'success');
-        buttonEl.classList.add('hidden');
-        
-        // Poll for completion (user taps link in parallel)
-        const result = await request.pollUntilCompletion({
-          pollInterval: 2000,
-          timeout: 300000, // 5 minutes
-        });
-        
-        if (result.success) {
-          await handleProofReceived(result.result);
-        } else {
-          handleProofError(result.error);
-        }
+        await displayConnectorAndPoll(request, '/api/enrollment/complete');
         
       } catch (error) {
-        console.error('Verification error:', error);
+        console.error('New enrollment error:', error);
         showError('Unable to connect to World App. Please try again.');
         buttonEl.disabled = false;
       }
     }
+
+    // Handle returning user (renewal or reactivation)
+    async function handleReturningUser(enrollmentStatus, IDKit, CredentialRequest) {
+      const isReactivation = enrollmentStatus.status === 'reactivation';
+      const mode = isReactivation ? 'reactivation' : 'renewal';
+      
+      if (isReactivation) {
+        showStatus('Your enrollment was revoked. Confirm reactivation with World ID.', 'warning');
+      } else if (enrollmentStatus.expired) {
+        showStatus('Your enrollment expired. Renewing with World ID...', 'loading');
+      } else {
+        showStatus('Verifying your World ID session...', 'loading');
+      }
+      
+      try {
+        // Fetch session challenge
+        const response = await fetch('/api/session/challenge/create', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            initData: initData,
+            mode: mode,
+          }),
+        });
+        
+        if (!response.ok) {
+          showError('Failed to create session challenge. Please try again.');
+          buttonEl.disabled = false;
+          return;
+        }
+        
+        const challenge = await response.json();
+        
+        // Extract RP context (no action for session proofs)
+        const rp_context = {
+          rp_id: challenge.signedChallenge.rpId || challenge.rpId,
+          nonce: challenge.signedChallenge.nonce,
+          created_at: challenge.signedChallenge.createdAt,
+          expires_at: challenge.signedChallenge.expiresAt,
+          signature: challenge.signedChallenge.signature,
+        };
+        
+        // Use proveSession for returning user (session ID in memory only, never stored)
+        const sessionId = enrollmentStatus.sessionId;
+        const request = await IDKit.proveSession(sessionId, {
+          app_id: challenge.appId || challenge.signedChallenge.appId,
+          rp_context: rp_context,
+        }).constraints(CredentialRequest('proof_of_human'));
+        
+        await displayConnectorAndPoll(request, '/api/session/verify');
+        
+      } catch (error) {
+        console.error('Returning user error:', error);
+        showError('Unable to verify session. Please try again.');
+        buttonEl.disabled = false;
+      }
+    }
+
+    // Display connector (QR + link) and poll for completion
+    async function displayConnectorAndPoll(request, submitEndpoint) {
+      if (!request.connectorURI) {
+        showError('Failed to generate World App connection. Please try again.');
+        buttonEl.disabled = false;
+        return;
+      }
+      
+      // Display connectorURI as QR code and link
+      const connectorDisplay = document.getElementById('connectorDisplay');
+      const connectorLink = document.getElementById('connectorLink');
+      const qrCodeEl = document.getElementById('qrCode');
+      
+      await generateQRCode(request.connectorURI, qrCodeEl);
+      
+      connectorLink.href = request.connectorURI;
+      connectorDisplay.classList.remove('hidden');
+      
+      showStatus('Scan QR code with World App on your phone', 'success');
+      buttonEl.classList.add('hidden');
+      
+      // Poll for completion
+      const result = await request.pollUntilCompletion({
+        pollInterval: 2000,
+        timeout: 300000, // 5 minutes
+      });
+      
+      if (result.success) {
+        await handleProofReceived(result.result, submitEndpoint);
+      } else {
+        handleProofError(result.error);
+      }
+    }
     
-    async function handleProofReceived(result) {
+    async function handleProofReceived(result, submitEndpoint) {
       showStatus('Submitting proof for verification...', 'loading');
       
       try {
         // SECURITY: Send both initData and proof for same-requester binding
-        const response = await fetch('/api/enrollment/complete', {
+        const response = await fetch(submitEndpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
