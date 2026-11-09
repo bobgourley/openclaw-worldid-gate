@@ -607,6 +607,7 @@
     window.generateQRCode = generateQRCode;
 
     // Check enrollment status (server-driven flow decision)
+    // FAIL CLOSED: only return 'new' when server explicitly says so
     async function checkEnrollmentStatus() {
       try {
         const response = await fetch('/api/enrollment/query', {
@@ -620,15 +621,27 @@
         });
 
         if (!response.ok) {
-          throw new Error('Failed to check enrollment status');
+          // Network error or non-2xx: fail closed
+          return { status: 'error', error: 'network' };
         }
 
-        return await response.json();
+        const data = await response.json();
+        
+        // Validate response has status field
+        if (!data || typeof data.status !== 'string') {
+          return { status: 'error', error: 'malformed' };
+        }
+
+        return data;
       } catch (error) {
         console.error('Status check error:', error);
-        return { status: 'new' }; // Default to new enrollment on error
+        // Network error, JSON parse error, etc: fail closed
+        return { status: 'error', error: 'exception' };
       }
     }
+
+    // Guard flag to prevent concurrent IDKit requests
+    let verificationInProgress = false;
 
     async function handleVerification() {
       if (!initData) {
@@ -636,22 +649,49 @@
         return;
       }
       
+      // Prevent concurrent requests
+      if (verificationInProgress) {
+        console.log('[Verification] Already in progress, ignoring duplicate tap');
+        return;
+      }
+      
+      verificationInProgress = true;
       buttonEl.disabled = true;
       showStatus('Checking enrollment status...', 'loading');
 
-      // Check current enrollment status (server decides flow)
-      const enrollmentStatus = await checkEnrollmentStatus();
-      
-      // Import IDKit once (reused across flows)
-      // Access IDKit from global IIFE bundle
-      const { IDKit, CredentialRequest } = window.WorldIDKitBundle;
-      
-      if (enrollmentStatus.status === 'renewal' || enrollmentStatus.status === 'reactivation') {
-        // Returning user flow - use session verification
-        await handleReturningUser(enrollmentStatus, IDKit, CredentialRequest);
-      } else {
-        // New or upgrade flow - create fresh enrollment with session
-        await handleNewEnrollment(IDKit, CredentialRequest);
+      try {
+        // Check current enrollment status (server decides flow)
+        const enrollmentStatus = await checkEnrollmentStatus();
+        
+        // FAIL CLOSED: only proceed if server explicitly returned a known status
+        if (enrollmentStatus.status === 'error') {
+          showError('Could not check your enrollment status. Please try again.');
+          buttonEl.disabled = false;
+          verificationInProgress = false;
+          return;
+        }
+        
+        // Import IDKit once (reused across flows)
+        // Access IDKit from global IIFE bundle
+        const { IDKit, CredentialRequest } = window.WorldIDKitBundle;
+        
+        if (enrollmentStatus.status === 'renewal' || enrollmentStatus.status === 'reactivation') {
+          // Returning user flow - use session verification
+          await handleReturningUser(enrollmentStatus, IDKit, CredentialRequest);
+        } else if (enrollmentStatus.status === 'new' || enrollmentStatus.status === 'upgrade') {
+          // New or upgrade flow - create fresh enrollment with session
+          await handleNewEnrollment(IDKit, CredentialRequest);
+        } else {
+          // Unknown status - fail closed
+          showError('Unexpected enrollment status. Please try again.');
+          buttonEl.disabled = false;
+          verificationInProgress = false;
+        }
+      } catch (error) {
+        console.error('[Verification] Unexpected error:', error);
+        showError('Verification failed. Please try again.');
+        buttonEl.disabled = false;
+        verificationInProgress = false;
       }
     }
 
@@ -973,17 +1013,67 @@
         const data = await response.json();
         
         if (response.ok && data.success) {
-          showSuccess(`✓ Verification successful! You can now return to Telegram. Your enrollment expires ${formatExpiry(data.expiresAt)}.`);
+          // SUCCESS: Clean up IDKit request and show success state
+          verificationInProgress = false;
+          
+          // Stop/cleanup pending IDKit request
+          if (window.enrollmentRequest && typeof window.enrollmentRequest.cancel === 'function') {
+            try {
+              window.enrollmentRequest.cancel();
+            } catch (e) {
+              // Ignore cancel errors
+            }
+          }
+          
+          // Hide QR code and connector display (label + open button)
+          const qrCodeEl = document.getElementById('qrCode');
+          const connectorDisplayEl = document.getElementById('connectorDisplay');
+          if (qrCodeEl) qrCodeEl.style.display = 'none';
+          if (connectorDisplayEl) connectorDisplayEl.style.display = 'none';
+          
+          // Hide verify button
+          buttonEl.classList.add('hidden');
+          
+          // Format expiry date in plain words
+          const expiryText = formatExpiryPlainWords(data.expiresAt);
+          
+          // Show clean success state
+          const statusEl = document.getElementById('status');
+          statusEl.className = 'status success';
+          statusEl.innerHTML = `
+            <div style="text-align: center;">
+              <div style="font-size: 48px; margin-bottom: 16px;">✓</div>
+              <div style="font-size: 20px; font-weight: bold; margin-bottom: 12px;">You're verified</div>
+              <div style="margin-bottom: 24px;">${expiryText}</div>
+              <button id="returnButton" style="padding: 12px 24px; font-size: 16px; cursor: pointer; background: #0088cc; color: white; border: none; border-radius: 6px; margin-bottom: 16px;">Return to Telegram</button>
+              <div style="font-size: 12px; color: #666; margin-top: 16px;">Your enrollment status is stored encrypted and only accessible through Telegram.</div>
+            </div>
+          `;
+          
+          // Wire up Return to Telegram button
+          const returnButton = document.getElementById('returnButton');
+          if (returnButton) {
+            returnButton.addEventListener('click', () => {
+              if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.close === 'function') {
+                window.Telegram.WebApp.close();
+              } else {
+                // Fallback: show message if Telegram.WebApp.close not available
+                alert('Please close this page and return to Telegram.');
+              }
+            });
+          }
         } else {
           // SECURITY: Use textContent for error messages to prevent XSS
           const errorMsg = data.error || 'Verification failed. Please try again.';
           showError(errorMsg);
+          verificationInProgress = false;
           buttonEl.disabled = false;
         }
         
       } catch (error) {
         console.error('Proof submission error:', error);
         showError('Network error while submitting proof. Please try again.');
+        verificationInProgress = false;
         buttonEl.disabled = false;
       }
     }
@@ -1053,15 +1143,9 @@
           && sessionExpiresAt >= 0
           && sessionExpiresAt <= 2147483647;
         
-        // Compute canonical action hash if bundle export available
-        let expectedActionHash = null;
-        if (typeof window.IDKit !== 'undefined' && window.IDKit.hashAction) {
-          try {
-            expectedActionHash = window.IDKit.hashAction(session.signedChallenge.action);
-          } catch (e) {
-            // hashAction not available or failed
-          }
-        }
+        // idkit-core 4.6.0 has no hashAction export, so we cannot verify action hash
+        // Show N/A instead of fake PASS/FAIL
+        const expectedActionHash = null; // Always null - no hashAction in 4.6.0
         
         // Allowlisted SDK versions (strict primitives only)
         const allowedVersions = ['4.6.0', '4.5.0', '4.4.0', '4.3.0', '4.2.0', '4.1.0', '4.0.0'];
@@ -1145,11 +1229,11 @@
           prSignature === expectedSignature
         );
         
-        // Canonical action hash check (UNKNOWN honest when hashAction unavailable)
-        const actionState = triState(
-          expectedActionHash !== null && typeof prActionHash === 'string',
-          prActionHash === expectedActionHash
-        );
+        // Action hash check: N/A because hashAction is not exported in idkit-core 4.6.0
+        const actionState = {
+          text: 'N/A',
+          className: 'unknown'
+        };
         
         // Signed timestamp checks (only if both sides safe)
         const createdAtState = triState(
@@ -1295,8 +1379,17 @@
       
       // Replay/duplicate issues
       else if (errorCode === 'nullifier_replayed') {
-        message = 'World ID rejected this verification request as a replay. Request a fresh verification link from the bot. If this persists, share this error code with an admin.';
+        message = 'This World ID was already used for this enrollment. Please contact the group admin.';
         category = 'replay';
+        
+        // Send privacy-safe diagnostic event for nullifier replay
+        sendClientDiagnostics({
+          event: 'nullifier_replayed',
+          errorCode: 'nullifier_replayed',
+          timestamp: Date.now(),
+        }).catch(() => {
+          // Diagnostic send failed, ignore
+        });
       } else if (errorCode === 'duplicate_nonce') {
         message = 'Verification session has already been used. Please request a new verification link.';
         category = 'replay';
@@ -1378,6 +1471,7 @@
       });
       
       showError(message);
+      verificationInProgress = false;
       buttonEl.disabled = false;
     }
     
@@ -1385,6 +1479,15 @@
       const date = new Date(timestamp * 1000);
       const days = Math.floor((date - Date.now()) / (1000 * 60 * 60 * 24));
       return days > 0 ? `in ${days} days` : 'soon';
+    }
+    
+    function formatExpiryPlainWords(timestamp) {
+      const date = new Date(timestamp * 1000);
+      const days = Math.floor((date - Date.now()) / (1000 * 60 * 60 * 24));
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const dateStr = `${monthNames[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+      const daysStr = days > 0 ? `${days} days` : 'less than 1 day';
+      return `Your verification is valid until ${dateStr} (${daysStr})`;
     }
     
     // Send privacy-safe client diagnostics to server
@@ -1403,12 +1506,25 @@
           timestamp: Date.now(),
         };
         
+        // Ensure payload stays under 2KB limit (server has 2KB body limit)
+        let body = JSON.stringify(safeData);
+        if (body.length > 1800) {
+          // Payload too large - truncate non-essential fields
+          // Remove optional fields to shrink payload
+          const minimalData = {
+            event: safeData.event,
+            errorCode: safeData.errorCode,
+            timestamp: safeData.timestamp,
+          };
+          body = JSON.stringify(minimalData);
+        }
+        
         await fetch('/api/diagnostics/client', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(safeData),
+          body: body,
         });
       } catch (error) {
         // Failed to send diagnostics - log but don't fail the flow
