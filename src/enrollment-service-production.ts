@@ -20,6 +20,7 @@ import type {
 import { validateTelegramInitData } from './telegram-initdata.js';
 import type {
   IDKitResult,
+  IDKitResultSession,
   BackendVerificationResult,
   ExpectedVerificationContext,
 } from './worldid-types.js';
@@ -117,6 +118,16 @@ export interface CompleteEnrollmentRequest {
   initData: string;
   /** IDKit result from World App (contains proof + nonce) */
   idkitResult: IDKitResult;
+}
+
+/**
+ * Session verification request from returning user.
+ */
+export interface VerifySessionRequest {
+  /** Telegram initData (HMAC-validated) */
+  initData: string;
+  /** IDKit session result from World App (contains session_nullifier tuple) */
+  idkitResult: IDKitResultSession;
 }
 
 /**
@@ -621,6 +632,73 @@ export class EnrollmentService {
     return {
       signedChallenge: serviceChallenge,
     };
+  }
+
+  /**
+   * Create session challenge for returning user (no action, session-only).
+   * 
+   * For users with existing sessions who want to re-verify.
+   * Challenge is NOT bound to a signal (session proofs don't use signals).
+   */
+  async createSessionChallenge(initData: string): Promise<CreateChallengeResult> {
+    // Authenticate Telegram initData
+    const initDataValidation = validateTelegramInitData(initData, this.telegramConfig);
+
+    if (!initDataValidation.valid || !initDataValidation.user) {
+      throw new Error(`Telegram initData validation failed: ${initDataValidation.error}`);
+    }
+
+    const authenticatedUserId = initDataValidation.user.id;
+
+    // Verify user has an existing enrollment with session
+    const existingEnrollment = await this.findEnrollment(authenticatedUserId);
+    if (!existingEnrollment) {
+      throw new Error('No existing enrollment found (use createChallenge for initial enrollment)');
+    }
+
+    if (existingEnrollment.revoked) {
+      throw new Error('Enrollment has been revoked (cannot create session challenge)');
+    }
+
+    if (existingEnrollment.expired) {
+      throw new Error('Enrollment has expired (use createChallenge to re-enroll)');
+    }
+
+    if (!existingEnrollment.sessionId) {
+      throw new Error('No session ID found (enrollment does not support session verification)');
+    }
+
+    // Use SDK adapter to create session-only challenge (no action)
+    const { signedChallenge, expectedNonce } = this.challengeAdapter.createSessionChallenge();
+
+    // Store challenge session (session proofs still need nonce tracking)
+    const now = this.clock.nowSeconds();
+    const expiresAt = now + this.challengeTtlSeconds;
+    const generation = this.getNextGeneration();
+
+    this.db.prepare(`
+      INSERT INTO challenge_sessions (
+        nonce,
+        telegram_user_id,
+        action,
+        signal_hash,
+        expires_at,
+        created_at,
+        created_at_seconds,
+        generation
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      expectedNonce,
+      authenticatedUserId,
+      this.action, // Still track action for replay protection
+      '', // No signal for session proofs
+      expiresAt,
+      this.clock.nowISO(),
+      now,
+      generation
+    );
+
+    return { signedChallenge };
   }
 
   /**
@@ -1157,22 +1235,20 @@ export class EnrollmentService {
   /**
    * Verify returning user with session proof (World ID 4.0 session proofs).
    * 
-   * NOT YET IMPLEMENTED - Requires:
-   * 1. Load saved session_id from enrollment
-   * 2. Generate RP challenge WITHOUT action (session-only)
-   * 3. Accept IDKitResultSession (no action, contains session_nullifier tuple)
-   * 4. Verify session_id matches saved enrollment
-   * 5. Extract session_nullifier tuple [nullifier, action] from response
-   * 6. Check replay: query session_nullifier_claims
-   * 7. Record claim after successful verification
+   * Flow:
+   * 1. Authenticate Telegram initData
+   * 2. Load existing enrollment with saved session_id
+   * 3. Validate challenge nonce matches IDKit result
+   * 4. Verify session_id matches enrollment
+   * 5. Extract and verify session_nullifier tuple [nullifier, action]
+   * 6. Verify via backend (World ID verification API)
+   * 7. Atomically: consume challenge, check replay, record claim, verify generation fence
    * 
-   * TODO: Implement full session verification flow
+   * Security: Fail-closed on any mismatch (session, account, nullifier, action, environment)
    */
-  async verifySession(params: {
-    initData: string;
-  }): Promise<CompleteEnrollmentResult> {
-    // Authenticate Telegram initData
-    const initDataValidation = validateTelegramInitData(params.initData, this.telegramConfig);
+  async verifySession(request: VerifySessionRequest): Promise<CompleteEnrollmentResult> {
+    // Step 1: Authenticate Telegram initData
+    const initDataValidation = validateTelegramInitData(request.initData, this.telegramConfig);
     if (!initDataValidation.valid || !initDataValidation.user) {
       return {
         success: false,
@@ -1182,7 +1258,7 @@ export class EnrollmentService {
 
     const authenticatedUserId = initDataValidation.user.id;
 
-    // Load existing enrollment with session
+    // Step 2: Load existing enrollment with session
     const enrollment = await this.findEnrollment(authenticatedUserId);
     if (!enrollment) {
       return {
@@ -1212,16 +1288,216 @@ export class EnrollmentService {
       };
     }
 
-    // TODO: Implement remaining steps:
-    // - Generate challenge WITHOUT action (session-only RP signature)
-    // - Accept IDKitResultSession with session_nullifier tuple
-    // - Verify session proof
-    // - Check and record session_nullifier claim for replay protection
-    // - Return success with session verification
+    // Step 3: Validate session_id matches enrollment (immutable binding)
+    if (request.idkitResult.session_id !== enrollment.sessionId) {
+      return {
+        success: false,
+        error: 'Session ID mismatch (session belongs to different enrollment)',
+      };
+    }
+
+    // Step 4: Load challenge session for nonce verification
+    const challengeRow = this.db.prepare(`
+      SELECT nonce, telegram_user_id, action, expires_at, created_at_seconds, generation
+      FROM challenge_sessions
+      WHERE nonce = ?
+    `).get(request.idkitResult.nonce) as any;
+
+    if (!challengeRow) {
+      return {
+        success: false,
+        error: 'Challenge session not found',
+      };
+    }
+
+    // Step 5: Verify challenge not expired
+    const now = this.clock.nowSeconds();
+    if (challengeRow.expires_at <= now) {
+      return {
+        success: false,
+        error: 'Challenge session expired',
+      };
+    }
+
+    // Step 6: Verify challenge bound to authenticated user
+    if (challengeRow.telegram_user_id !== authenticatedUserId) {
+      return {
+        success: false,
+        error: 'Challenge bound to different user',
+      };
+    }
+
+    // Step 7: Verify action matches service action (session proofs include action in tuple)
+    if (challengeRow.action !== this.action) {
+      return {
+        success: false,
+        error: 'Challenge action mismatch',
+      };
+    }
+
+    // Step 8: Extract session_nullifier tuple from first credential response
+    if (!request.idkitResult.responses || request.idkitResult.responses.length === 0) {
+      return {
+        success: false,
+        error: 'No credential responses in session proof',
+      };
+    }
+
+    const sessionResponse = request.idkitResult.responses[0];
+    if (!sessionResponse.session_nullifier || sessionResponse.session_nullifier.length !== 2) {
+      return {
+        success: false,
+        error: 'Invalid session_nullifier tuple (expected [nullifier, action])',
+      };
+    }
+
+    const [sessionNullifier, sessionAction] = sessionResponse.session_nullifier;
+
+    // Step 9: Verify action in tuple matches service action
+    if (sessionAction !== this.action) {
+      return {
+        success: false,
+        error: 'Session nullifier action mismatch',
+      };
+    }
+
+    // Step 10: Verify nullifier matches enrollment (session must be for THIS enrollment)
+    if (sessionNullifier !== enrollment.nullifier) {
+      return {
+        success: false,
+        error: 'Session nullifier does not match enrollment (wrong World ID)',
+      };
+    }
+
+    // Step 11: Verify session proof via backend (async, outside transaction)
+    // Note: World ID verification API validates the cryptographic proof
+    let verificationResult: BackendVerificationResult;
+    try {
+      verificationResult = await this.verificationClient.verify(
+        request.idkitResult as any, // IDKitResultSession is compatible with verify
+        {
+          action: this.action,
+          nonce: request.idkitResult.nonce,
+          signalHash: null as any, // No signal in session proofs
+        }
+      );
+    } catch (error) {
+      return {
+        success: false,
+        error: 'Session verification service unavailable',
+      };
+    }
+
+    if (!verificationResult.success) {
+      return {
+        success: false,
+        error: 'Session proof verification failed',
+      };
+    }
+
+    // Step 12: Atomic transaction: consume challenge, check replay, record claim, verify fence
+    const transaction = this.db.transaction(() => {
+      const txNow = this.clock.nowSeconds();
+
+      // Re-check challenge still exists (race protection)
+      const recheckChallenge = this.db.prepare(`
+        SELECT nonce, telegram_user_id, expires_at, generation
+        FROM challenge_sessions
+        WHERE nonce = ?
+      `).get(request.idkitResult.nonce) as any;
+
+      if (!recheckChallenge) {
+        throw new Error('Challenge session was consumed by another request');
+      }
+
+      if (recheckChallenge.expires_at <= txNow) {
+        throw new Error('Challenge session expired during verification');
+      }
+
+      if (recheckChallenge.telegram_user_id !== authenticatedUserId) {
+        throw new Error('Challenge account mismatch in transaction');
+      }
+
+      // Check generation fence (independent of enrollment state)
+      const fenceCheck = this.db.prepare(`
+        SELECT fence_generation
+        FROM generation_fences
+        WHERE telegram_user_id = ? AND action = ?
+      `).get(authenticatedUserId, this.action) as any;
+
+      if (fenceCheck && recheckChallenge.generation < fenceCheck.fence_generation) {
+        throw new Error('Challenge predates revocation fence (fresh verification required)');
+      }
+
+      // Check session nullifier replay (composite key: session_nullifier + action)
+      const replayCheck = this.db.prepare(`
+        SELECT session_nullifier, action
+        FROM session_nullifier_claims
+        WHERE session_nullifier = ? AND action = ?
+      `).get(sessionNullifier, sessionAction) as any;
+
+      if (replayCheck) {
+        throw new Error('Session nullifier already used (replay attack detected)');
+      }
+
+      // Record session nullifier claim (prevents replay)
+      this.db.prepare(`
+        INSERT INTO session_nullifier_claims (
+          session_nullifier,
+          action,
+          session_id,
+          telegram_user_id,
+          nullifier,
+          claimed_at,
+          claimed_at_iso
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        sessionNullifier,
+        sessionAction,
+        enrollment.sessionId,
+        authenticatedUserId,
+        enrollment.nullifier,
+        txNow,
+        this.clock.nowISO()
+      );
+
+      // Consume challenge (delete)
+      this.db.prepare('DELETE FROM challenge_sessions WHERE nonce = ?').run(request.idkitResult.nonce);
+
+      // Update enrollment expiry (renewal)
+      const newExpiresAt = txNow + this.enrollmentTtlSeconds;
+      this.db.prepare(`
+        UPDATE enrollments
+        SET expires_at = ?, created_at = ?
+        WHERE telegram_user_id = ? AND action = ?
+      `).run(
+        newExpiresAt,
+        this.clock.nowISO(),
+        authenticatedUserId,
+        this.action
+      );
+
+      return { expiresAt: newExpiresAt };
+    });
+
+    // Execute transaction
+    let result;
+    try {
+      result = transaction();
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Session verification transaction failed',
+      };
+    }
 
     return {
-      success: false,
-      error: 'Session verification not yet implemented (TODO)',
+      success: true,
+      telegramUserId: authenticatedUserId,
+      nullifier: enrollment.nullifier,
+      expiresAt: result.expiresAt,
+      sessionId: enrollment.sessionId ?? undefined,
+      protocolVersion: enrollment.protocolVersion ?? undefined,
     };
   }
 }
