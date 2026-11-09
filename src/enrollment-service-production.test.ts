@@ -71,10 +71,11 @@ class MockVerificationClient implements BackendVerificationClient {
       return response;
     }
 
-    // Default success
+    // Default success - use 0x-hex nullifier from proof
+    const nullifier = idkitResult.responses[0]?.nullifier || '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
     return {
       success: true,
-      nullifier: '12345678901234567890',
+      nullifier,
       issuerSchemaId: 1,
       expiresAtMin: Math.floor(Date.now() / 1000) + 86400,
     };
@@ -103,7 +104,7 @@ function createValidInitData(userId: number, botToken: string): string {
 }
 
 // Create IDKitResult (real SDK structure)
-function createIDKitResult(nonce: string, action: string, signalHash: string): IDKitResult {
+function createIDKitResult(nonce: string, action: string, signalHash: string, nullifier?: string): IDKitResult {
   return {
     protocol_version: '4.0',
     nonce,
@@ -113,7 +114,7 @@ function createIDKitResult(nonce: string, action: string, signalHash: string): I
         identifier: 'proof_of_human',
         signal_hash: signalHash,
         proof: ['1', '2', '3', '4', '5'],
-        nullifier: '12345678901234567890',
+        nullifier: nullifier || '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         issuer_schema_id: 1,
         expires_at_min: Math.floor(Date.now() / 1000) + 86400,
       },
@@ -255,7 +256,7 @@ describe('EnrollmentService Production', () => {
 
     it('denies duplicate active enrollment per account', async () => {
       const userId = 12345;
-      const nullifier = '12345678901234567890';
+      const nullifier = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
       const initData = createValidInitData(userId, TEST_BOT_TOKEN);
 
       // First enrollment
@@ -268,7 +269,7 @@ describe('EnrollmentService Production', () => {
       });
       await service.completeEnrollment({
         initData,
-        idkitResult: createIDKitResult(challenge1.signedChallenge.nonce, TEST_ACTION, challenge1.signedChallenge.signalHash),
+        idkitResult: createIDKitResult(challenge1.signedChallenge.nonce, TEST_ACTION, challenge1.signedChallenge.signalHash, nullifier),
       });
 
       // Second attempt while still enrolled
@@ -416,7 +417,7 @@ describe('EnrollmentService Production', () => {
   describe('revocation lifecycle', () => {
     it('blocks pre-revocation challenge from completing', async () => {
       const userId = 12345;
-      const nullifier = '99999999999999999999';
+      const nullifier = '0x9999999999999999999999999999999999999999999999999999999999999999';
 
       // Create challenge BEFORE revocation
       const initData = createValidInitData(userId, TEST_BOT_TOKEN);
@@ -432,7 +433,7 @@ describe('EnrollmentService Production', () => {
       });
       await service.completeEnrollment({
         initData,
-        idkitResult: createIDKitResult(challenge1.signedChallenge.nonce, TEST_ACTION, challenge1.signedChallenge.signalHash),
+        idkitResult: createIDKitResult(challenge1.signedChallenge.nonce, TEST_ACTION, challenge1.signedChallenge.signalHash, nullifier),
       });
 
       // Revoke account
@@ -449,7 +450,7 @@ describe('EnrollmentService Production', () => {
 
       const result = await service.completeEnrollment({
         initData,
-        idkitResult: createIDKitResult(oldChallenge.signedChallenge.nonce, TEST_ACTION, oldChallenge.signedChallenge.signalHash),
+        idkitResult: createIDKitResult(oldChallenge.signedChallenge.nonce, TEST_ACTION, oldChallenge.signedChallenge.signalHash, nullifier),
       });
 
       assert.equal(result.success, false);
@@ -458,7 +459,7 @@ describe('EnrollmentService Production', () => {
 
     it('allows post-revocation fresh challenge to restore account', async () => {
       const userId = 12345;
-      const nullifier = '88888888888888888888';
+      const nullifier = '0x8888888888888888888888888888888888888888888888888888888888888888';
 
       // Initial enrollment
       const initData = createValidInitData(userId, TEST_BOT_TOKEN);
@@ -471,7 +472,7 @@ describe('EnrollmentService Production', () => {
       });
       await service.completeEnrollment({
         initData,
-        idkitResult: createIDKitResult(challenge1.signedChallenge.nonce, TEST_ACTION, challenge1.signedChallenge.signalHash),
+        idkitResult: createIDKitResult(challenge1.signedChallenge.nonce, TEST_ACTION, challenge1.signedChallenge.signalHash, nullifier),
       });
 
       // Revoke account
@@ -493,7 +494,7 @@ describe('EnrollmentService Production', () => {
       // Should succeed: post-revocation fresh verification restores access
       const result = await service.completeEnrollment({
         initData,
-        idkitResult: createIDKitResult(challenge2.signedChallenge.nonce, TEST_ACTION, challenge2.signedChallenge.signalHash),
+        idkitResult: createIDKitResult(challenge2.signedChallenge.nonce, TEST_ACTION, challenge2.signedChallenge.signalHash, nullifier),
       });
 
       assert.equal(result.success, true);
@@ -554,7 +555,7 @@ describe('EnrollmentService Production', () => {
     it('prevents nullifier reuse after revocation (immutable ownership)', async () => {
       const userId1 = 12345;
       const userId2 = 67890;
-      const sharedNullifier = '66666666666666666666';
+      const sharedNullifier = '0x6666666666666666666666666666666666666666666666666666666666666666';
 
       // First account enrolls
       const initData1 = createValidInitData(userId1, TEST_BOT_TOKEN);
@@ -567,7 +568,7 @@ describe('EnrollmentService Production', () => {
       });
       await service.completeEnrollment({
         initData: initData1,
-        idkitResult: createIDKitResult(challenge1.signedChallenge.nonce, TEST_ACTION, challenge1.signedChallenge.signalHash),
+        idkitResult: createIDKitResult(challenge1.signedChallenge.nonce, TEST_ACTION, challenge1.signedChallenge.signalHash, sharedNullifier),
       });
 
       // Revoke first account (nullifier remains permanently bound)
@@ -585,7 +586,7 @@ describe('EnrollmentService Production', () => {
       });
       const result2 = await service.completeEnrollment({
         initData: initData2,
-        idkitResult: createIDKitResult(challenge2.signedChallenge.nonce, TEST_ACTION, challenge2.signedChallenge.signalHash),
+        idkitResult: createIDKitResult(challenge2.signedChallenge.nonce, TEST_ACTION, challenge2.signedChallenge.signalHash, sharedNullifier),
       });
       assert.equal(result2.success, false, 'Must prevent nullifier theft after revocation');
       assert.match(result2.error || '', /different account|immutable/i, 'Error must mention immutable binding');
@@ -874,7 +875,7 @@ describe('EnrollmentService Production', () => {
 
       try {
         const userId = 33333;
-        const nullifier = '0xexpired_renewal';
+        const nullifier = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
         const initData = createValidInitData(userId, TEST_BOT_TOKEN);
 
         // Initial enrollment with 1 day TTL
@@ -889,7 +890,8 @@ describe('EnrollmentService Production', () => {
         const idkitResult1 = createIDKitResult(
           challenge1.signedChallenge.nonce,
           TEST_ACTION,
-          challenge1.signedChallenge.signalHash
+          challenge1.signedChallenge.signalHash,
+          nullifier
         );
         const result1 = await shortTtlService.completeEnrollment({ initData, idkitResult: idkitResult1 });
         assert.equal(result1.success, true);
@@ -912,7 +914,8 @@ describe('EnrollmentService Production', () => {
         const idkitResult2 = createIDKitResult(
           challenge2.signedChallenge.nonce,
           TEST_ACTION,
-          challenge2.signedChallenge.signalHash
+          challenge2.signedChallenge.signalHash,
+          nullifier
         );
         const renewResult = await shortTtlService.completeEnrollment({ 
           initData: initData2, 
