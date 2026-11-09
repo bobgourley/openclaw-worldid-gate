@@ -1003,6 +1003,20 @@ export class EnrollmentService {
   }
 
   /**
+   * Get enrollment status for testing (simple enrolled/revoked flags).
+   */
+  async getEnrollmentStatus(telegramUserId: number): Promise<{ enrolled: boolean; revoked: boolean }> {
+    const enrollment = await this.findEnrollment(telegramUserId);
+    if (!enrollment) {
+      return { enrolled: false, revoked: false };
+    }
+    return {
+      enrolled: true,
+      revoked: enrollment.revoked,
+    };
+  }
+
+  /**
    * Revoke enrollment by Telegram account (administrative action).
    *
    * Policy: Per-account revocation with fresh verification restore.
