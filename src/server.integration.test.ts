@@ -391,6 +391,19 @@ describe('Production server integration', () => {
         !html.includes('never leaves your device'),
         'Should not falsely claim proof never leaves device'
       );
+
+      assert.ok(
+        html.includes('Verify your unique personhood with your World ID'),
+        'Enrollment subtitle must reference World ID'
+      );
+      assert.ok(
+        !html.includes('Verify your unique personhood to access this Telegram group'),
+        'Old Telegram-group subtitle must be gone'
+      );
+      assert.ok(
+        html.includes('https://www.toolsforhumanity.com/'),
+        'Must include Tools for Humanity learn-more URL'
+      );
     });
   });
 

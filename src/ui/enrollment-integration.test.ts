@@ -18,6 +18,35 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe('Frontend Integration Patterns', () => {
+  it('shows World ID personhood subtitle and Tools for Humanity learn-more link', () => {
+    const html = readFileSync(join(__dirname, 'enrollment.html'), 'utf-8');
+
+    assert.ok(
+      html.includes('Verify your unique personhood with your World ID'),
+      'Subtitle must mention World ID personhood'
+    );
+    assert.ok(
+      !html.includes('Verify your unique personhood to access this Telegram group'),
+      'Old Telegram-group subtitle must be removed'
+    );
+    assert.ok(
+      html.includes('Our service receives no raw biometric data.'),
+      'Privacy sentence must remain'
+    );
+    assert.ok(
+      html.includes('https://www.toolsforhumanity.com/'),
+      'Must link to Tools for Humanity'
+    );
+    assert.ok(
+      html.includes('id="learnMoreLink"'),
+      'Learn-more link must have a stable id for openLink wiring'
+    );
+    assert.ok(
+      html.includes('Telegram.WebApp.openLink'),
+      'Must prefer Telegram.WebApp.openLink for external URLs'
+    );
+  });
+
   it('uses IDKit.request with session_id: create for new enrollment', () => {
     const html = readFileSync(join(__dirname, 'enrollment.html'), 'utf-8');
     
