@@ -29,6 +29,7 @@ const config = {
   // Service configuration
   action: process.env.WORLDID_ACTION || 'unconfigured-test-action',
   databasePath: process.env.DATABASE_PATH || '/tmp/enrollment.db',
+  enrollmentTtlDays: process.env.WORLDID_ENROLLMENT_TTL_DAYS ? parseInt(process.env.WORLDID_ENROLLMENT_TTL_DAYS, 10) : 5,
   
   // HTTP configuration
   httpHost: process.env.HTTP_HOST || '127.0.0.1',
@@ -49,6 +50,28 @@ const config = {
   diagnosticLogEnabled: process.env.DIAGNOSTIC_LOG_ENABLED === 'true',
   diagnosticLogDir: process.env.DIAGNOSTIC_LOG_DIR || '',  // No default, must be explicit
 };
+
+// Validate enrollment TTL (fail-closed: exit on invalid values)
+function validateEnrollmentTtl(): void {
+  const ttlDays = config.enrollmentTtlDays;
+  
+  if (!Number.isFinite(ttlDays) || isNaN(ttlDays)) {
+    console.error('FATAL: WORLDID_ENROLLMENT_TTL_DAYS must be a finite number, got:', process.env.WORLDID_ENROLLMENT_TTL_DAYS);
+    process.exit(1);
+  }
+  
+  if (!Number.isSafeInteger(ttlDays)) {
+    console.error('FATAL: WORLDID_ENROLLMENT_TTL_DAYS must be a safe integer, got:', ttlDays);
+    process.exit(1);
+  }
+  
+  if (ttlDays < 1 || ttlDays > 365) {
+    console.error(`FATAL: WORLDID_ENROLLMENT_TTL_DAYS must be between 1 and 365 days, got: ${ttlDays}`);
+    process.exit(1);
+  }
+  
+  console.log(`Enrollment TTL: ${ttlDays} days (${ttlDays * 86400} seconds)`);
+}
 
 // Production readiness check (fail-closed)
 function checkProductionReadiness(): { ready: boolean; issues: string[] } {
@@ -118,6 +141,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Validate enrollment TTL (fail-closed)
+  validateEnrollmentTtl();
+
   console.log('Starting enrollment service...');
   console.log(`Database: ${config.databasePath}`);
   console.log(`Action scope: ${config.action}`);
@@ -168,6 +194,7 @@ async function main(): Promise<void> {
   });
 
   // Create enrollment service
+  const enrollmentTtlSeconds = config.enrollmentTtlDays * 86400;
   const enrollmentService = new EnrollmentService({
     dbPath: config.databasePath,
     challengeAdapter,
@@ -175,7 +202,7 @@ async function main(): Promise<void> {
     telegramBotToken: config.telegramBotToken,
     action: config.action,
     challengeTtlSeconds: 300,
-    enrollmentTtlSeconds: 2592000, // 30 days
+    enrollmentTtlSeconds: enrollmentTtlSeconds,
     diagnosticLogger,
   });
 

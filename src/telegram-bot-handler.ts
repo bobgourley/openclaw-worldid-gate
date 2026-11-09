@@ -403,19 +403,16 @@ export class TelegramBotHandler {
     try {
       // Check existing enrollment
       const existing = await this.enrollmentService.findEnrollment(userId);
+      let challengeMode: 'renewal' | 'reactivation' | undefined;
       
       if (existing && !existing.revoked && !existing.expired) {
-        const expiryDate = new Date(existing.expiresAt * 1000);
-        const daysRemaining = Math.floor((expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-        
-        await this.transport.sendMessage(
-          userId,
-          `✅ You are already verified!\n\n` +
-          `Your enrollment expires in ${daysRemaining} days (${expiryDate.toLocaleDateString()}).\n\n` +
-          `Use /status to check your verification status.`
-        );
-        return;
+        // Early renewal: offer renewal via proveSession to extend expiry
+        challengeMode = 'renewal';
+      } else if (existing && existing.revoked) {
+        // Reactivation: explicitly marked as revoked
+        challengeMode = 'reactivation';
       }
+      // Otherwise: new enrollment (challengeMode undefined)
 
       // Create Mini App initData for authenticated session
       // Note: In production, this would come from Telegram Mini App context
@@ -435,7 +432,14 @@ export class TelegramBotHandler {
       const initData = `user=${encodeURIComponent(user)}&auth_date=${authDate}&hash=${hash}`;
 
       // Create challenge session (authenticated to this user)
-      const challengeResult = await this.enrollmentService.createChallenge(initData);
+      let challengeResult;
+      if (challengeMode) {
+        // Early renewal or reactivation: use proveSession
+        challengeResult = await this.enrollmentService.createSessionChallenge(initData, { mode: challengeMode });
+      } else {
+        // New enrollment: create new uniqueness challenge
+        challengeResult = await this.enrollmentService.createChallenge(initData);
+      }
       
       if (!challengeResult.signedChallenge) {
         await this.transport.sendMessage(
