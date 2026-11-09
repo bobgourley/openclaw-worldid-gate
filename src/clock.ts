@@ -27,3 +27,6 @@ export class FakeClock implements Clock {
     this.currentTime = unixSeconds;
   }
 }
+
+// Alias for compatibility with test files
+export { FakeClock as FrozenClock };

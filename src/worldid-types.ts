@@ -166,14 +166,18 @@ export interface V4VerifyResponse {
  * Backend builds this from stored challenge session + requester binding.
  */
 export interface ExpectedVerificationContext {
-  /** Expected action from stored challenge */
-  action: string;
+  /** Expected action from stored challenge (null for session proofs) */
+  action: string | null;
   /** Expected nonce from stored challenge */
   nonce: string;
-  /** Expected signal hash from signal binding (0x-prefixed hex) */
-  signalHash: string;
+  /** Expected signal hash from signal binding (0x-prefixed hex, null for session proofs) */
+  signalHash: string | null;
   /** Require proof_of_human credential (issuer_schema_id: 1), default true */
   requireProofOfHuman?: boolean;
+  /** Server-expected proof type from challenge mode (renewal/reactivation => session, new => uniqueness) */
+  expectedMode?: 'uniqueness' | 'session';
+  /** Expected session_id for session proofs (from enrollment record) */
+  sessionId?: string;
 }
 
 /**

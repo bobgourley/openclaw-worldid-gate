@@ -114,7 +114,7 @@ describe("Session-based enrollment", () => {
       const store = new SqliteEnrollmentStore(getTestDb());
 
       const enrollment1: Enrollment = {
-        nullifier: "0xsame",
+        nullifier: "0x0000000000000000000000000000000000000000000000000000000000000afa",
         telegramUserId: 12345,
         action: "openclaw-enroll-v2",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
@@ -126,7 +126,7 @@ describe("Session-based enrollment", () => {
       await store.createEnrollment(enrollment1);
 
       const enrollment2: Enrollment = {
-        nullifier: "0xsame",
+        nullifier: "0x0000000000000000000000000000000000000000000000000000000000000afa",
         telegramUserId: 67890,
         action: "openclaw-enroll-v2",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
@@ -426,7 +426,7 @@ describe("Session-based enrollment", () => {
       const store = new SqliteEnrollmentStore(getTestDb());
 
       const legacyEnrollment: Enrollment = {
-        nullifier: "0xlegacy",
+        nullifier: "0x000000000000000000000000000000000000000000000000000000000000bead",
         telegramUserId: 12345,
         action: "openclaw-verify",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
@@ -445,7 +445,7 @@ describe("Session-based enrollment", () => {
       const store = new SqliteEnrollmentStore(getTestDb());
 
       const legacyEnrollment: Enrollment = {
-        nullifier: "0xlegacy",
+        nullifier: "0x000000000000000000000000000000000000000000000000000000000000bead",
         telegramUserId: 12345,
         action: "openclaw-verify",
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
@@ -470,7 +470,7 @@ describe("Session-based enrollment", () => {
       const foundLegacy = await store.findEnrollment(12345, "openclaw-verify", new Date());
       const foundNew = await store.findEnrollment(12345, "openclaw-enroll-v2", new Date());
 
-      assert.strictEqual(foundLegacy?.nullifier, "0xlegacy");
+      assert.strictEqual(foundLegacy?.nullifier, "0x000000000000000000000000000000000000000000000000000000000000bead");
       assert.strictEqual(foundLegacy?.sessionId, null);
 
       assert.strictEqual(foundNew?.nullifier, "0xnew");

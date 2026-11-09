@@ -762,7 +762,7 @@ describe('EnrollmentService Production', () => {
   describe('revocation and renewal lifecycle', () => {
     it('allows fresh enrollment after revocation with monotonic generation check', async () => {
       const userId = 11111;
-      const nullifier = '0xmonotonic_test';
+      const nullifier = '0x000000000000000000000000000000000000000000000000000000000001face';
       const initData = createValidInitData(userId, TEST_BOT_TOKEN);
 
       // Initial enrollment
@@ -813,7 +813,7 @@ describe('EnrollmentService Production', () => {
 
     it('rejects challenge created before revocation (monotonic generation)', async () => {
       const userId = 22222;
-      const nullifier = '0xpre_revoke_challenge';
+      const nullifier = '0x000000000000000000000000000000000000000000000000000000000002face';
       const initData = createValidInitData(userId, TEST_BOT_TOKEN);
       
       // Create challenge BEFORE revocation

@@ -127,11 +127,32 @@ export class WorldIdHttpVerifier {
     }
 
     // Discriminate between uniqueness and session proofs
-    const isSessionProof = 'session_id' in idkitResult && !('action' in idkitResult);
-    const isUniquenessProof = 'action' in idkitResult;
+    // SECURITY: Use server-expected mode from challenge, not just client shape
+    const clientHasSessionShape = 'session_id' in idkitResult && !('action' in idkitResult);
+    const clientHasUniquenessShape = 'action' in idkitResult;
 
-    if (!isSessionProof && !isUniquenessProof) {
+    if (!clientHasSessionShape && !clientHasUniquenessShape) {
       return { success: false, error: 'Cannot determine proof type (missing both action and session_id)' };
+    }
+
+    // Use server-expected mode if provided (from challenge), otherwise infer from client shape
+    const isSessionProof = expectedContext.expectedMode === 'session' 
+      || (expectedContext.expectedMode === undefined && clientHasSessionShape);
+    const isUniquenessProof = expectedContext.expectedMode === 'uniqueness'
+      || (expectedContext.expectedMode === undefined && clientHasUniquenessShape);
+
+    // SECURITY: Reject if client proof shape disagrees with server-expected mode
+    if (expectedContext.expectedMode === 'session' && !clientHasSessionShape) {
+      return {
+        success: false,
+        error: 'Proof shape mismatch: expected session proof (has session_id), got uniqueness proof (has action)',
+      };
+    }
+    if (expectedContext.expectedMode === 'uniqueness' && !clientHasUniquenessShape) {
+      return {
+        success: false,
+        error: 'Proof shape mismatch: expected uniqueness proof (has action), got session proof (has session_id)',
+      };
     }
 
     if (idkitResult.nonce !== expectedContext.nonce) {
@@ -192,6 +213,14 @@ export class WorldIdHttpVerifier {
     if (isSessionProof) {
       // Session proofs do NOT have action field (per World ID 4.0 spec)
       // Session proofs have session_nullifier tuple, NOT nullifier field
+      
+      // Validate session_id matches expected (if provided by server)
+      if (expectedContext.sessionId && idkitResult.session_id !== expectedContext.sessionId) {
+        return {
+          success: false,
+          error: `Session ID mismatch: expected ${expectedContext.sessionId}, got ${idkitResult.session_id}`,
+        };
+      }
       
       // Validate session_nullifier tuple exists
       if (!('session_nullifier' in response) || !Array.isArray(response.session_nullifier)) {

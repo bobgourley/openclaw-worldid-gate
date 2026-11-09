@@ -861,7 +861,10 @@ export class EnrollmentService {
     try {
       verificationResult = await this.verificationClient.verify(
         request.idkitResult,
-        expectedContext
+        {
+          ...expectedContext,
+          expectedMode: 'uniqueness', // Enrollment always uses uniqueness proofs
+        }
       );
       
       const verifyDuration = Date.now() - verifyStart;
@@ -1473,9 +1476,11 @@ export class EnrollmentService {
       verificationResult = await this.verificationClient.verify(
         request.idkitResult as any, // IDKitResultSession is compatible with verify
         {
-          action: null as any, // Session proofs do not verify against enrollment action
+          action: null, // Session proofs do not verify against enrollment action
           nonce: request.idkitResult.nonce,
-          signalHash: null as any, // No signal in session proofs
+          signalHash: null, // No signal in session proofs
+          expectedMode: 'session', // Renewal/reactivation use session proofs
+          sessionId: enrollment.sessionId, // Expected session_id from enrollment
         }
       );
     } catch (error) {

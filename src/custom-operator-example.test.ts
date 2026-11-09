@@ -30,7 +30,7 @@ describe('Custom operator test (documented example)', () => {
     
     // Simulate World ID proof for Telegram user 123456789
     const telegramUserId = 123456789;
-    const nullifier = '0xtest_nullifier_123';
+    const nullifier = '0x0000000000000000000000000000000000000000000000000000000000000123';
     verifier.addValidNullifier(nullifier);
     const proof = createWorldIdProof({ 
       nullifier, 

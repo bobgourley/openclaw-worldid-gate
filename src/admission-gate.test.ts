@@ -131,7 +131,7 @@ describe('AdmissionGate', () => {
     it('rejects revoked enrollment with ZERO downstream calls', async () => {
       const { gate, verifier, store } = createGate();
       const userId = 33333;
-      const nullifier = '0xvalid123';
+      const nullifier = '0x00000000000000000000000000000000000000000000000000000000000001ab';
 
       verifier.addValidNullifier(nullifier);
       const proof = createWorldIdProof({ nullifier, action: TEST_CONFIG.action });
@@ -158,7 +158,7 @@ describe('AdmissionGate', () => {
       const clock = new FakeClock(1000000);
       const { gate, verifier } = createGate(clock);
       const userId = 44444;
-      const nullifier = '0xvalid456';
+      const nullifier = '0x00000000000000000000000000000000000000000000000000000000000004ab';
 
       verifier.addValidNullifier(nullifier);
       const proof = createWorldIdProof({ nullifier, action: TEST_CONFIG.action });
@@ -186,7 +186,7 @@ describe('AdmissionGate', () => {
       const clock = new FakeClock(2000000);
       const { gate, verifier } = createGate(clock);
       const userId = 44445;
-      const nullifier = '0xexact_boundary';
+      const nullifier = '0x000000000000000000000000000000000000000000000000000000000000aced';
 
       verifier.addValidNullifier(nullifier);
       const proof = createWorldIdProof({ nullifier, action: TEST_CONFIG.action });
@@ -209,7 +209,7 @@ describe('AdmissionGate', () => {
       const clock = new FakeClock(3000000);
       const { gate, verifier } = createGate(clock);
       const userId = 44446;
-      const nullifier = '0xbefore_expiry';
+      const nullifier = '0x000000000000000000000000000000000000000000000000000000000000beef';
 
       verifier.addValidNullifier(nullifier);
       const proof = createWorldIdProof({ nullifier, action: TEST_CONFIG.action });
@@ -230,7 +230,7 @@ describe('AdmissionGate', () => {
     it('rejects action mismatch with ZERO downstream calls', async () => {
       const { gate, verifier } = createGate();
       const userId = 55555;
-      const nullifier = '0xvalid789';
+      const nullifier = '0x00000000000000000000000000000000000000000000000000000000000007ab';
 
       verifier.addValidNullifier(nullifier);
       const proof = createWorldIdProof({ nullifier, action: 'different-action' });
@@ -301,7 +301,7 @@ describe('AdmissionGate', () => {
     it('rejects verification service outage with ZERO downstream calls', async () => {
       const { gate, verifier } = createGate();
       const userId = 88888;
-      const nullifier = '0xoutage123';
+      const nullifier = '0x000000000000000000000000000000000000000000000000000000000000dead';
 
       verifier.setSimulateOutage(true);
       const proof = createWorldIdProof({ nullifier, action: TEST_CONFIG.action });
@@ -323,7 +323,7 @@ describe('AdmissionGate', () => {
     it('admits valid enrolled user and allows downstream calls', async () => {
       const { gate, verifier } = createGate();
       const userId = 99999;
-      const nullifier = '0xgood123';
+      const nullifier = '0x0000000000000000000000000000000000000000000000000000000000000cad';
 
       verifier.addValidNullifier(nullifier);
       const proof = createWorldIdProof({ nullifier, action: TEST_CONFIG.action });
@@ -365,8 +365,8 @@ describe('AdmissionGate', () => {
     it('rejects duplicate enrollment attempt', async () => {
       const { gate, verifier } = createGate();
       const userId = 10101;
-      const nullifier1 = '0xfirst123';
-      const nullifier2 = '0xsecond456';
+      const nullifier1 = '0x00000000000000000000000000000000000000000000000000000000000001ce123';
+      const nullifier2 = '0x0000000000000000000000000000000000000000000000000000000000000bad';
 
       verifier.addValidNullifier(nullifier1);
       verifier.addValidNullifier(nullifier2);
@@ -439,7 +439,7 @@ describe('AdmissionGate', () => {
 
     it('rejects enrollment with negative user ID', async () => {
       const { gate, verifier } = createGate();
-      const nullifier = '0xnegative123';
+      const nullifier = '0x00000000000000000000000000000000000000000000000000000000000001bc';
       verifier.addValidNullifier(nullifier);
       const proof = createWorldIdProof({ nullifier, action: TEST_CONFIG.action });
       const result = await gate.enroll(-12345, proof);
@@ -449,7 +449,7 @@ describe('AdmissionGate', () => {
 
     it('rejects enrollment with zero user ID', async () => {
       const { gate, verifier } = createGate();
-      const nullifier = '0xzero123';
+      const nullifier = '0x00000000000000000000000000000000000000000000000000000000000000ab';
       verifier.addValidNullifier(nullifier);
       const proof = createWorldIdProof({ nullifier, action: TEST_CONFIG.action });
       const result = await gate.enroll(0, proof);

@@ -812,6 +812,257 @@
     
     function handleProofError(errorCode) {
       console.error('World App error:', errorCode);
+      
+      // PRIVACY-SAFE DIAGNOSTICS POPULATION
+      // Extract debug_report from error if available (NO secrets/proofs/sessions displayed)
+      try {
+        const session = window.enrollmentSession;
+        const diagnosticsEl = document.getElementById('diagnostics');
+        
+        // Debug report may be attached to error object by SDK
+        let debugReport = null;
+        if (typeof errorCode === 'object' && errorCode !== null) {
+          if ('debug_report' in errorCode) {
+            debugReport = errorCode.debug_report;
+          }
+          // Extract actual error code string
+          if ('code' in errorCode) {
+            errorCode = errorCode.code;
+          }
+        }
+        
+        // Descriptor-safe getter (prevents proxy/toString attacks)
+        function safeGet(obj, key) {
+          if (!obj || typeof obj !== 'object') return undefined;
+          try {
+            const desc = Object.getOwnPropertyDescriptor(obj, key);
+            if (!desc) return undefined;
+            return desc.value;
+          } catch (e) {
+            return undefined;
+          }
+        }
+        
+        // Extract safe fields for comparison
+        const expectedEnv = 'production';
+        const expectedAppId = session.appId;
+        const expectedRpId = session.rpId;
+        const expectedNonce = session.signedChallenge.nonce;
+        const expectedSignature = session.signedChallenge.signature;
+        const sessionCreatedAt = session.signedChallenge.createdAt;
+        const sessionExpiresAt = session.signedChallenge.expiresAt;
+        
+        // Validate timestamps are finite SAFE bounded integers BEFORE any checks
+        const createdAtSafe = typeof sessionCreatedAt === 'number' 
+          && Number.isFinite(sessionCreatedAt)
+          && Number.isSafeInteger(sessionCreatedAt)
+          && sessionCreatedAt >= 0
+          && sessionCreatedAt <= 2147483647; // Max int32 (year 2038)
+        
+        const expiresAtSafe = typeof sessionExpiresAt === 'number'
+          && Number.isFinite(sessionExpiresAt)
+          && Number.isSafeInteger(sessionExpiresAt)
+          && sessionExpiresAt >= 0
+          && sessionExpiresAt <= 2147483647;
+        
+        // Compute canonical action hash if bundle export available
+        let expectedActionHash = null;
+        if (typeof window.IDKit !== 'undefined' && window.IDKit.hashAction) {
+          try {
+            expectedActionHash = window.IDKit.hashAction(session.signedChallenge.action);
+          } catch (e) {
+            // hashAction not available or failed
+          }
+        }
+        
+        // Allowlisted SDK versions (strict primitives only)
+        const allowedVersions = ['4.6.0', '4.5.0', '4.4.0', '4.3.0', '4.2.0', '4.1.0', '4.0.0'];
+        
+        // Allowlisted transports (strict primitives only)
+        const allowedTransports = ['bridge', 'redirect'];
+        
+        // Extract debug report fields with descriptor-safe reads
+        const reportVersion = safeGet(debugReport, 'package_version');
+        const reportTransport = safeGet(debugReport, 'transport');
+        const reportPayload = safeGet(debugReport, 'request_payload');
+        
+        // Sanitize version: use static known bundle version 4.6.0 if report missing
+        let safeVersion = 'unknown';
+        if (typeof reportVersion === 'string' && allowedVersions.includes(reportVersion)) {
+          safeVersion = reportVersion;
+        } else if (!debugReport) {
+          // Known bundle version (built with idkit-core@4.6.0)
+          safeVersion = '4.6.0';
+        }
+        
+        const safeTransport = (typeof reportTransport === 'string' && allowedTransports.includes(reportTransport))
+          ? reportTransport
+          : 'unknown';
+        
+        // Extract payload fields
+        const payloadEnv = safeGet(reportPayload, 'environment');
+        const payloadAppId = safeGet(reportPayload, 'app_id');
+        const proofRequest = safeGet(reportPayload, 'proof_request');
+        
+        // Extract proof_request fields
+        const prRpId = safeGet(proofRequest, 'rp_id');
+        const prNonce = safeGet(proofRequest, 'nonce');
+        const prSignature = safeGet(proofRequest, 'signature');
+        const prCreatedAt = safeGet(proofRequest, 'created_at');
+        const prExpiresAt = safeGet(proofRequest, 'expires_at');
+        const prActionHash = safeGet(proofRequest, 'action');
+        
+        // Validate proof_request timestamps are also safe
+        const prCreatedAtSafe = typeof prCreatedAt === 'number'
+          && Number.isFinite(prCreatedAt)
+          && Number.isSafeInteger(prCreatedAt);
+        
+        const prExpiresAtSafe = typeof prExpiresAt === 'number'
+          && Number.isFinite(prExpiresAt)
+          && Number.isSafeInteger(prExpiresAt);
+        
+        // Tri-state checks: PASS/FAIL/UNKNOWN
+        function triState(hasData, isMatch) {
+          if (!hasData) return { text: '? UNKNOWN', className: 'unknown' };
+          return isMatch ? { text: '✓ PASS', className: 'pass' } : { text: '✗ FAIL', className: 'fail' };
+        }
+        
+        // Environment check
+        const envState = triState(
+          typeof payloadEnv === 'string',
+          payloadEnv === expectedEnv
+        );
+        
+        // App ID check
+        const appIdState = triState(
+          typeof payloadAppId === 'string',
+          payloadAppId === expectedAppId
+        );
+        
+        // RP ID check
+        const rpIdState = triState(
+          typeof prRpId === 'string',
+          prRpId === expectedRpId
+        );
+        
+        // Nonce Match (presence + equality)
+        const nonceState = triState(
+          typeof prNonce === 'string' && prNonce.length > 0,
+          prNonce === expectedNonce
+        );
+        
+        // Signature Match (presence + equality)
+        const signatureState = triState(
+          typeof prSignature === 'string' && prSignature.length > 0,
+          prSignature === expectedSignature
+        );
+        
+        // Canonical action hash check (UNKNOWN honest when hashAction unavailable)
+        const actionState = triState(
+          expectedActionHash !== null && typeof prActionHash === 'string',
+          prActionHash === expectedActionHash
+        );
+        
+        // Signed timestamp checks (only if both sides safe)
+        const createdAtState = triState(
+          createdAtSafe && prCreatedAtSafe,
+          prCreatedAt === sessionCreatedAt
+        );
+        
+        const expiresAtState = triState(
+          expiresAtSafe && prExpiresAtSafe,
+          prExpiresAt === sessionExpiresAt
+        );
+        
+        // Timestamp validity (only if safe timestamps, valid order, now within range)
+        const now = Math.floor(Date.now() / 1000);
+        const timestampValidState = triState(
+          createdAtSafe && expiresAtSafe && sessionCreatedAt <= sessionExpiresAt,
+          now >= sessionCreatedAt && now <= sessionExpiresAt
+        );
+        
+        // Finite bounded TTL (only if safe timestamps, valid order)
+        let safeTtl = 'unknown';
+        if (createdAtSafe && expiresAtSafe) {
+          const ttl = sessionExpiresAt - sessionCreatedAt;
+          if (ttl >= 0 && ttl <= 86400) { // Max 24 hours, already finite via safe check
+            safeTtl = ttl + 's';
+          } else {
+            safeTtl = 'invalid';
+          }
+        }
+        
+        // Display safe diagnostics on screen
+        document.getElementById('diagErrorCode').textContent = errorCode;
+        document.getElementById('diagSdkVersion').textContent = safeVersion;
+        document.getElementById('diagTransport').textContent = safeTransport;
+        
+        // Boolean checks with tri-state indicators
+        const envMatchEl = document.getElementById('diagEnvMatch');
+        envMatchEl.textContent = envState.text;
+        envMatchEl.className = 'diag-value ' + envState.className;
+        
+        const actionMatchEl = document.getElementById('diagActionMatch');
+        actionMatchEl.textContent = actionState.text;
+        actionMatchEl.className = 'diag-value ' + actionState.className;
+        
+        const appIdMatchEl = document.getElementById('diagAppIdMatch');
+        appIdMatchEl.textContent = appIdState.text;
+        appIdMatchEl.className = 'diag-value ' + appIdState.className;
+        
+        const rpIdMatchEl = document.getElementById('diagRpIdMatch');
+        rpIdMatchEl.textContent = rpIdState.text;
+        rpIdMatchEl.className = 'diag-value ' + rpIdState.className;
+        
+        const nonceMatchEl = document.getElementById('diagNonceMatch');
+        nonceMatchEl.textContent = nonceState.text;
+        nonceMatchEl.className = 'diag-value ' + nonceState.className;
+        
+        const signatureMatchEl = document.getElementById('diagSignatureMatch');
+        signatureMatchEl.textContent = signatureState.text;
+        signatureMatchEl.className = 'diag-value ' + signatureState.className;
+        
+        const createdAtEl = document.getElementById('diagCreatedAtMatch');
+        createdAtEl.textContent = createdAtState.text;
+        createdAtEl.className = 'diag-value ' + createdAtState.className;
+        
+        const expiresAtEl = document.getElementById('diagExpiresAtMatch');
+        expiresAtEl.textContent = expiresAtState.text;
+        expiresAtEl.className = 'diag-value ' + expiresAtState.className;
+        
+        const timestampValidEl = document.getElementById('diagTimestampValid');
+        timestampValidEl.textContent = timestampValidState.text;
+        timestampValidEl.className = 'diag-value ' + timestampValidState.className;
+        
+        document.getElementById('diagTtl').textContent = safeTtl;
+        
+        // Show diagnostics panel
+        diagnosticsEl.classList.add('visible');
+        
+      } catch (error) {
+        // Descriptor/proxy errors - show static UNKNOWN panel
+        console.error('Diagnostics generation failed');
+        try {
+          document.getElementById('diagErrorCode').textContent = typeof errorCode === 'string' ? errorCode : 'unknown';
+          document.getElementById('diagSdkVersion').textContent = '4.6.0';
+          document.getElementById('diagTransport').textContent = 'unknown';
+          document.getElementById('diagEnvMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagActionMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagAppIdMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagRpIdMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagNonceMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagSignatureMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagCreatedAtMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagExpiresAtMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagTimestampValid').textContent = '? UNKNOWN';
+          document.getElementById('diagTtl').textContent = 'unknown';
+          document.getElementById('diagnostics').classList.add('visible');
+        } catch (e) {
+          // Even fallback failed - fail silently
+        }
+      }
+      
+      // USER-FACING ERROR MESSAGES
       let message = 'World App verification failed. Please try again.';
       let category = 'generic';
       

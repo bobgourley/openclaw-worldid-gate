@@ -53,7 +53,7 @@ class MockVerificationClient implements BackendVerificationClient {
     // Extract nullifier from responses
     const nullifier = (idkitResult.responses && idkitResult.responses[0])
       ? (idkitResult.responses[0] as any).nullifier
-      : '0xtest_nullifier_race_test';
+      : '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1';
 
     return {
       success: true,
@@ -140,7 +140,7 @@ describe('Challenge Mode Race Conditions', () => {
           identifier: 'proof_of_human',
           signal_hash: 'test_signal_hash_1',
           proof: ['1', '2', '3'],
-          nullifier: '0xtest_nullifier_race_test',
+          nullifier: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1',
           issuer_schema_id: 1,
           expires_at_min: fakeClock.nowSeconds() + 86400,
         }],
@@ -148,6 +148,9 @@ describe('Challenge Mode Race Conditions', () => {
       },
     });
 
+    if (!enrollment1.success) {
+      console.error('Enrollment1 failed:', enrollment1.error);
+    }
     assert.ok(enrollment1.success);
     assert.ok(enrollment1.sessionId);
 
@@ -198,7 +201,7 @@ describe('Challenge Mode Race Conditions', () => {
         session_id: enrollment1.sessionId!,
         responses: [{
           identifier: 'proof_of_human',
-          session_nullifier: ['0xtest_nullifier_race_test', TEST_ACTION],
+          session_nullifier: ['0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1', TEST_ACTION],
           issuer_schema_id: 1,
           verifiable_credential: {
             expires_at_min: fakeClock.nowSeconds() + 86400,
@@ -236,7 +239,7 @@ describe('Challenge Mode Race Conditions', () => {
           identifier: 'proof_of_human',
           signal_hash: 'test_signal_hash_2',
           proof: ['1', '2', '3'],
-          nullifier: '0xtest_nullifier_race_test_2',
+          nullifier: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1_2',
           issuer_schema_id: 1,
           expires_at_min: fakeClock.nowSeconds() + 86400,
         }],
@@ -270,7 +273,7 @@ describe('Challenge Mode Race Conditions', () => {
         session_id: enrollment!.sessionId!,
         responses: [{
           identifier: 'proof_of_human',
-          session_nullifier: ['0xtest_nullifier_race_test_2', TEST_ACTION],
+          session_nullifier: ['0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1_2', TEST_ACTION],
           issuer_schema_id: 1,
           verifiable_credential: {
             expires_at_min: fakeClock.nowSeconds() + 86400,
@@ -303,7 +306,7 @@ describe('Challenge Mode Race Conditions', () => {
           identifier: 'proof_of_human',
           signal_hash: 'test_signal_hash_3',
           proof: ['1', '2', '3'],
-          nullifier: '0xtest_nullifier_race_test_3',
+          nullifier: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1_3',
           issuer_schema_id: 1,
           expires_at_min: fakeClock.nowSeconds() + 86400,
         }],
@@ -334,7 +337,7 @@ describe('Challenge Mode Race Conditions', () => {
         session_id: enrollment1.sessionId!,
         responses: [{
           identifier: 'proof_of_human',
-          session_nullifier: ['0xtest_nullifier_race_test_3', TEST_ACTION],
+          session_nullifier: ['0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1_3', TEST_ACTION],
           issuer_schema_id: 1,
           verifiable_credential: {
             expires_at_min: fakeClock.nowSeconds() + 86400,

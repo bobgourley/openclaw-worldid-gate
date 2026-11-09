@@ -37,6 +37,11 @@ export function canonicalizeNullifier(input: unknown): string {
 
   let bigIntValue: bigint;
 
+  // Check for negative sign first (before parsing)
+  if (trimmed.startsWith('-')) {
+    throw new Error('Nullifier cannot be negative');
+  }
+
   try {
     if (trimmed.startsWith('0x') || trimmed.startsWith('0X')) {
       // Hex format
@@ -56,13 +61,13 @@ export function canonicalizeNullifier(input: unknown): string {
       bigIntValue = BigInt(trimmed);
     }
   } catch (error) {
-    if (error instanceof Error && error.message.includes('invalid characters')) {
+    if (error instanceof Error && (error.message.includes('invalid characters') || error.message.includes('negative'))) {
       throw error;
     }
     throw new Error(`Invalid nullifier format: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  // Check bounds
+  // Paranoid re-check (should be unreachable after parsing)
   if (bigIntValue < 0n) {
     throw new Error('Nullifier cannot be negative');
   }
