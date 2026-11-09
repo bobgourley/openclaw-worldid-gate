@@ -526,7 +526,7 @@
       
       try {
         // Import locally bundled IDKit Core SDK (from installed @worldcoin/idkit-core)
-        const { IDKit, proofOfHuman } = await import('/idkit-bundle.js');
+        const { IDKit, CredentialRequest } = await import('/idkit-bundle.js');
         
         // Validate required fields from session (fail-closed, no synthetic fallbacks)
         if (!session.rpId) {
@@ -559,13 +559,14 @@
           signature: session.signedChallenge.signature,
         };
         
-        // Create verification request using official IDKit API
+        // Create verification request using official IDKit API with session creation
         const request = await IDKit.request({
           app_id: session.appId,
           action: session.signedChallenge.action,
           rp_context: rp_context,
-          allow_legacy_proofs: true,
-        }).preset(proofOfHuman({ signal: session.signal }));
+          session_id: 'create',
+          allow_legacy_proofs: false,
+        }).constraints(CredentialRequest('proof_of_human', { signal: session.signal }));
         
         // CRITICAL: Display connectorURI in tappable DOM element BEFORE polling
         if (!request.connectorURI) {
