@@ -116,12 +116,15 @@ export class StatusSocketServer {
       }
 
       // Try connecting to check if socket is live
-      const isLive = await this.checkSocketLive(this.config.socketPath);
-      if (isLive) {
+      const liveCheck = await this.checkSocketLive(this.config.socketPath);
+      if (liveCheck === 'live') {
         throw new Error(`Socket is live (another instance running)`);
       }
+      if (liveCheck === 'timeout') {
+        throw new Error(`Socket check timed out (refusing to unlink, unknown state)`);
+      }
 
-      // Safe to remove stale socket
+      // Safe to remove stale socket (liveCheck === 'dead')
       await unlink(this.config.socketPath);
     }
 
@@ -147,13 +150,15 @@ export class StatusSocketServer {
         process.umask(oldMask);
         
         try {
-          // Verify socket permissions
+          // Verify socket was created with mode 0600 by umask
           const stats = statSync(this.config.socketPath);
           const mode = stats.mode & 0o777;
+          
           if (mode !== 0o600) {
-            // Explicitly set if umask didn't work
-            await chmod(this.config.socketPath, 0o600);
+            // umask didn't work, fail rather than trying to fix
+            throw new Error(`Socket created with wrong mode ${mode.toString(8)}, expected 0600 (umask failed)`);
           }
+          
           console.log(`[StatusSocket] Listening on ${this.config.socketPath} (mode 0600)`);
           resolve();
         } catch (error) {
@@ -171,8 +176,9 @@ export class StatusSocketServer {
 
   /**
    * Check if socket is live by attempting connection.
+   * Returns 'live' if socket responds, 'dead' if connection fails, 'timeout' if no response.
    */
-  private async checkSocketLive(socketPath: string): Promise<boolean> {
+  private async checkSocketLive(socketPath: string): Promise<'live' | 'dead' | 'timeout'> {
     return new Promise((resolve) => {
       const client = http.request(
         {
@@ -182,17 +188,17 @@ export class StatusSocketServer {
           timeout: 1000,
         },
         () => {
-          resolve(true); // Socket answered
+          resolve('live'); // Socket answered
         }
       );
 
       client.on('error', () => {
-        resolve(false); // Socket not live
+        resolve('dead'); // Socket not live
       });
 
       client.on('timeout', () => {
         client.destroy();
-        resolve(false); // Timeout means not live
+        resolve('timeout'); // Timeout - unknown state
       });
 
       client.end();

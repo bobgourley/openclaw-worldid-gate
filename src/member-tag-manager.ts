@@ -227,6 +227,7 @@ export class MemberTagManager {
     if (result.success) {
       // Record tag application
       this.recordTagApplication(telegramUserId, this.tagText);
+      console.log('[MemberTag] Tag applied');
       return {
         success: true,
         status: 'Tag applied',
@@ -341,6 +342,7 @@ export class MemberTagManager {
     if (result.success) {
       // Record tag removal
       this.recordTagRemoval(telegramUserId);
+      console.log('[MemberTag] Tag removed');
       return {
         success: true,
         status: 'Tag removed',
@@ -474,24 +476,16 @@ export class MemberTagManager {
   }
 
   /**
-   * Preflight check for bot permissions.
+   * Check bot permissions by calling Telegram API.
    * 
-   * Verifies bot can manage tags in target chat before attempting operations.
-   * Call during startup or configuration to detect permission issues early.
+   * Always checks actual permissions regardless of current featureEnabled state.
+   * This allows tagging to re-enable itself when permissions are granted.
    * 
    * @param timeoutMs - Optional timeout in milliseconds (default: 5000)
    * @returns Result indicating permission status
    */
   async checkPermissions(timeoutMs: number = 5000): Promise<TagOperationResult> {
-    if (!this.featureEnabled) {
-      return {
-        success: false,
-        status: 'Tag feature disabled',
-        retryable: false,
-      };
-    }
-
-    // Add timeout to permission check
+    // Always check Telegram, even if currently disabled (allows re-enabling)
     const timeoutPromise = new Promise<TagOperationResult>((resolve) => {
       setTimeout(() => {
         resolve({

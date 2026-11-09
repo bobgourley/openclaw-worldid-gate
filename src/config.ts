@@ -17,7 +17,7 @@ import type { GateConfig } from './types.js';
 export const CONFIG_BOUNDS = {
   enrollmentTtl: {
     minimum: 60, // 1 minute
-    default: 2592000, // 30 days
+    default: 432000, // 5 days (changed from 30 days for PR 8)
     maximum: 31536000, // 1 year
   },
 } as const;
@@ -30,7 +30,7 @@ export const CONFIG_BOUNDS = {
  * - action: Action string scoping proofs to this integration
  * - verifyEndpoint: World ID verification API endpoint
  * - requireProofOfHuman: True for Orb biometric only, false to allow selfie
- * - enrollmentTtlSeconds: How long enrollments remain valid (default 30 days)
+ * - enrollmentTtlSeconds: How long enrollments remain valid (default 5 days, configurable via WORLDID_ENROLLMENT_TTL_DAYS)
  * - allowTestMode: Allow stub verifier (development/test only, NEVER production)
  */
 export const gateConfig: GateConfig = {
@@ -40,7 +40,9 @@ export const gateConfig: GateConfig = {
     process.env.WORLDID_VERIFY_ENDPOINT ||
     'https://developer.world.org/api/v4/verify',
   requireProofOfHuman: process.env.WORLDID_REQUIRE_PROOF_OF_HUMAN !== 'false',
-  enrollmentTtlSeconds: CONFIG_BOUNDS.enrollmentTtl.default,
+  enrollmentTtlSeconds: process.env.WORLDID_ENROLLMENT_TTL_DAYS
+    ? parseInt(process.env.WORLDID_ENROLLMENT_TTL_DAYS, 10) * 86400
+    : CONFIG_BOUNDS.enrollmentTtl.default,
   allowTestMode: process.env.NODE_ENV !== 'production',
 };
 
@@ -174,6 +176,10 @@ export const openclawIntegrationConfig: OpenClawIntegrationConfig = {
     requireAdminPermission: 'can_manage_tags',
     targetChatId: process.env.OPENCLAW_ALLOWED_GROUP || '', // Telegram chat ID or @username (e.g., '@finntalkgroup')
     sweepIntervalHours: (() => {
+      // Only validate if tags are enabled
+      if (process.env.MEMBER_TAGS_ENABLED !== 'true') {
+        return 24; // Default when disabled, validation not needed
+      }
       if (!process.env.MEMBER_TAG_SWEEP_INTERVAL_HOURS) {
         return 24; // Default when not specified
       }

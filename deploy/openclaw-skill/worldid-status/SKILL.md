@@ -26,25 +26,35 @@ cp -r /path/to/worldid-gate/deploy/openclaw-skill/worldid-status \
       /Users/finn/.openclaw/workspace/skills/worldid-status
 ```
 
-2. Add environment variables to Finn's OpenClaw configuration under `skills.entries.worldid-status.env`:
+2. Add environment variables to Finn's OpenClaw configuration (`openclaw.json`) under `skills.entries.worldid-status.env`:
 
-```yaml
-skills:
-  entries:
-    worldid-status:
-      env:
-        WORLDID_STATUS_SOCKET: /Users/finn/.worldid-gate/status.sock
-        WORLDID_STATUS_SECRET_FILE: /Users/finn/.worldid-gate/status-secret.txt
+```json
+{
+  "skills": {
+    "entries": {
+      "worldid-status": {
+        "env": {
+          "WORLDID_STATUS_SOCKET": "/Users/finn/.worldid-gate/status.sock",
+          "WORLDID_STATUS_SECRET_FILE": "/Users/finn/.worldid-gate/status-secret.txt"
+        }
+      }
+    }
+  }
+}
 ```
 
-3. Add the skill to Finn's allowlist under `agents.entries.main.skills`:
+3. **APPEND** `"worldid-status"` to the existing `agents.entries.main.skills` array (do not replace the existing list):
 
-```yaml
-agents:
-  entries:
-    main:
-      skills:
-        - worldid-status
+```json
+{
+  "agents": {
+    "entries": {
+      "main": {
+        "skills": ["worldid-status"]
+      }
+    }
+  }
+}
 ```
 
 4. Restart Finn to load the skill.
@@ -117,9 +127,9 @@ reply-chain: sender_id=987654321
 ## Guidance for Finn
 
 **What `verified: true` means:**
-- This person has proven they are human via World ID Orb biometric verification
-- Their enrollment has not expired
-- You can trust this is a real person, not a bot
+- This Telegram account was verified by a unique Orb-verified human within the enrollment window (currently 5 days)
+- The enrollment has not expired
+- The account could still be automated afterward, so use judgment
 
 **What `verified: false` means:**
 - Could be a bot
@@ -145,9 +155,7 @@ reply-chain: sender_id=987654321
 
 **States:**
 - `active`: User is verified and enrollment has not expired
-- `expired`: Enrollment has expired
-- `revoked`: Enrollment was revoked by administrator
-- `none`: No enrollment found
+- `expired`, `revoked`, `none`: Not currently verified
 
 **Note:** Only `verified: true` with `state: "active"` indicates current valid verification.
 
@@ -170,15 +178,15 @@ reply-chain: sender_id=987654321
 Required environment variables (set in OpenClaw profile for agent `main`):
 
 ```bash
-WORLDID_STATUS_SOCKET=/var/run/worldid-gate/status.sock
-WORLDID_STATUS_SECRET_FILE=/etc/worldid-gate/status-secret.txt
+WORLDID_STATUS_SOCKET=/Users/finn/.worldid-gate/status.sock
+WORLDID_STATUS_SECRET_FILE=/Users/finn/.worldid-gate/status-secret.txt
 ```
 
 The gate service must be configured with matching values:
 
 ```bash
-WORLDID_STATUS_SOCKET=/var/run/worldid-gate/status.sock
-WORLDID_STATUS_SECRET_FILE=/etc/worldid-gate/status-secret.txt
+WORLDID_STATUS_SOCKET=/Users/finn/.worldid-gate/status.sock
+WORLDID_STATUS_SECRET_FILE=/Users/finn/.worldid-gate/status-secret.txt
 ```
 
 **Important:** Both the gate service and Finn must use the SAME socket path and secret file. The secret file must:

@@ -208,12 +208,18 @@ export class TelegramApiClient {
     const getChatUrl = `${this.baseUrl}/bot${this.botToken}/getMe`;
     
     try {
+      const controller1 = new AbortController();
+      const timeout1 = setTimeout(() => controller1.abort(), 10000); // 10s timeout
+      
       const meResponse = await fetch(getChatUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller1.signal,
       });
+      
+      clearTimeout(timeout1);
 
       const meData = await meResponse.json() as any;
 
@@ -228,6 +234,9 @@ export class TelegramApiClient {
 
       // Now check bot's member status and permissions
       const getChatMemberUrl = `${this.baseUrl}/bot${this.botToken}/getChatMember`;
+      const controller2 = new AbortController();
+      const timeout2 = setTimeout(() => controller2.abort(), 10000); // 10s timeout
+      
       const memberResponse = await fetch(getChatMemberUrl, {
         method: 'POST',
         headers: {
@@ -237,7 +246,10 @@ export class TelegramApiClient {
           chat_id: chatId,
           user_id: botUserId,
         }),
+        signal: controller2.signal,
       });
+      
+      clearTimeout(timeout2);
 
       const memberData = await memberResponse.json() as any;
 
@@ -290,6 +302,9 @@ export class TelegramApiClient {
     const url = `${this.baseUrl}/bot${this.botToken}/getChatMember`;
     
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
+      
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -299,7 +314,10 @@ export class TelegramApiClient {
           chat_id: chatId,
           user_id: userId,
         }),
+        signal: controller.signal,
       });
+      
+      clearTimeout(timeout);
 
       const data = await response.json() as any;
 

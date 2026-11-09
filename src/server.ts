@@ -33,6 +33,7 @@ const config = {
   // Service configuration
   action: process.env.WORLDID_ACTION || 'unconfigured-test-action',
   databasePath: process.env.DATABASE_PATH || '/tmp/enrollment.db',
+  enrollmentTtlDays: parseInt(process.env.WORLDID_ENROLLMENT_TTL_DAYS || '5', 10),
   
   // HTTP configuration
   httpHost: process.env.HTTP_HOST || '127.0.0.1',
@@ -197,7 +198,7 @@ async function main(): Promise<void> {
     telegramBotToken: config.telegramBotToken,
     action: config.action,
     challengeTtlSeconds: 300,
-    enrollmentTtlSeconds: 2592000, // 30 days
+    enrollmentTtlSeconds: config.enrollmentTtlDays * 86400, // Convert days to seconds
     diagnosticLogger,
   });
 

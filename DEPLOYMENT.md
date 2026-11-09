@@ -519,9 +519,8 @@ chmod 0700 /Users/finn/.worldid-gate
 2. Create secret file (owned by finn, mode 0600):
 
 ```bash
-# Generate random 64-character secret
-openssl rand -base64 48 > /Users/finn/.worldid-gate/status-secret.txt
-chmod 0600 /Users/finn/.worldid-gate/status-secret.txt
+# Generate secret with mode 0600 (umask 077 ensures secure permissions)
+(umask 077 && openssl rand -hex 32 > /Users/finn/.worldid-gate/status-secret.txt)
 chown finn:staff /Users/finn/.worldid-gate/status-secret.txt
 ```
 

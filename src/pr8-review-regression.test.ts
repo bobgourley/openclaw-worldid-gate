@@ -23,8 +23,19 @@ describe('PR 8 Review Regression Tests', () => {
       const db = new Database(dbPath);
       
       try {
-        // Setup database
+        // Setup enrollment service database schema
         db.exec(`
+          CREATE TABLE enrollments (
+            telegram_user_id INTEGER PRIMARY KEY,
+            nullifier TEXT NOT NULL UNIQUE,
+            action TEXT NOT NULL,
+            expires_at INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            revoked INTEGER NOT NULL DEFAULT 0,
+            session_id TEXT,
+            protocol_version INTEGER
+          ) STRICT;
+
           CREATE TABLE member_tags (
             telegram_user_id INTEGER NOT NULL,
             chat_id TEXT NOT NULL,
@@ -32,20 +43,20 @@ describe('PR 8 Review Regression Tests', () => {
             applied_at TEXT NOT NULL,
             removed_at TEXT,
             PRIMARY KEY (telegram_user_id, chat_id)
-          ) STRICT
+          ) STRICT;
         `);
         
-        db.exec(`
-          CREATE TABLE enrollments (
-            telegram_user_id INTEGER PRIMARY KEY,
-            action TEXT NOT NULL,
-            revoked INTEGER NOT NULL DEFAULT 0,
-            expires_at INTEGER NOT NULL
-          ) STRICT
-        `);
+        // Import real enrollment service
+        const { EnrollmentServiceProduction } = await import('./enrollment-service-production.js');
         
         const now = Math.floor(Date.now() / 1000);
-        db.prepare('INSERT INTO enrollments VALUES (?, ?, 0, ?)').run(123, 'test-action', now + 86400);
+        const expiresAt = now + 432000; // 5 days
+        
+        // Create existing enrollment
+        db.prepare(`
+          INSERT INTO enrollments (telegram_user_id, nullifier, action, expires_at, created_at, revoked, session_id, protocol_version)
+          VALUES (?, ?, ?, ?, ?, 0, ?, 4)
+        `).run(123, '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef', 'test-action', expiresAt, new Date().toISOString(), 'session_123');
         
         const tagCalls: Array<{ userId: number; tag: string }> = [];
         
@@ -58,17 +69,12 @@ describe('PR 8 Review Regression Tests', () => {
           checkTagPermission: async () => ({ success: true }),
         } as any;
         
-        const mockEnrollmentService: EnrollmentService = {
-          findEnrollment: async (userId) => ({
-            nullifier: '0x1234',
-            telegramUserId: userId,
-            action: 'test-action',
-            expiresAt: now + 86400,
-            createdAt: new Date().toISOString(),
-            revoked: false,
-            expired: false,
-          }),
-        } as any;
+        const mockEnrollmentService = new EnrollmentServiceProduction({
+          db,
+          worldIdVerifier: {} as any,
+          action: 'test-action',
+          requireProofOfHuman: true,
+        });
         
         const manager = new MemberTagManager({
           telegramClient: mockTelegramClient,
@@ -81,11 +87,19 @@ describe('PR 8 Review Regression Tests', () => {
           sweepIntervalHours: 24,
         });
         
-        // Simulate renewal by calling applyTagToMember (as verifySession would)
-        const result = await manager.applyTagToMember(123);
+        // Attach manager to enrollment service
+        (mockEnrollmentService as any).memberTagManager = manager;
+        
+        // Call verifySession (simulates renewal)
+        const result = await mockEnrollmentService.verifySession(123, 'session_123');
         
         assert.strictEqual(result.success, true);
-        assert.strictEqual(tagCalls.length, 1);
+        
+        // Wait for async tag application
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Verify tag was applied through verifySession path
+        assert.strictEqual(tagCalls.length, 1, 'Tag should be applied through verifySession');
         assert.strictEqual(tagCalls[0].userId, 123);
         assert.strictEqual(tagCalls[0].tag, 'Test Tag');
       } finally {
@@ -326,28 +340,144 @@ describe('PR 8 Review Regression Tests', () => {
 
   describe('Config validation', () => {
     it('should throw on invalid MEMBER_TAG_SWEEP_INTERVAL_HOURS', async () => {
-      // Test that the config validation logic works
-      // We cannot actually test the throw since config is already loaded
-      // Instead, verify the validation logic exists in config.ts
+      const originalEnv = process.env.MEMBER_TAG_SWEEP_INTERVAL_HOURS;
+      const originalEnabled = process.env.MEMBER_TAGS_ENABLED;
       
-      const testValues = [
-        { input: '0', valid: false },
-        { input: '169', valid: false },
-        { input: 'abc', valid: false },
-        { input: '1', valid: true },
-        { input: '24', valid: true },
-        { input: '168', valid: true },
-      ];
-      
-      for (const test of testValues) {
-        const val = parseInt(test.input, 10);
-        const isValid = !isNaN(val) && Number.isInteger(val) && val >= 1 && val <= 168;
-        assert.strictEqual(isValid, test.valid, `${test.input} should be ${test.valid ? 'valid' : 'invalid'}`);
+      try {
+        // Enable tags to trigger validation
+        process.env.MEMBER_TAGS_ENABLED = 'true';
+        process.env.MEMBER_TAG_SWEEP_INTERVAL_HOURS = '0'; // Invalid: below minimum
+        
+        // Delete cached module
+        const configPath = require.resolve('./config.js');
+        delete require.cache[configPath];
+        
+        // Try to reload config - should throw
+        assert.throws(
+          () => require('./config.js'),
+          /MEMBER_TAG_SWEEP_INTERVAL_HOURS must be 1-168/,
+          'Should throw on invalid sweep interval'
+        );
+      } finally {
+        // Restore environment
+        if (originalEnv !== undefined) {
+          process.env.MEMBER_TAG_SWEEP_INTERVAL_HOURS = originalEnv;
+        } else {
+          delete process.env.MEMBER_TAG_SWEEP_INTERVAL_HOURS;
+        }
+        if (originalEnabled !== undefined) {
+          process.env.MEMBER_TAGS_ENABLED = originalEnabled;
+        } else {
+          delete process.env.MEMBER_TAGS_ENABLED;
+        }
+        
+        // Reload with valid config
+        const configPath = require.resolve('./config.js');
+        delete require.cache[configPath];
+        require('./config.js');
       }
     });
   });
 
   describe('Permission check behavior', () => {
+    it('should re-enable tagging when permission is granted after being denied', async () => {
+      const dbPath = join(tmpdir(), `test-reenable-${Date.now()}.db`);
+      const db = new Database(dbPath);
+      
+      try {
+        db.exec(`
+          CREATE TABLE member_tags (
+            telegram_user_id INTEGER NOT NULL,
+            chat_id TEXT NOT NULL,
+            applied_text TEXT NOT NULL,
+            applied_at TEXT NOT NULL,
+            removed_at TEXT,
+            PRIMARY KEY (telegram_user_id, chat_id)
+          ) STRICT
+        `);
+        
+        db.exec(`
+          CREATE TABLE enrollments (
+            telegram_user_id INTEGER PRIMARY KEY,
+            action TEXT NOT NULL,
+            revoked INTEGER NOT NULL DEFAULT 0,
+            expires_at INTEGER NOT NULL
+          ) STRICT
+        `);
+        
+        const now = Math.floor(Date.now() / 1000);
+        db.prepare('INSERT INTO enrollments VALUES (?, ?, 0, ?)').run(123, 'test-action', now + 86400);
+        
+        const tagCalls: Array<{ userId: number; tag: string }> = [];
+        let permissionGranted = false;
+        
+        const mockTelegramClient: TelegramApiClient = {
+          setChatMemberTag: async (chatId, userId, tag) => {
+            tagCalls.push({ userId, tag });
+            return { success: true };
+          },
+          removeChatMemberTag: async () => ({ success: true }),
+          getChatMember: async () => ({ success: true, status: 'member', tag: null, isMember: true }),
+          checkTagPermission: async () => {
+            if (permissionGranted) {
+              return { success: true };
+            }
+            return { success: false, error: 'Permission denied' };
+          },
+        } as any;
+        
+        const mockEnrollmentService: EnrollmentService = {
+          findEnrollment: async (userId) => ({
+            nullifier: '0x1234',
+            telegramUserId: userId,
+            action: 'test-action',
+            expiresAt: now + 86400,
+            createdAt: new Date().toISOString(),
+            revoked: false,
+            expired: false,
+          }),
+        } as any;
+        
+        const manager = new MemberTagManager({
+          telegramClient: mockTelegramClient,
+          enrollmentService: mockEnrollmentService,
+          db,
+          targetChatId: -123456,
+          tagText: 'Test Tag',
+          action: 'test-action',
+          enabled: true,
+          sweepIntervalHours: 24,
+        });
+        
+        // Start sweeper with permission denied
+        manager.startSweeper();
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        // Should be disabled
+        let result = await manager.applyTagToMember(123);
+        assert.strictEqual(result.success, false);
+        assert.strictEqual(result.status, 'Tag feature disabled');
+        assert.strictEqual(tagCalls.length, 0);
+        
+        // Grant permission
+        permissionGranted = true;
+        
+        // Trigger another sweep cycle
+        await (manager as any).runSweeperCycle();
+        
+        // Should now be enabled and apply tag
+        result = await manager.applyTagToMember(123);
+        assert.strictEqual(result.success, true);
+        assert.strictEqual(tagCalls.length, 2, 'Should have 2 calls: one from reconcile, one from explicit apply');
+        
+        manager.stopSweeper();
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } finally {
+        db.close();
+        await unlink(dbPath);
+      }
+    });
+
     it('should not call apply/remove when permission check fails', async () => {
       const dbPath = join(tmpdir(), `test-perm-${Date.now()}.db`);
       const db = new Database(dbPath);
@@ -513,6 +643,150 @@ describe('PR 8 Review Regression Tests', () => {
       } finally {
         db.close();
         await unlink(dbPath);
+      }
+    });
+  });
+
+  describe('Skill script exit codes', () => {
+    it('should exit 0 on successful 200 response', async () => {
+      const socketPath = join(tmpdir(), `test-skill-200-${Date.now()}.sock`);
+      const secretFile = join(tmpdir(), `test-secret-${Date.now()}.txt`);
+      
+      try {
+        await writeFile(secretFile, 'a'.repeat(32));
+        await chmod(secretFile, 0o600);
+        
+        const secret = await loadStatusSecret(secretFile);
+        const now = Math.floor(Date.now() / 1000);
+        
+        const mockEnrollmentService = {
+          findEnrollment: async () => ({
+            nullifier: '0x1234',
+            telegramUserId: 123,
+            action: 'test-action',
+            expiresAt: now + 86400,
+            createdAt: new Date().toISOString(),
+            revoked: false,
+            expired: false,
+          }),
+        } as any;
+        
+        const server = new StatusSocketServer({
+          socketPath,
+          secret,
+          enrollmentService: mockEnrollmentService,
+        });
+        
+        await server.start();
+        
+        // Set environment variables
+        process.env.WORLDID_STATUS_SOCKET = socketPath;
+        process.env.WORLDID_STATUS_SECRET_FILE = secretFile;
+        
+        // Run skill script
+        const { execSync } = await import('child_process');
+        const scriptPath = join(process.cwd(), 'deploy/openclaw-skill/worldid-status/query-worldid-status');
+        const result = execSync(`bash ${scriptPath} 123`, { encoding: 'utf8' });
+        
+        const json = JSON.parse(result);
+        assert.strictEqual(json.verified, true);
+        assert.strictEqual(json.state, 'active');
+        
+        await server.stop();
+      } finally {
+        delete process.env.WORLDID_STATUS_SOCKET;
+        delete process.env.WORLDID_STATUS_SECRET_FILE;
+        if (existsSync(socketPath)) {
+          await unlink(socketPath);
+        }
+        if (existsSync(secretFile)) {
+          await unlink(secretFile);
+        }
+      }
+    });
+
+    it('should exit 2 on 401 authentication failure', async () => {
+      const socketPath = join(tmpdir(), `test-skill-401-${Date.now()}.sock`);
+      const secretFile = join(tmpdir(), `test-secret-${Date.now()}.txt`);
+      const wrongSecretFile = join(tmpdir(), `test-wrong-secret-${Date.now()}.txt`);
+      
+      try {
+        await writeFile(secretFile, 'a'.repeat(32));
+        await chmod(secretFile, 0o600);
+        await writeFile(wrongSecretFile, 'b'.repeat(32));
+        await chmod(wrongSecretFile, 0o600);
+        
+        const secret = await loadStatusSecret(secretFile);
+        
+        const mockEnrollmentService = {
+          findEnrollment: async () => null,
+        } as any;
+        
+        const server = new StatusSocketServer({
+          socketPath,
+          secret,
+          enrollmentService: mockEnrollmentService,
+        });
+        
+        await server.start();
+        
+        // Use wrong secret
+        process.env.WORLDID_STATUS_SOCKET = socketPath;
+        process.env.WORLDID_STATUS_SECRET_FILE = wrongSecretFile;
+        
+        const { execSync } = await import('child_process');
+        const scriptPath = join(process.cwd(), 'deploy/openclaw-skill/worldid-status/query-worldid-status');
+        
+        try {
+          execSync(`bash ${scriptPath} 123`, { encoding: 'utf8' });
+          assert.fail('Should have exited with code 2');
+        } catch (error: any) {
+          assert.strictEqual(error.status, 2);
+        }
+        
+        await server.stop();
+      } finally {
+        delete process.env.WORLDID_STATUS_SOCKET;
+        delete process.env.WORLDID_STATUS_SECRET_FILE;
+        if (existsSync(socketPath)) {
+          await unlink(socketPath);
+        }
+        if (existsSync(secretFile)) {
+          await unlink(secretFile);
+        }
+        if (existsSync(wrongSecretFile)) {
+          await unlink(wrongSecretFile);
+        }
+      }
+    });
+
+    it('should exit 3 on missing socket', async () => {
+      const socketPath = join(tmpdir(), `test-missing-socket-${Date.now()}.sock`);
+      const secretFile = join(tmpdir(), `test-secret-${Date.now()}.txt`);
+      
+      try {
+        await writeFile(secretFile, 'a'.repeat(32));
+        await chmod(secretFile, 0o600);
+        
+        // Don't create server - socket doesn't exist
+        process.env.WORLDID_STATUS_SOCKET = socketPath;
+        process.env.WORLDID_STATUS_SECRET_FILE = secretFile;
+        
+        const { execSync } = await import('child_process');
+        const scriptPath = join(process.cwd(), 'deploy/openclaw-skill/worldid-status/query-worldid-status');
+        
+        try {
+          execSync(`bash ${scriptPath} 123`, { encoding: 'utf8', stdio: 'pipe' });
+          assert.fail('Should have exited with code 3');
+        } catch (error: any) {
+          assert.strictEqual(error.status, 3, 'Should exit 3 on missing socket');
+        }
+      } finally {
+        delete process.env.WORLDID_STATUS_SOCKET;
+        delete process.env.WORLDID_STATUS_SECRET_FILE;
+        if (existsSync(secretFile)) {
+          await unlink(secretFile);
+        }
       }
     });
   });
