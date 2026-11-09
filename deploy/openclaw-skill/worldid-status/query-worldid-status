@@ -53,18 +53,25 @@ RESPONSE_FILE=$(mktemp)
 trap "rm -f '$RESPONSE_FILE'" EXIT
 
 # Read secret from file and query the status socket
-# Use -K - to read header from stdin (keeps secret out of argv)
+# Capture curl exit code explicitly (under set -euo pipefail, errors would kill the script)
+CURL_EXIT=0
 HTTP_CODE=$(printf "Authorization: Bearer %s" "$(cat "$WORLDID_STATUS_SECRET_FILE")" | \
   curl --silent --show-error \
   --unix-socket "$WORLDID_STATUS_SOCKET" \
   --header @- \
   --write-out "\n%{http_code}" \
   --output "$RESPONSE_FILE" \
-  "http://localhost/status/$USER_ID" 2>&1 | tail -1)
+  "http://localhost/status/$USER_ID" 2>&1 | tail -1) || CURL_EXIT=$?
 
-# Check if curl succeeded
-if [ -z "$HTTP_CODE" ] || ! [[ "$HTTP_CODE" =~ ^[0-9]+$ ]]; then
+# Check if curl failed (connection error / missing socket)
+if [ "$CURL_EXIT" -ne 0 ]; then
   echo "Error: Cannot connect to socket (is the gate service running?)" >&2
+  exit 3
+fi
+
+# Check if HTTP_CODE is numeric
+if [ -z "$HTTP_CODE" ] || ! [[ "$HTTP_CODE" =~ ^[0-9]+$ ]]; then
+  echo "Error: Invalid response from socket" >&2
   exit 3
 fi
 

@@ -486,8 +486,10 @@ export class MemberTagManager {
    */
   async checkPermissions(timeoutMs: number = 5000): Promise<TagOperationResult> {
     // Always check Telegram, even if currently disabled (allows re-enabling)
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    
     const timeoutPromise = new Promise<TagOperationResult>((resolve) => {
-      setTimeout(() => {
+      timeoutHandle = setTimeout(() => {
         resolve({
           success: false,
           status: 'Permission check timeout',
@@ -511,7 +513,13 @@ export class MemberTagManager {
       };
     });
 
-    return Promise.race([checkPromise, timeoutPromise]);
+    try {
+      return await Promise.race([checkPromise, timeoutPromise]);
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    }
   }
 
   /**

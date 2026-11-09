@@ -142,8 +142,8 @@ export class StatusSocketServer {
         return;
       }
 
-      // Set umask to 0077 before listen (socket will be 0600)
-      const oldMask = process.umask(0o077);
+      // Set umask to 0177 before listen (socket will be 0600)
+      const oldMask = process.umask(0o177);
       
       this.server.listen(this.config.socketPath, async () => {
         // Restore old umask
@@ -156,12 +156,14 @@ export class StatusSocketServer {
           
           if (mode !== 0o600) {
             // umask didn't work, fail rather than trying to fix
+            this.server?.close();
             throw new Error(`Socket created with wrong mode ${mode.toString(8)}, expected 0600 (umask failed)`);
           }
           
           console.log(`[StatusSocket] Listening on ${this.config.socketPath} (mode 0600)`);
           resolve();
         } catch (error) {
+          this.server?.close();
           reject(error);
         }
       });
@@ -169,6 +171,7 @@ export class StatusSocketServer {
       this.server.on('error', (error: any) => {
         // Restore umask on error
         process.umask(oldMask);
+        this.server?.close();
         reject(error);
       });
     });

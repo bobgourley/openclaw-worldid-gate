@@ -104,10 +104,10 @@ export class TelegramApiClient {
     // Call Telegram Bot API
     const url = `${this.baseUrl}/bot${this.botToken}/setChatMemberTag`;
     
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
+    
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
-      
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -120,8 +120,6 @@ export class TelegramApiClient {
         }),
         signal: controller.signal,
       });
-      
-      clearTimeout(timeout);
 
       const data = await response.json() as any;
 
@@ -178,6 +176,8 @@ export class TelegramApiClient {
         success: false,
         error: `Network error: ${error.message || 'Unknown'}`,
       };
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -207,10 +207,10 @@ export class TelegramApiClient {
     // First get chat info to extract bot's user_id
     const getChatUrl = `${this.baseUrl}/bot${this.botToken}/getMe`;
     
+    const controller1 = new AbortController();
+    const timeout1 = setTimeout(() => controller1.abort(), 10000); // 10s timeout
+    
     try {
-      const controller1 = new AbortController();
-      const timeout1 = setTimeout(() => controller1.abort(), 10000); // 10s timeout
-      
       const meResponse = await fetch(getChatUrl, {
         method: 'POST',
         headers: {
@@ -218,8 +218,6 @@ export class TelegramApiClient {
         },
         signal: controller1.signal,
       });
-      
-      clearTimeout(timeout1);
 
       const meData = await meResponse.json() as any;
 
@@ -237,55 +235,59 @@ export class TelegramApiClient {
       const controller2 = new AbortController();
       const timeout2 = setTimeout(() => controller2.abort(), 10000); // 10s timeout
       
-      const memberResponse = await fetch(getChatMemberUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          chat_id: chatId,
-          user_id: botUserId,
-        }),
-        signal: controller2.signal,
-      });
-      
-      clearTimeout(timeout2);
+      try {
+        const memberResponse = await fetch(getChatMemberUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            chat_id: chatId,
+            user_id: botUserId,
+          }),
+          signal: controller2.signal,
+        });
 
-      const memberData = await memberResponse.json() as any;
+        const memberData = await memberResponse.json() as any;
 
-      if (!memberData.ok) {
-        return {
-          success: false,
-          error: memberData.description || 'Cannot check bot member status',
-        };
+        if (!memberData.ok) {
+          return {
+            success: false,
+            error: memberData.description || 'Cannot check bot member status',
+          };
+        }
+
+        const member = memberData.result;
+        
+        // Check if bot is admin
+        if (member.status !== 'administrator' && member.status !== 'creator') {
+          return {
+            success: false,
+            error: 'Bot is not an administrator',
+          };
+        }
+
+        // Check can_manage_tags permission
+        if (!member.can_manage_tags) {
+          return {
+            success: false,
+            error: 'Bot lacks can_manage_tags permission',
+            permissionDenied: true,
+          };
+        }
+
+        return { success: true };
+      } finally {
+        clearTimeout(timeout2);
       }
-
-      const member = memberData.result;
-      
-      // Check if bot is admin
-      if (member.status !== 'administrator' && member.status !== 'creator') {
-        return {
-          success: false,
-          error: 'Bot is not an administrator',
-        };
-      }
-
-      // Check can_manage_tags permission
-      if (!member.can_manage_tags) {
-        return {
-          success: false,
-          error: 'Bot lacks can_manage_tags permission',
-          permissionDenied: true,
-        };
-      }
-
-      return { success: true };
 
     } catch (error: any) {
       return {
         success: false,
         error: `Network error: ${error.message || 'Unknown'}`,
       };
+    } finally {
+      clearTimeout(timeout1);
     }
   }
 
@@ -301,10 +303,10 @@ export class TelegramApiClient {
   }> {
     const url = `${this.baseUrl}/bot${this.botToken}/getChatMember`;
     
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
+    
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
-      
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -316,8 +318,6 @@ export class TelegramApiClient {
         }),
         signal: controller.signal,
       });
-      
-      clearTimeout(timeout);
 
       const data = await response.json() as any;
 
@@ -339,6 +339,8 @@ export class TelegramApiClient {
         success: false,
         error: `Network error: ${error.message || 'Unknown'}`,
       };
+    } finally {
+      clearTimeout(timeout);
     }
   }
 }

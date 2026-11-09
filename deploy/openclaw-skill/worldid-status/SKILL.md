@@ -57,7 +57,7 @@ cp -r /path/to/worldid-gate/deploy/openclaw-skill/worldid-status \
 }
 ```
 
-4. Restart Finn to load the skill.
+4. The skill hot-reloads automatically (no Finn restart needed).
 
 ### Required Permissions
 
@@ -132,10 +132,10 @@ reply-chain: sender_id=987654321
 - The account could still be automated afterward, so use judgment
 
 **What `verified: false` means:**
+- Not currently verified
 - Could be a bot
 - Could be an unenrolled person (has not completed World ID verification)
 - Could be an expired enrollment
-- Could be a revoked enrollment (no longer valid)
 
 **How to handle:**
 - Use verification status to decide who to respond to and how
