@@ -779,7 +779,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         expectedMode: 'uniqueness' as const,      } as any);
 
       assert.equal(result.success, false);
-      assert.match(result.error!, /signalHash.*non-empty.*requester binding/i);
+      assert.match(result.error!, /signalHash.*required for uniqueness proofs/i);
     });
   });
 
