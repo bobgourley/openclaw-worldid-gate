@@ -217,6 +217,9 @@ export class StatusSocketServer {
     }
 
     return new Promise((resolve, reject) => {
+      // Force close all active connections immediately
+      this.server!.closeAllConnections?.();
+      
       this.server!.close(async (error) => {
         if (error) {
           reject(error);
