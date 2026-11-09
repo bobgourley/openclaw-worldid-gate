@@ -8,6 +8,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createHmac } from 'node:crypto';
+import { format } from 'node:util';
 import { HttpService } from './http-service.js';
 import { EnrollmentService, type Clock, type BackendVerificationClient } from './enrollment-service-production.js';
 import { WorldIdChallengeAdapter } from './worldid-challenge-adapter.js';
@@ -510,7 +511,7 @@ describe('HttpService Integration', () => {
       const originalConsoleError = console.error;
       const loggedMessages: string[] = [];
       console.error = (...args: any[]) => {
-        loggedMessages.push(args.map(a => String(a)).join(' '));
+        loggedMessages.push(format(...args));
       };
 
       try {

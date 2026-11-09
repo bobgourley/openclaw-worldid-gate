@@ -671,11 +671,6 @@ export class HttpService {
   }
 
   /**
-   * Handle session info request (for UI initialization).
-   * 
-   * Security: Validates session ID format, checks expiry.
-   */
-  /**
    * Handle client diagnostics (privacy-safe metrics only).
    * 
    * PRIVACY: This endpoint MUST NOT log or store:
