@@ -55,7 +55,7 @@ function createValidInitData(userId: number, botToken: string): string {
 }
 
 // Create mock IDKit result
-function createIDKitResult(nonce: string, action: string, signalHash: string) {
+function createIDKitResult(nonce: string, action: string, signalHash: string, nullifier?: string) {
   return {
     protocol_version: '4.0' as const,
     nonce,
@@ -63,7 +63,7 @@ function createIDKitResult(nonce: string, action: string, signalHash: string) {
     responses: [{
       identifier: 'proof_of_human' as const,
       issuer_schema_id: 1,
-      nullifier: '0xtest' + randomBytes(16).toString('hex'),
+      nullifier: nullifier || '0x' + randomBytes(32).toString('hex'),
       expires_at_min: Math.floor(Date.now() / 1000) + 86400,
       proof: ['0x1', '0x2', '0x3', '0x4', '0x5'],
       signal_hash: signalHash,
@@ -99,7 +99,7 @@ describe('Revocation Semantics (83ebbaa SQLite Implementation)', () => {
   
   it('same-owner fresh post-revoke enrollment with SAME nullifier succeeds', async () => {
     const userId = 1001;
-    const nullifier = '0xsame_owner_' + randomBytes(16).toString('hex');
+    const nullifier = '0x' + randomBytes(32).toString('hex');
     const initData = createValidInitData(userId, TEST_BOT_TOKEN);
     
     // Step 1: Initial enrollment
@@ -107,9 +107,9 @@ describe('Revocation Semantics (83ebbaa SQLite Implementation)', () => {
     const idkitResult1 = createIDKitResult(
       challenge1.signedChallenge.nonce,
       TEST_ACTION,
-      challenge1.signedChallenge.signalHash
+      challenge1.signedChallenge.signalHash,
+      nullifier
     );
-    idkitResult1.responses[0].nullifier = nullifier;
     
     verifier.setResponse(challenge1.signedChallenge.nonce, {
       success: true,
@@ -156,7 +156,7 @@ describe('Revocation Semantics (83ebbaa SQLite Implementation)', () => {
   it('cross-account takeover with same nullifier rejected (immutable binding)', async () => {
     const userA = 1001;
     const userB = 1002;
-    const nullifier = '0xcross_account_' + randomBytes(16).toString('hex');
+    const nullifier = '0x' + randomBytes(32).toString('hex');
     
     // Step 1: User A enrolls with nullifier
     const initDataA = createValidInitData(userA, TEST_BOT_TOKEN);
@@ -164,9 +164,9 @@ describe('Revocation Semantics (83ebbaa SQLite Implementation)', () => {
     const idkitResultA = createIDKitResult(
       challengeA.signedChallenge.nonce,
       TEST_ACTION,
-      challengeA.signedChallenge.signalHash
+      challengeA.signedChallenge.signalHash,
+      nullifier
     );
-    idkitResultA.responses[0].nullifier = nullifier;
     
     verifier.setResponse(challengeA.signedChallenge.nonce, {
       success: true,
@@ -185,9 +185,9 @@ describe('Revocation Semantics (83ebbaa SQLite Implementation)', () => {
     const idkitResultB = createIDKitResult(
       challengeB.signedChallenge.nonce,
       TEST_ACTION,
-      challengeB.signedChallenge.signalHash
-    );
-    idkitResultB.responses[0].nullifier = nullifier; // SAME nullifier as user A
+      challengeB.signedChallenge.signalHash,
+      nullifier
+    ); // SAME nullifier as user A
     
     verifier.setResponse(challengeB.signedChallenge.nonce, {
       success: true,
@@ -207,7 +207,7 @@ describe('Revocation Semantics (83ebbaa SQLite Implementation)', () => {
   
   it('stale pre-revoke challenge rejected after fresh restore', async () => {
     const userId = 1001;
-    const nullifier = '0xstale_challenge_' + randomBytes(16).toString('hex');
+    const nullifier = '0x' + randomBytes(32).toString('hex');
     const initData = createValidInitData(userId, TEST_BOT_TOKEN);
     
     // Step 1: User creates challenge BEFORE revocation
@@ -217,9 +217,9 @@ describe('Revocation Semantics (83ebbaa SQLite Implementation)', () => {
     const idkitResult1 = createIDKitResult(
       staleChallenge.signedChallenge.nonce,
       TEST_ACTION,
-      staleChallenge.signedChallenge.signalHash
+      staleChallenge.signedChallenge.signalHash,
+      nullifier
     );
-    idkitResult1.responses[0].nullifier = nullifier;
     
     verifier.setResponse(staleChallenge.signedChallenge.nonce, {
       success: true,
@@ -237,9 +237,9 @@ describe('Revocation Semantics (83ebbaa SQLite Implementation)', () => {
     const idkitResult2 = createIDKitResult(
       freshChallenge.signedChallenge.nonce,
       TEST_ACTION,
-      freshChallenge.signedChallenge.signalHash
+      freshChallenge.signedChallenge.signalHash,
+      nullifier
     );
-    idkitResult2.responses[0].nullifier = nullifier;
     
     verifier.setResponse(freshChallenge.signedChallenge.nonce, {
       success: true,

@@ -149,7 +149,7 @@ describe("InMemoryEnrollmentStore", () => {
 
     await assert.rejects(
       store.createEnrollment({ ...enrollment, telegramUserId: 456 }),
-      /Enrollment nullifier already exists: 0xdup/,
+      /Enrollment nullifier already exists: 0x.*de1111/,
     );
   });
 
