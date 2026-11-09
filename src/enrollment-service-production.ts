@@ -637,10 +637,18 @@ export class EnrollmentService {
   /**
    * Create session challenge for returning user (no action, session-only).
    * 
-   * For users with existing sessions who want to re-verify.
-   * Challenge is NOT bound to a signal (session proofs don't use signals).
+   * Supports three modes:
+   * 1. Ordinary renewal: Active enrollment, not revoked, not expired
+   * 2. Expired renewal: Expired but not revoked (credential policy permits)
+   * 3. Explicit reactivation: Revoked enrollment with authenticated user intent
+   * 
+   * Modes determined by enrollment state. Challenge generation uses current
+   * generation (prevents pre-revoke challenges from completing).
    */
-  async createSessionChallenge(initData: string): Promise<CreateChallengeResult> {
+  async createSessionChallenge(initData: string, options?: {
+    /** Explicitly request reactivation for revoked enrollment */
+    mode?: 'renewal' | 'reactivation';
+  }): Promise<CreateChallengeResult> {
     // Authenticate Telegram initData
     const initDataValidation = validateTelegramInitData(initData, this.telegramConfig);
 
@@ -656,22 +664,31 @@ export class EnrollmentService {
       throw new Error('No existing enrollment found (use createChallenge for initial enrollment)');
     }
 
-    if (existingEnrollment.revoked) {
-      throw new Error('Enrollment has been revoked (cannot create session challenge)');
-    }
-
-    if (existingEnrollment.expired) {
-      throw new Error('Enrollment has expired (use createChallenge to re-enroll)');
-    }
-
     if (!existingEnrollment.sessionId) {
       throw new Error('No session ID found (enrollment does not support session verification)');
+    }
+
+    // Mode logic: determine what kind of session challenge this is
+    const mode = options?.mode || 'renewal';
+
+    if (mode === 'renewal') {
+      // Ordinary renewal: reject revoked enrollments
+      if (existingEnrollment.revoked) {
+        throw new Error('Enrollment has been revoked (use mode=reactivation for explicit reactivation)');
+      }
+      // Allow expired enrollments for renewal if credential is still valid
+    } else if (mode === 'reactivation') {
+      // Explicit reactivation: REQUIRES revoked enrollment
+      if (!existingEnrollment.revoked) {
+        throw new Error('Enrollment not revoked (use mode=renewal for ordinary session verification)');
+      }
+      // Revoked enrollments allowed for explicit reactivation with authenticated intent
     }
 
     // Use SDK adapter to create session-only challenge (no action)
     const { signedChallenge, expectedNonce } = this.challengeAdapter.createSessionChallenge();
 
-    // Store challenge session (session proofs still need nonce tracking)
+    // Store challenge session with CURRENT generation (prevents pre-revoke completion)
     const now = this.clock.nowSeconds();
     const expiresAt = now + this.challengeTtlSeconds;
     const generation = this.getNextGeneration();
@@ -1267,26 +1284,17 @@ export class EnrollmentService {
       };
     }
 
-    if (enrollment.revoked) {
-      return {
-        success: false,
-        error: 'Enrollment has been revoked',
-      };
-    }
-
-    if (enrollment.expired) {
-      return {
-        success: false,
-        error: 'Enrollment has expired',
-      };
-    }
-
     if (!enrollment.sessionId) {
       return {
         success: false,
         error: 'No session ID found (enrollment does not support returning user verification)',
       };
     }
+
+    // Note: Do NOT reject revoked or expired enrollments here
+    // Revoked enrollments can be reactivated with fresh post-revoke challenge
+    // Expired enrollments can be renewed if credential is still valid
+    // Generation fence in transaction will prevent pre-revoke challenges
 
     // Step 3: Validate session_id matches enrollment (immutable binding)
     if (request.idkitResult.session_id !== enrollment.sessionId) {
@@ -1464,20 +1472,60 @@ export class EnrollmentService {
       // Consume challenge (delete)
       this.db.prepare('DELETE FROM challenge_sessions WHERE nonce = ?').run(request.idkitResult.nonce);
 
-      // Update enrollment expiry (renewal)
-      const newExpiresAt = txNow + this.enrollmentTtlSeconds;
-      this.db.prepare(`
-        UPDATE enrollments
-        SET expires_at = ?, created_at = ?
+      // Check if enrollment is currently revoked
+      const currentEnrollment = this.db.prepare(`
+        SELECT revoked, revoked_at_seconds
+        FROM enrollments
         WHERE telegram_user_id = ? AND action = ?
-      `).run(
-        newExpiresAt,
-        this.clock.nowISO(),
-        authenticatedUserId,
-        this.action
-      );
+      `).get(authenticatedUserId, this.action) as any;
 
-      return { expiresAt: newExpiresAt };
+      const newExpiresAt = txNow + this.enrollmentTtlSeconds;
+      let wasReactivated = false;
+
+      if (currentEnrollment && currentEnrollment.revoked === 1) {
+        // Enrollment is revoked - this is a reactivation with fresh post-revoke challenge
+        // Update enrollment: clear revoked flag, set new expiry, record reactivation
+        this.db.prepare(`
+          UPDATE enrollments
+          SET revoked = 0,
+              revoked_at = NULL,
+              revoked_at_seconds = NULL,
+              revoked_generation = NULL,
+              reactivated_at = ?,
+              reactivated_by = 'session_verification',
+              expires_at = ?,
+              created_at = ?
+          WHERE telegram_user_id = ? AND action = ?
+        `).run(
+          this.clock.nowISO(),
+          newExpiresAt,
+          this.clock.nowISO(),
+          authenticatedUserId,
+          this.action
+        );
+
+        // Clear generation fence (no longer needed after reactivation)
+        this.db.prepare(`
+          DELETE FROM generation_fences
+          WHERE telegram_user_id = ? AND action = ?
+        `).run(authenticatedUserId, this.action);
+
+        wasReactivated = true;
+      } else {
+        // Ordinary renewal: update expiry only
+        this.db.prepare(`
+          UPDATE enrollments
+          SET expires_at = ?, created_at = ?
+          WHERE telegram_user_id = ? AND action = ?
+        `).run(
+          newExpiresAt,
+          this.clock.nowISO(),
+          authenticatedUserId,
+          this.action
+        );
+      }
+
+      return { expiresAt: newExpiresAt, wasReactivated };
     });
 
     // Execute transaction

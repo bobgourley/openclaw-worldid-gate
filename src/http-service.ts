@@ -128,6 +128,25 @@ export class HttpService {
       }
     });
 
+    // Session verification routes
+    this.app.post('/api/session/challenge/create', jsonParser, async (req: Request, res: Response) => {
+      try {
+        await this.handleCreateSessionChallenge(req, res);
+      } catch (error) {
+        console.error('Session challenge creation error:', error);
+        res.status(500).json({ error: 'Session challenge creation failed' });
+      }
+    });
+
+    this.app.post('/api/session/verify', jsonParser, async (req: Request, res: Response) => {
+      try {
+        await this.handleVerifySession(req, res);
+      } catch (error) {
+        console.error('Session verify error:', error);
+        res.status(500).json({ error: 'Session verification failed' });
+      }
+    });
+
     // Telegram bot webhook endpoint (optional, only if bot handler configured)
     if (this.telegramBotHandler) {
       this.app.post('/telegram/webhook', express.raw({ type: 'application/json' }), async (req: Request, res: Response) => {
@@ -329,6 +348,118 @@ export class HttpService {
       } else {
         res.status(400).json({ success: false, error: 'Enrollment failed' });
       }
+    }
+  }
+
+  /**
+   * Handle session challenge creation request.
+   * 
+   * Request body: { initData: string, mode?: 'renewal' | 'reactivation' }
+   * Response: { signedChallenge: SignedRpChallenge }
+   */
+  private async handleCreateSessionChallenge(req: Request, res: Response): Promise<void> {
+    // Validate request body
+    if (!req.body || typeof req.body !== 'object') {
+      res.status(400).json({ error: 'Invalid request body' });
+      return;
+    }
+
+    if (!req.body.initData || typeof req.body.initData !== 'string') {
+      res.status(400).json({ error: 'initData required' });
+      return;
+    }
+
+    const mode = req.body.mode || 'renewal';
+    if (mode !== 'renewal' && mode !== 'reactivation') {
+      res.status(400).json({ error: 'mode must be "renewal" or "reactivation"' });
+      return;
+    }
+
+    // Create session challenge
+    try {
+      const result = await this.enrollmentService.createSessionChallenge(
+        req.body.initData,
+        { mode }
+      );
+
+      res.json({
+        signedChallenge: result.signedChallenge,
+      });
+    } catch (error: any) {
+      console.error('Session challenge creation error:', error);
+
+      // Map specific errors to generic responses
+      if (error.message?.includes('initData validation failed')) {
+        res.status(401).json({ error: 'Authentication failed' });
+        return;
+      }
+
+      if (error.message?.includes('No existing enrollment')) {
+        res.status(404).json({ error: 'No enrollment found' });
+        return;
+      }
+
+      if (error.message?.includes('has been revoked') && mode === 'renewal') {
+        res.status(403).json({ error: 'Enrollment revoked (use mode=reactivation)' });
+        return;
+      }
+
+      if (error.message?.includes('not revoked') && mode === 'reactivation') {
+        res.status(400).json({ error: 'Enrollment not revoked' });
+        return;
+      }
+
+      res.status(500).json({ error: 'Session challenge creation failed' });
+    }
+  }
+
+  /**
+   * Handle session verification request.
+   * 
+   * Request body: VerifySessionRequest (initData + idkitResult)
+   * Response: CompleteEnrollmentResult
+   */
+  private async handleVerifySession(req: Request, res: Response): Promise<void> {
+    // Validate request body
+    if (!req.body || typeof req.body !== 'object') {
+      res.status(400).json({ error: 'Invalid request body' });
+      return;
+    }
+
+    if (!req.body.initData || typeof req.body.initData !== 'string') {
+      res.status(400).json({ error: 'initData required' });
+      return;
+    }
+
+    if (!req.body.idkitResult || typeof req.body.idkitResult !== 'object') {
+      res.status(400).json({ error: 'idkitResult required' });
+      return;
+    }
+
+    // Verify session
+    try {
+      const result = await this.enrollmentService.verifySession({
+        initData: req.body.initData,
+        idkitResult: req.body.idkitResult,
+      });
+
+      if (result.success) {
+        res.json({
+          success: true,
+          telegramUserId: result.telegramUserId,
+          nullifier: result.nullifier,
+          expiresAt: result.expiresAt,
+        });
+      } else {
+        // Verification failed
+        res.status(400).json({
+          success: false,
+          error: result.error,
+        });
+      }
+    } catch (error: any) {
+      console.error('Session verification error:', error);
+      res.status(500).json({ error: 'Session verification failed' });
     }
   }
 
