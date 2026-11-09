@@ -161,19 +161,21 @@ describe('Production server integration', () => {
         'Should load Telegram WebApp SDK'
       );
       
-      // Extract script content
-      const scriptMatch = html.match(/<script[^>]*type="module"[^>]*>([\s\S]*?)<\/script>/);
-      assert.ok(scriptMatch, 'Should have module script tag');
+      // Extract all script content (main script does not have type="module")
+      const scriptMatches = html.matchAll(/<script(?![^>]*src=)[^>]*>([\s\S]*?)<\/script>/g);
+      let foundTelegramCheck = false;
       
-      const script = scriptMatch[1];
+      for (const match of scriptMatches) {
+        const script = match[1];
+        if (/typeof\s+window\.Telegram/.test(script) ||
+            /window\.Telegram\s*===\s*['"]undefined['"]/.test(script) ||
+            /!window\.Telegram/.test(script)) {
+          foundTelegramCheck = true;
+          break;
+        }
+      }
       
-      // Verify explicit SDK availability check
-      assert.ok(
-        /typeof\s+window\.Telegram/.test(script) ||
-        /window\.Telegram\s*===\s*['"]undefined['"]/.test(script) ||
-        /!window\.Telegram/.test(script),
-        'Should explicitly check window.Telegram availability'
-      );
+      assert.ok(foundTelegramCheck, 'Should explicitly check window.Telegram availability');
     });
   });
 
