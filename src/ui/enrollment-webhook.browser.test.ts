@@ -565,6 +565,8 @@ test.describe('Full webhook enrollment workflow', () => {
   test('Negative case: wrong signal, rejection and nothing persisted', async ({ page }) => {
     console.log('\n=== Negative Test: Wrong Signal ===');
 
+    // Use fresh user IDs to avoid test interference (first test already enrolled TEST_USER_ID)
+    const FRESH_USER_ID = TEST_USER_ID + 100;
     const WRONG_USER_ID = TEST_USER_ID + 999;
     
     // Compute signal_hash for WRONG_USER_ID (the wrong signal that will be sent by IDKit)
@@ -573,13 +575,13 @@ test.describe('Full webhook enrollment workflow', () => {
     const wrongSignalHash = hashSignal(wrongSignal);
     console.log(`[Test] Computed wrong signal_hash for "${wrongSignal}": ${wrongSignalHash}`);
     
-    // Webhook /verify for TEST_USER_ID (creates challenge with signal telegram:{TEST_USER_ID})
+    // Webhook /verify for FRESH_USER_ID (creates challenge with signal telegram:{FRESH_USER_ID})
     const webhookUpdate = {
       update_id: 123458,
       message: {
         message_id: 791,
-        from: { id: TEST_USER_ID, is_bot: false, first_name: 'Charlie' },
-        chat: { id: TEST_USER_ID, type: 'private' as const },
+        from: { id: FRESH_USER_ID, is_bot: false, first_name: 'Charlie' },
+        chat: { id: FRESH_USER_ID, type: 'private' as const },
         date: Math.floor(Date.now() / 1000),
         text: '/verify',
       },
@@ -598,11 +600,11 @@ test.describe('Full webhook enrollment workflow', () => {
     const webAppUrl = stubTransport.lastWebAppUrl;
     const sessionMatch = webAppUrl.match(/session=([0-9a-f]{32})/);
     const sessionId = sessionMatch![1];
-    console.log('[Test] Session created for TEST_USER_ID:', TEST_USER_ID);
+    console.log('[Test] Session created for FRESH_USER_ID:', FRESH_USER_ID);
 
-    // Mock Telegram SDK with CORRECT user (TEST_USER_ID) initData
+    // Mock Telegram SDK with CORRECT user (FRESH_USER_ID) initData
     // The attack vector is: correct Telegram authentication but wrong World ID proof signal
-    const initData = createValidInitData(TEST_USER_ID, TEST_BOT_TOKEN, 'Charlie', 'charlie_test');
+    const initData = createValidInitData(FRESH_USER_ID, TEST_BOT_TOKEN, 'Charlie', 'charlie_test');
     await page.route('**/telegram-web-app.js', async (route) => {
       await route.fulfill({
         status: 200,
@@ -692,18 +694,25 @@ test.describe('Full webhook enrollment workflow', () => {
       }
     });
 
+    // Add error logging
+    page.on('pageerror', error => {
+      console.error('[Page Error]:', error.message);
+    });
+
     const verifyButton = page.locator('#verifyButton');
     await expect(verifyButton).toBeVisible();
+    console.log('[Test] Clicking verify button');
     await verifyButton.click();
     
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(5000);
+    console.log('[Test] Final completionStatus:', completionStatus);
 
     // Expect 400 (server rejected due to signal hash mismatch)
     expect(completionStatus).toBe(400);
 
-    // Verify enrollment NOT persisted for TEST_USER_ID
+    // Verify enrollment NOT persisted for FRESH_USER_ID
     const enrollmentService = (service as any).enrollmentService;
-    const enrollment = await enrollmentService.findEnrollment(TEST_USER_ID);
+    const enrollment = await enrollmentService.findEnrollment(FRESH_USER_ID);
     expect(enrollment).toBeNull();
     
     // Verify enrollment NOT persisted for WRONG_USER_ID either
