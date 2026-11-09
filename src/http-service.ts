@@ -18,6 +18,91 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 /**
+ * Simple in-memory rate limiter with bounded storage.
+ */
+class RateLimiter {
+  private requests: Map<string, number[]> = new Map();
+  private readonly windowMs: number;
+  private readonly maxRequests: number;
+  private readonly maxIPs: number;
+  private lastCleanup: number = Date.now();
+
+  constructor(windowMs: number, maxRequests: number, maxIPs: number = 10000) {
+    this.windowMs = windowMs;
+    this.maxRequests = maxRequests;
+    this.maxIPs = maxIPs;
+  }
+
+  /**
+   * Check if request is allowed for given IP.
+   * Returns true if allowed, false if rate limit exceeded.
+   */
+  check(ip: string): boolean {
+    const now = Date.now();
+    
+    // Periodic cleanup to prevent unbounded memory (every 5 minutes)
+    if (now - this.lastCleanup > 300000) {
+      this.cleanup(now);
+    }
+
+    // Get or create timestamp array for this IP
+    let timestamps = this.requests.get(ip);
+    if (!timestamps) {
+      // Enforce max IPs to prevent memory exhaustion
+      if (this.requests.size >= this.maxIPs) {
+        // Remove oldest IP by finding the one with oldest timestamps
+        let oldestIP: string | null = null;
+        let oldestTime = now;
+        for (const [checkIP, times] of this.requests.entries()) {
+          if (times.length > 0 && times[0] < oldestTime) {
+            oldestTime = times[0];
+            oldestIP = checkIP;
+          }
+        }
+        if (oldestIP) {
+          this.requests.delete(oldestIP);
+        }
+      }
+      timestamps = [];
+      this.requests.set(ip, timestamps);
+    }
+
+    // Remove timestamps outside the window
+    const cutoff = now - this.windowMs;
+    while (timestamps.length > 0 && timestamps[0] < cutoff) {
+      timestamps.shift();
+    }
+
+    // Check if limit exceeded
+    if (timestamps.length >= this.maxRequests) {
+      return false;
+    }
+
+    // Allow request
+    timestamps.push(now);
+    return true;
+  }
+
+  /**
+   * Clean up old entries to prevent unbounded growth.
+   */
+  private cleanup(now: number): void {
+    const cutoff = now - this.windowMs;
+    for (const [ip, timestamps] of this.requests.entries()) {
+      // Remove expired timestamps
+      while (timestamps.length > 0 && timestamps[0] < cutoff) {
+        timestamps.shift();
+      }
+      // Remove IP if no recent requests
+      if (timestamps.length === 0) {
+        this.requests.delete(ip);
+      }
+    }
+    this.lastCleanup = now;
+  }
+}
+
+/**
  * HTTP service configuration.
  */
 export interface HttpServiceConfig {
@@ -51,6 +136,9 @@ export class HttpService {
   private readonly host: string;
 
   private telegramBotHandler?: TelegramBotHandler;
+  
+  // Rate limiter for diagnostics endpoint: 30 requests per minute per IP
+  private diagnosticsRateLimiter: RateLimiter = new RateLimiter(60000, 30);
 
   constructor(config: HttpServiceConfig) {
     this.enrollmentService = config.enrollmentService;
@@ -148,7 +236,9 @@ export class HttpService {
     });
 
     // Client diagnostics endpoint (privacy-safe metrics only)
-    this.app.post('/api/diagnostics/client', jsonParser, async (req: Request, res: Response) => {
+    // Route-specific 2KB body limit (diagnostics should be tiny)
+    const diagnosticsParser = express.json({ limit: '2kb', strict: true });
+    this.app.post('/api/diagnostics/client', diagnosticsParser, async (req: Request, res: Response) => {
       try {
         await this.handleClientDiagnostics(req, res);
       } catch (error) {
@@ -646,6 +736,13 @@ export class HttpService {
    * Only aggregated, privacy-safe metrics from allowlisted schema are logged.
    */
   private async handleClientDiagnostics(req: Request, res: Response): Promise<void> {
+    // Rate limiting: 30 requests per minute per IP
+    const clientIP = req.ip || 'unknown';
+    if (!this.diagnosticsRateLimiter.check(clientIP)) {
+      res.status(429).end();
+      return;
+    }
+
     // Validate request body exists and is object
     if (!req.body || typeof req.body !== 'object') {
       res.status(204).end();

@@ -263,10 +263,19 @@ test('Client diagnostics: nonce-like pattern rejected', async () => {
   }
 });
 
-test('Client diagnostics: oversized body rejected', async () => {
+test('Client diagnostics: oversized body rejected with 413', async () => {
   const service = await createTestService();
   const address = service.server.address();
   const port = typeof address === 'object' && address !== null ? address.port : 0;
+
+  // Capture console output to verify nothing logged
+  const originalLog = console.log;
+  let loggedData: any = null;
+  console.log = (...args: any[]) => {
+    if (args[0] === '[Client Diagnostics]') {
+      loggedData = JSON.parse(args[1]);
+    }
+  };
 
   try {
     // Create a body larger than 2KB
@@ -282,8 +291,93 @@ test('Client diagnostics: oversized body rejected', async () => {
       body: JSON.stringify(largeBody),
     });
 
-    // Should be rejected by body parser (413 Payload Too Large)
-    assert.ok(response.status === 413 || response.status === 400 || response.status === 204);
+    // Should be rejected with 413 Payload Too Large
+    assert.strictEqual(response.status, 413);
+    // Nothing should be logged
+    assert.strictEqual(loggedData, null);
+  } finally {
+    console.log = originalLog;
+    await service.stop();
+  }
+});
+
+test('Client diagnostics: rate limit returns 429', async () => {
+  const service = await createTestService();
+  const address = service.server.address();
+  const port = typeof address === 'object' && address !== null ? address.port : 0;
+
+  // Capture console output to verify nothing logged on rate limit
+  const originalLog = console.log;
+  let logCount = 0;
+  console.log = (...args: any[]) => {
+    if (args[0] === '[Client Diagnostics]') {
+      logCount++;
+    }
+  };
+
+  try {
+    // Send 31 requests (limit is 30 per minute)
+    const requests: Promise<Response>[] = [];
+    for (let i = 0; i < 31; i++) {
+      requests.push(
+        fetch(`http://127.0.0.1:${port}/api/diagnostics/client`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event: 'poll_complete',
+            pollCount: i,
+          }),
+        })
+      );
+    }
+
+    const responses = await Promise.all(requests);
+    
+    // First 30 should succeed (204)
+    const successCount = responses.filter(r => r.status === 204).length;
+    // At least one should be rate limited (429)
+    const rateLimitedCount = responses.filter(r => r.status === 429).length;
+
+    assert.strictEqual(successCount, 30);
+    assert.strictEqual(rateLimitedCount, 1);
+    // Only 30 events should be logged (not the rate limited one)
+    assert.strictEqual(logCount, 30);
+  } finally {
+    console.log = originalLog;
+    await service.stop();
+  }
+});
+
+test('Client diagnostics: rate limit is per-IP', async () => {
+  const service = await createTestService();
+  const address = service.server.address();
+  const port = typeof address === 'object' && address !== null ? address.port : 0;
+
+  try {
+    // Send 30 requests from first "IP" (all will have same IP in test)
+    for (let i = 0; i < 30; i++) {
+      const response = await fetch(`http://127.0.0.1:${port}/api/diagnostics/client`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event: 'poll_complete',
+          pollCount: i,
+        }),
+      });
+      assert.strictEqual(response.status, 204);
+    }
+
+    // 31st request should be rate limited
+    const response = await fetch(`http://127.0.0.1:${port}/api/diagnostics/client`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event: 'poll_complete',
+        pollCount: 31,
+      }),
+    });
+
+    assert.strictEqual(response.status, 429);
   } finally {
     await service.stop();
   }

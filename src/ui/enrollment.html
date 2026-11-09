@@ -877,10 +877,22 @@
           try {
             pollResult = await request.pollOnce();
           } catch (error) {
-            // Check if error indicates permanent failure (decryption, unexpected response)
+            // Check if error indicates permanent failure
+            // (decryption, unexpected response, malformed data, crypto errors)
             const errorStr = String(error);
-            if (errorStr.includes('unexpected_response') || errorStr.includes('decrypt')) {
-              // Permanent failure - stop polling
+            const errorMsg = error instanceof Error ? error.message : errorStr;
+            const isPermanentFailure = 
+              errorStr.includes('unexpected_response') ||
+              errorStr.includes('decrypt') ||
+              errorMsg.includes('unexpected_response') ||
+              errorMsg.includes('decrypt') ||
+              errorMsg.includes('invalid') ||
+              errorMsg.includes('malformed') ||
+              errorMsg.includes('crypto');
+            
+            if (isPermanentFailure) {
+              // Permanent failure - stop polling with error
+              console.error('[Poll] Permanent failure detected:', error);
               diagnostics.errorCode = 'unexpected_response';
               diagnostics.lastStatusClass = 'failed';
               result = { success: false, error: 'unexpected_response' };
