@@ -837,7 +837,8 @@ export class EnrollmentService {
     // Session proofs have session_id but no action; uniqueness proofs have action but no/create session_id
     const hasSessionId = 'session_id' in request.idkitResult && request.idkitResult.session_id;
     const isCreateSession = hasSessionId && (request.idkitResult as any).session_id === 'create';
-    const isSessionProof = hasSessionId && !isCreateSession && !('action' in request.idkitResult);
+    const hasAction = 'action' in request.idkitResult && request.idkitResult.action;
+    const isSessionProof = hasSessionId && !isCreateSession && !hasAction;
     
     if (isSessionProof) {
       // Route to session verification (renewal/reactivation)

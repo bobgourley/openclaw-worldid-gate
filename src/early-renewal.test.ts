@@ -53,9 +53,14 @@ test('Early renewal via proveSession', async (t) => {
   // Stub verifier that always succeeds
   const stubVerifier = {
     async verify(proof: any, context: any): Promise<any> {
+      // Return nullifier for both uniqueness and session proofs
+      const nullifier = proof.responses[0].session_nullifier 
+        ? proof.responses[0].session_nullifier[0] 
+        : proof.responses[0].nullifier;
+        
       return {
         success: true,
-        nullifier: proof.responses[0].nullifier,
+        nullifier: nullifier,
         environment: 'staging',
       };
     },
@@ -109,6 +114,9 @@ test('Early renewal via proveSession', async (t) => {
     assert.strictEqual(enrollment.expired, false);
     assert.ok(enrollment.sessionId, 'Enrollment should have sessionId');
     const originalExpiresAt = enrollment.expiresAt;
+
+    // Wait a bit so the renewal creates a noticeably different expiry
+    await new Promise(resolve => setTimeout(resolve, 1500));
 
     // Step 2: Request early renewal (user is still active)
     const renewalChallenge = await service.createSessionChallenge(initData, { mode: 'renewal' });
