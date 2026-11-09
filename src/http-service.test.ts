@@ -473,7 +473,7 @@ describe('HttpService Integration', () => {
       const sessionChallenge = await sessionChallengeResponse.json();
 
       // Create session verification result
-      // Note: session_nullifier must match the nullifier from original enrollment
+      // Note: session_nullifier tuple uses [nullifier, randomized_action] per World ID 4.0
       const sessionVerifyResult = {
         protocol_version: '4.0',
         nonce: sessionChallenge.signedChallenge.nonce,
@@ -481,7 +481,7 @@ describe('HttpService Integration', () => {
         responses: [
           {
             identifier: 'proof_of_human',
-            session_nullifier: ['0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef', TEST_ACTION],
+            session_nullifier: ['0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef', '0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'],
             issuer_schema_id: 1,
             verifiable_credential: {
               expires_at_min: Math.floor(Date.now() / 1000) + 86400,
