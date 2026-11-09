@@ -127,7 +127,15 @@ export class WorldIdHttpVerifier {
     }
 
     // Discriminate between uniqueness and session proofs
-    // SECURITY: Use server-expected mode from challenge, not just client shape
+    // SECURITY: Use server-expected mode from challenge ONLY
+    // Missing expectedMode is a caller error and MUST fail closed
+    if (!expectedContext.expectedMode) {
+      return {
+        success: false,
+        error: 'Server error: expectedMode required (must be uniqueness or session from challenge)',
+      };
+    }
+
     const clientHasSessionShape = 'session_id' in idkitResult && !('action' in idkitResult);
     const clientHasUniquenessShape = 'action' in idkitResult;
 
@@ -135,20 +143,17 @@ export class WorldIdHttpVerifier {
       return { success: false, error: 'Cannot determine proof type (missing both action and session_id)' };
     }
 
-    // Use server-expected mode if provided (from challenge), otherwise infer from client shape
-    const isSessionProof = expectedContext.expectedMode === 'session' 
-      || (expectedContext.expectedMode === undefined && clientHasSessionShape);
-    const isUniquenessProof = expectedContext.expectedMode === 'uniqueness'
-      || (expectedContext.expectedMode === undefined && clientHasUniquenessShape);
+    const isSessionProof = expectedContext.expectedMode === 'session';
+    const isUniquenessProof = expectedContext.expectedMode === 'uniqueness';
 
     // SECURITY: Reject if client proof shape disagrees with server-expected mode
-    if (expectedContext.expectedMode === 'session' && !clientHasSessionShape) {
+    if (isSessionProof && !clientHasSessionShape) {
       return {
         success: false,
         error: 'Proof shape mismatch: expected session proof (has session_id), got uniqueness proof (has action)',
       };
     }
-    if (expectedContext.expectedMode === 'uniqueness' && !clientHasUniquenessShape) {
+    if (isUniquenessProof && !clientHasUniquenessShape) {
       return {
         success: false,
         error: 'Proof shape mismatch: expected uniqueness proof (has action), got session proof (has session_id)',

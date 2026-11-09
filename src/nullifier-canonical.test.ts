@@ -36,28 +36,43 @@ describe('Nullifier Canonicalization', () => {
       assert.equal(canonicalizeNullifier(canonical), canonical);
     });
 
-    it('canonicalizes decimal string', () => {
-      assert.equal(
-        canonicalizeNullifier('1'),
-        '0x0000000000000000000000000000000000000000000000000000000000000001'
+    it('rejects bare decimal string (prevents aliasing)', () => {
+      // SECURITY: "10" decimal vs "0x10" hex creates aliasing
+      assert.throws(
+        () => canonicalizeNullifier('1'),
+        /must be 0x-prefixed.*aliasing/
+      );
+      
+      assert.throws(
+        () => canonicalizeNullifier('255'),
+        /must be 0x-prefixed.*aliasing/
       );
     });
 
-    it('canonicalizes large decimal', () => {
-      assert.equal(
-        canonicalizeNullifier('255'),
-        '0x00000000000000000000000000000000000000000000000000000000000000ff'
-      );
-    });
-
-    it('equivalent representations normalize to same value (0x01 === 0x1 === 1)', () => {
+    it('equivalent 0x-prefixed representations normalize to same value', () => {
       const a = canonicalizeNullifier('0x01');
       const b = canonicalizeNullifier('0x1');
-      const c = canonicalizeNullifier('1');
+      const c = canonicalizeNullifier('0X1'); // uppercase 0X also valid
       
       assert.equal(a, b);
       assert.equal(b, c);
       assert.equal(a, '0x0000000000000000000000000000000000000000000000000000000000000001');
+    });
+
+    it('SECURITY: rejects decimal "10" to prevent alias with 0x10 (hex 16)', () => {
+      // "10" as decimal = 10
+      // "0x10" as hex = 16
+      // Both must NOT be accepted or they create replay aliasing
+      assert.throws(
+        () => canonicalizeNullifier('10'),
+        /must be 0x-prefixed.*aliasing/
+      );
+      
+      // Only 0x-prefixed form accepted
+      const canonical = canonicalizeNullifier('0x10');
+      assert.equal(canonical, '0x0000000000000000000000000000000000000000000000000000000000000010');
+      // This is hex 16, not decimal 10
+      assert.equal(BigInt(canonical), 16n);
     });
 
     it('handles 256-bit maximum', () => {
@@ -116,14 +131,14 @@ describe('Nullifier Canonicalization', () => {
       );
     });
 
-    it('rejects decimal with non-digits', () => {
+    it('rejects string with non-hex characters after 0x', () => {
       assert.throws(
-        () => canonicalizeNullifier('123abc'),
+        () => canonicalizeNullifier('0x123g'), // 'g' not hex
         /invalid characters/
       );
 
       assert.throws(
-        () => canonicalizeNullifier('1.5'),
+        () => canonicalizeNullifier('0xtest'), // 't', 'e', 's' not all hex
         /invalid characters/
       );
     });

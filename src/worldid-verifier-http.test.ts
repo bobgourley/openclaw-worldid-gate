@@ -93,6 +93,7 @@ describe('WorldIdHttpVerifier', () => {
       const expectedContext: ExpectedVerificationContext = {
         action: 'test',
         nonce: '0x123',
+        expectedMode: "uniqueness" as const,
         signalHash: '0x456',
         requireProofOfHuman: true,
       };
@@ -121,6 +122,7 @@ describe('WorldIdHttpVerifier', () => {
       const expectedContext: ExpectedVerificationContext = {
         action: 'test',
         nonce: '0x123',
+        expectedMode: "uniqueness" as const,
         signalHash: '0x456',
       };
 
@@ -154,6 +156,7 @@ describe('WorldIdHttpVerifier', () => {
       const expectedContext: ExpectedVerificationContext = {
         action: 'test',
         nonce: '0x123',
+        expectedMode: "uniqueness" as const,
         signalHash: '0x456',
       };
 
@@ -181,6 +184,7 @@ describe('WorldIdHttpVerifier', () => {
       const expectedContext: ExpectedVerificationContext = {
         action: 'test',
         nonce: '0x123',
+        expectedMode: "uniqueness" as const,
         signalHash: '0x456',
       };
 
@@ -223,6 +227,7 @@ describe('WorldIdHttpVerifier', () => {
       const expectedContext: ExpectedVerificationContext = {
         action: 'test',
         nonce: '0x123',
+        expectedMode: "uniqueness" as const,
         signalHash: '0x456',
       };
 
@@ -256,6 +261,7 @@ describe('WorldIdHttpVerifier', () => {
       const expectedContext: ExpectedVerificationContext = {
         action: 'expected-action',
         nonce: '0x123',
+        expectedMode: "uniqueness" as const,
         signalHash: '0x456',
       };
 
@@ -289,6 +295,7 @@ describe('WorldIdHttpVerifier', () => {
       const expectedContext: ExpectedVerificationContext = {
         action: 'test',
         nonce: '0x456', // Mismatch
+        expectedMode: "uniqueness" as const,
         signalHash: '0x789',
       };
 
@@ -323,6 +330,7 @@ describe('WorldIdHttpVerifier', () => {
       const expectedContext: ExpectedVerificationContext = {
         action: 'test',
         nonce: '0x123',
+        expectedMode: "uniqueness" as const,
         signalHash: '0xdef', // Mismatch
       };
 
@@ -357,6 +365,7 @@ describe('WorldIdHttpVerifier', () => {
       const expectedContext: ExpectedVerificationContext = {
         action: 'test',
         nonce: '0x123',
+        expectedMode: "uniqueness" as const,
         signalHash: '0x456',
         requireProofOfHuman: true,
       };

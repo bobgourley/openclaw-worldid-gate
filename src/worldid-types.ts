@@ -174,8 +174,8 @@ export interface ExpectedVerificationContext {
   signalHash: string | null;
   /** Require proof_of_human credential (issuer_schema_id: 1), default true */
   requireProofOfHuman?: boolean;
-  /** Server-expected proof type from challenge mode (renewal/reactivation => session, new => uniqueness) */
-  expectedMode?: 'uniqueness' | 'session';
+  /** Server-expected proof type from challenge mode (renewal/reactivation => session, new => uniqueness) - REQUIRED for production */
+  expectedMode: 'uniqueness' | 'session';
   /** Expected session_id for session proofs (from enrollment record) */
   sessionId?: string;
 }

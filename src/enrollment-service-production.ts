@@ -848,6 +848,7 @@ export class EnrollmentService {
       nonce: challengeRow.nonce,
       signalHash: challengeRow.signal_hash,
       requireProofOfHuman: true,
+      expectedMode: 'uniqueness' as const, // Enrollment always uses uniqueness proofs
     };
 
     // Step 5: Verify proof (async HTTP call, outside transaction)
