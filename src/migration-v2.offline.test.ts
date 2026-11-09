@@ -444,7 +444,7 @@ describe('Schema V2 Migration and Blockers', () => {
         clock: fakeClock,
       });
 
-      const sharedNullifier = '0ximmutable_test';
+      const sharedNullifier = '0xaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd';
 
       // User A enrolls
       const initDataA = createValidInitData(100, TEST_BOT_TOKEN);
@@ -508,9 +508,10 @@ describe('Schema V2 Migration and Blockers', () => {
       // User enrolls with nullifier N1
       const initData = createValidInitData(300, TEST_BOT_TOKEN);
       const challenge1 = await service.createChallenge(initData);
+      const nullifier1 = '0x1111111111111111111111111111111111111111111111111111111111111111';
       mockClient.setResponse(challenge1.signedChallenge.nonce, {
         success: true,
-        nullifier: '0xbinding1',
+        nullifier: nullifier1,
         issuerSchemaId: 1,
         expiresAtMin: fakeClock.nowSeconds() + 86400,
       });
@@ -526,9 +527,10 @@ describe('Schema V2 Migration and Blockers', () => {
       // User attempts to re-enroll with different nullifier N2
       fakeClock.advance(10);
       const challenge2 = await service.createChallenge(initData);
+      const nullifier2 = '0x2222222222222222222222222222222222222222222222222222222222222222';
       mockClient.setResponse(challenge2.signedChallenge.nonce, {
         success: true,
-        nullifier: '0xbinding2',  // Different nullifier
+        nullifier: nullifier2,  // Different nullifier
         issuerSchemaId: 1,
         expiresAtMin: fakeClock.nowSeconds() + 86400,
       });
@@ -547,8 +549,8 @@ describe('Schema V2 Migration and Blockers', () => {
       `).all() as any[];
 
       assert.equal(claims.length, 2, 'Both nullifiers must be permanently claimed');
-      assert.equal(claims[0].nullifier, '0xbinding1', 'First nullifier must remain claimed');
-      assert.equal(claims[1].nullifier, '0xbinding2', 'Second nullifier must be claimed');
+      assert.equal(claims[0].nullifier, nullifier1, 'First nullifier must remain claimed');
+      assert.equal(claims[1].nullifier, nullifier2, 'Second nullifier must be claimed');
 
       db.close();
       service.close();
