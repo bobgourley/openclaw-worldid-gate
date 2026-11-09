@@ -36,23 +36,23 @@
     
     @media (max-height: 400px) {
       .container {
-        padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+        padding: max(6px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
       }
       h1 {
         font-size: 18px;
-        margin-bottom: 4px;
+        margin-bottom: 3px;
       }
       .subtitle {
         font-size: 12px;
-        margin-bottom: 8px;
+        margin-bottom: 6px;
       }
       #status {
-        padding: 8px;
-        margin-bottom: 8px;
+        padding: 7px;
+        margin-bottom: 6px;
         font-size: 11px;
       }
       #connectorDisplay {
-        margin: 8px 0;
+        margin: 6px 0;
       }
       #qrCode {
         max-width: 140px;
@@ -70,12 +70,25 @@
         margin-top: 4px;
       }
       .button {
-        padding: 8px 16px;
+        padding: 7px 14px;
         font-size: 13px;
-        margin-top: 8px;
+        margin-top: 6px;
       }
       .info {
-        display: none;
+        position: absolute;
+        bottom: 2px;
+        left: 8px;
+        right: 8px;
+        font-size: 7px;
+        line-height: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        opacity: 0.7;
+      }
+      #diagnostics {
+        margin-top: 4px;
+        margin-bottom: 12px;
       }
     }
     h1 {
