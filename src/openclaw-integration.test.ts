@@ -1124,7 +1124,7 @@ exit 0
       await writeFile(
         timeoutCliPath,
         `#!/bin/bash
-sleep 100
+sleep 2
 echo '{"status":"ok","result":{"payloads":[{"text":"Never reached"}]}}'
 exit 0
 `,
