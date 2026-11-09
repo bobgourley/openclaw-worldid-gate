@@ -21,7 +21,8 @@ try {
   await esbuild.build({
     entryPoints: [resolve(__dirname, '../src/ui/idkit-bridge.ts')],
     bundle: true,
-    format: 'esm',
+    format: 'iife',
+    globalName: 'WorldIDKitBundle',
     platform: 'browser',
     target: 'es2020',
     outfile: 'dist/ui/idkit-bundle.js',
