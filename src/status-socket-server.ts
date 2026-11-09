@@ -10,35 +10,65 @@
  */
 
 import http from 'node:http';
-import { unlink, chmod, readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { unlink, chmod, readFile, lstat, mkdir } from 'node:fs/promises';
+import { existsSync, statSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { EnrollmentService } from './enrollment-service-production.js';
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual, createHash } from 'node:crypto';
 
 /**
- * Simple in-memory rate limiter for socket queries.
+ * Global rate limiter for socket queries with automatic cleanup.
  */
 class SocketRateLimiter {
   private requests: Map<string, number[]> = new Map();
   private readonly windowMs: number = 60000; // 1 minute
-  private readonly maxRequests: number = 100; // 100 requests per minute per endpoint
+  private readonly maxRequestsPerEndpoint: number = 100; // 100 requests per minute per endpoint
+  private readonly maxGlobalRequests: number = 1000; // 1000 requests per minute global
+  private lastCleanup: number = Date.now();
 
   check(key: string): boolean {
     const now = Date.now();
-    let timestamps = this.requests.get(key) || [];
     
-    // Remove expired timestamps
+    // Periodic cleanup (every 5 minutes)
+    if (now - this.lastCleanup > 300000) {
+      this.evictStale(now);
+    }
+    
+    // Global rate limit
+    const allTimestamps: number[] = [];
+    for (const timestamps of this.requests.values()) {
+      allTimestamps.push(...timestamps);
+    }
     const cutoff = now - this.windowMs;
+    const recentGlobal = allTimestamps.filter(t => t > cutoff);
+    if (recentGlobal.length >= this.maxGlobalRequests) {
+      return false;
+    }
+    
+    // Per-endpoint rate limit
+    let timestamps = this.requests.get(key) || [];
     timestamps = timestamps.filter(t => t > cutoff);
     
-    // Check limit
-    if (timestamps.length >= this.maxRequests) {
+    if (timestamps.length >= this.maxRequestsPerEndpoint) {
       return false;
     }
     
     timestamps.push(now);
     this.requests.set(key, timestamps);
     return true;
+  }
+
+  private evictStale(now: number): void {
+    const cutoff = now - this.windowMs;
+    for (const [key, timestamps] of this.requests.entries()) {
+      const recent = timestamps.filter(t => t > cutoff);
+      if (recent.length === 0) {
+        this.requests.delete(key);
+      } else {
+        this.requests.set(key, recent);
+      }
+    }
+    this.lastCleanup = now;
   }
 }
 
@@ -72,10 +102,32 @@ export class StatusSocketServer {
    * Start the Unix socket server.
    */
   async start(): Promise<void> {
-    // Remove stale socket file if exists
+    // Check for stale socket
     if (existsSync(this.config.socketPath)) {
+      let stats;
+      try {
+        stats = await lstat(this.config.socketPath);
+      } catch (error) {
+        throw new Error(`Cannot stat socket path: ${error}`);
+      }
+
+      if (!stats.isSocket()) {
+        throw new Error(`Socket path exists but is not a socket (refusing to unlink)`);
+      }
+
+      // Try connecting to check if socket is live
+      const isLive = await this.checkSocketLive(this.config.socketPath);
+      if (isLive) {
+        throw new Error(`Socket is live (another instance running)`);
+      }
+
+      // Safe to remove stale socket
       await unlink(this.config.socketPath);
     }
+
+    // Ensure directory exists with mode 0700
+    const socketDir = dirname(this.config.socketPath);
+    await mkdir(socketDir, { recursive: true, mode: 0o700 });
 
     this.server = http.createServer(async (req, res) => {
       await this.handleRequest(req, res);
@@ -87,10 +139,21 @@ export class StatusSocketServer {
         return;
       }
 
+      // Set umask to 0077 before listen (socket will be 0600)
+      const oldMask = process.umask(0o077);
+      
       this.server.listen(this.config.socketPath, async () => {
+        // Restore old umask
+        process.umask(oldMask);
+        
         try {
-          // Set socket permissions to 0600 (owner-only)
-          await chmod(this.config.socketPath, 0o600);
+          // Verify socket permissions
+          const stats = statSync(this.config.socketPath);
+          const mode = stats.mode & 0o777;
+          if (mode !== 0o600) {
+            // Explicitly set if umask didn't work
+            await chmod(this.config.socketPath, 0o600);
+          }
           console.log(`[StatusSocket] Listening on ${this.config.socketPath} (mode 0600)`);
           resolve();
         } catch (error) {
@@ -99,8 +162,35 @@ export class StatusSocketServer {
       });
 
       this.server.on('error', (error: any) => {
+        // Restore umask on error
+        process.umask(oldMask);
         reject(error);
       });
+    });
+  }
+
+  /**
+   * Check if socket is live by attempting connection.
+   */
+  private async checkSocketLive(socketPath: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const client = http.request(
+        {
+          socketPath,
+          path: '/health',
+          method: 'GET',
+          timeout: 1000,
+        },
+        () => {
+          resolve(true); // Socket answered
+        }
+      );
+
+      client.on('error', () => {
+        resolve(false); // Socket not live
+      });
+
+      client.end();
     });
   }
 
@@ -204,7 +294,7 @@ export class StatusSocketServer {
         action: enrollment.action,
       }));
     } catch (error) {
-      console.error('[StatusSocket] Query error:', error);
+      console.error('[StatusSocket] Query error');
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Internal error' }));
     }
@@ -212,6 +302,7 @@ export class StatusSocketServer {
 
   /**
    * Verify bearer authentication with constant-time compare.
+   * Hash both sides before comparison to ensure equal length.
    */
   private verifyAuth(authHeader: string | undefined): boolean {
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -220,17 +311,12 @@ export class StatusSocketServer {
 
     const providedSecret = authHeader.slice(7); // Remove "Bearer " prefix
     
-    // Constant-time comparison to prevent timing attacks
+    // Hash both sides to ensure equal length for timingSafeEqual
     try {
-      const expected = Buffer.from(this.config.secret, 'utf8');
-      const provided = Buffer.from(providedSecret, 'utf8');
+      const expectedHash = createHash('sha256').update(this.config.secret, 'utf8').digest();
+      const providedHash = createHash('sha256').update(providedSecret, 'utf8').digest();
       
-      // Both buffers must be same length for timingSafeEqual
-      if (expected.length !== provided.length) {
-        return false;
-      }
-      
-      return timingSafeEqual(expected, provided);
+      return timingSafeEqual(expectedHash, providedHash);
     } catch {
       return false;
     }
@@ -238,10 +324,18 @@ export class StatusSocketServer {
 }
 
 /**
- * Load secret from file (0600 permissions check).
+ * Load secret from file and enforce mode 0600.
  */
 export async function loadStatusSecret(secretFile: string): Promise<string> {
   try {
+    // Check file permissions
+    const stats = await lstat(secretFile);
+    const mode = stats.mode & 0o777;
+    
+    if (mode !== 0o600) {
+      throw new Error(`Secret file must have mode 0600 (current: 0${mode.toString(8)})`);
+    }
+    
     const content = await readFile(secretFile, 'utf8');
     const secret = content.trim();
     

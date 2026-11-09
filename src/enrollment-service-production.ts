@@ -1736,6 +1736,14 @@ export class EnrollmentService {
       };
     }
 
+    // DISPLAY-ONLY: Apply member tag after successful renewal/reactivation
+    // Tag operations are best-effort and NEVER affect session verification outcome
+    if (this.memberTagManager) {
+      this.memberTagManager.applyTagToMember(authenticatedUserId).catch(error => {
+        console.error('[MemberTag] Failed to apply tag after session verification');
+      });
+    }
+
     return {
       success: true,
       telegramUserId: authenticatedUserId,

@@ -33,6 +33,9 @@ export interface SetTagResult {
   
   /** Whether failure was due to invalid target (admin, bot, not in group) */
   invalidTarget?: boolean;
+  
+  /** Retry after seconds (for rate limiting) */
+  retryAfter?: number;
 }
 
 /**
@@ -122,6 +125,17 @@ export class TelegramApiClient {
 
       // Parse error
       const errorDescription = data.description || 'Unknown error';
+      const errorCode = data.error_code;
+      
+      // Detect rate limiting (429)
+      if (errorCode === 429) {
+        const retryAfter = data.parameters?.retry_after || 60;
+        return {
+          success: false,
+          error: errorDescription,
+          retryAfter,
+        };
+      }
       
       // Detect permission errors
       if (errorDescription.includes('not enough rights') ||
@@ -261,6 +275,8 @@ export class TelegramApiClient {
   async getChatMember(chatId: number | string, userId: number): Promise<{
     success: boolean;
     status?: 'creator' | 'administrator' | 'member' | 'restricted' | 'left' | 'kicked';
+    tag?: string | null;
+    isMember?: boolean;
     error?: string;
   }> {
     const url = `${this.baseUrl}/bot${this.botToken}/getChatMember`;
@@ -289,6 +305,8 @@ export class TelegramApiClient {
       return {
         success: true,
         status: data.result?.status,
+        tag: data.result?.custom_title || data.result?.tag || null,
+        isMember: data.result?.is_member !== false,
       };
     } catch (error: any) {
       return {

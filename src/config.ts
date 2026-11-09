@@ -173,7 +173,13 @@ export const openclawIntegrationConfig: OpenClawIntegrationConfig = {
     tagText: process.env.MEMBER_TAG_TEXT || 'Human Verified', // 14 chars (including space), no emoji
     requireAdminPermission: 'can_manage_tags',
     targetChatId: process.env.OPENCLAW_ALLOWED_GROUP || '', // Telegram chat ID or @username (e.g., '@finntalkgroup')
-    sweepIntervalHours: parseInt(process.env.MEMBER_TAG_SWEEP_INTERVAL_HOURS || '24', 10), // Default 24 hours
+    sweepIntervalHours: (() => {
+      const val = parseInt(process.env.MEMBER_TAG_SWEEP_INTERVAL_HOURS || '24', 10);
+      if (!Number.isInteger(val) || val < 1 || val > 168) {
+        return 24; // Default to 24 if invalid
+      }
+      return val;
+    })(),
   },
   selectedGroupIds: {
     enabled: false,

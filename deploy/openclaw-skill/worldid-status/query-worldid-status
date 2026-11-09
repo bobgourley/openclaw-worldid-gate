@@ -6,7 +6,7 @@
 # 
 # Required environment variables:
 #   WORLDID_STATUS_SOCKET - Path to Unix domain socket
-#   WORLDID_STATUS_SECRET - Bearer token for authentication
+#   WORLDID_STATUS_SECRET_FILE - Path to file containing bearer token
 #
 # Exit codes:
 #   0 - Success
@@ -37,52 +37,58 @@ if [ -z "${WORLDID_STATUS_SOCKET:-}" ]; then
   exit 3
 fi
 
-if [ -z "${WORLDID_STATUS_SECRET:-}" ]; then
-  echo "Error: WORLDID_STATUS_SECRET environment variable not set" >&2
+if [ -z "${WORLDID_STATUS_SECRET_FILE:-}" ]; then
+  echo "Error: WORLDID_STATUS_SECRET_FILE environment variable not set" >&2
   exit 2
 fi
 
-# Query the status socket
-HTTP_CODE=$(curl --silent --show-error --fail-with-body \
+# Check secret file exists
+if [ ! -f "$WORLDID_STATUS_SECRET_FILE" ]; then
+  echo "Error: Secret file not found: $WORLDID_STATUS_SECRET_FILE" >&2
+  exit 2
+fi
+
+# Create temp file for response
+RESPONSE_FILE=$(mktemp)
+trap "rm -f '$RESPONSE_FILE'" EXIT
+
+# Read secret from file and query the status socket
+# Use -K - to read header from stdin (keeps secret out of argv)
+HTTP_CODE=$(printf "Authorization: Bearer %s" "$(cat "$WORLDID_STATUS_SECRET_FILE")" | \
+  curl --silent --show-error \
   --unix-socket "$WORLDID_STATUS_SOCKET" \
-  --header "Authorization: Bearer $WORLDID_STATUS_SECRET" \
-  --write-out "%{http_code}" \
-  --output /tmp/worldid-status-response.$$.json \
-  "http://localhost/status/$USER_ID" 2>/dev/null || echo "000")
+  --header @- \
+  --write-out "\n%{http_code}" \
+  --output "$RESPONSE_FILE" \
+  "http://localhost/status/$USER_ID" 2>&1 | tail -1)
+
+# Check if curl succeeded
+if [ -z "$HTTP_CODE" ] || ! [[ "$HTTP_CODE" =~ ^[0-9]+$ ]]; then
+  echo "Error: Cannot connect to socket (is the gate service running?)" >&2
+  exit 3
+fi
 
 # Check HTTP status
 case "$HTTP_CODE" in
   200)
-    cat /tmp/worldid-status-response.$$.json
-    rm -f /tmp/worldid-status-response.$$.json
+    cat "$RESPONSE_FILE"
     exit 0
     ;;
   401)
     echo "Error: Authentication failed (invalid bearer token)" >&2
-    rm -f /tmp/worldid-status-response.$$.json
     exit 2
     ;;
   404)
     echo "Error: Endpoint not found (check socket path)" >&2
-    rm -f /tmp/worldid-status-response.$$.json
     exit 3
     ;;
   429)
     echo "Error: Rate limit exceeded" >&2
-    rm -f /tmp/worldid-status-response.$$.json
     exit 4
-    ;;
-  000)
-    echo "Error: Cannot connect to socket (is the gate service running?)" >&2
-    rm -f /tmp/worldid-status-response.$$.json
-    exit 3
     ;;
   *)
     echo "Error: Unexpected HTTP status $HTTP_CODE" >&2
-    if [ -f /tmp/worldid-status-response.$$.json ]; then
-      cat /tmp/worldid-status-response.$$.json >&2
-      rm -f /tmp/worldid-status-response.$$.json
-    fi
+    cat "$RESPONSE_FILE" >&2
     exit 3
     ;;
 esac

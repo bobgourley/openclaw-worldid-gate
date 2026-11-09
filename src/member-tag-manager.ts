@@ -169,8 +169,8 @@ export class MemberTagManager {
       };
     }
 
-    // Skip non-members
-    if (memberStatus.status !== 'member' && memberStatus.status !== 'restricted') {
+    // Skip non-members and restricted users with is_member=false
+    if (memberStatus.status === 'left' || memberStatus.status === 'kicked') {
       return {
         success: false,
         status: 'User not in group',
@@ -178,13 +178,41 @@ export class MemberTagManager {
       };
     }
 
-    // Check for existing different tag (conflict)
-    const existingTag = this.getAppliedTag(telegramUserId);
-    if (existingTag && existingTag.applied_text !== this.tagText) {
-      console.log(`[MemberTag] Tag conflict: user ${telegramUserId} has different tag "${existingTag.applied_text}"`);
+    if (memberStatus.status === 'restricted' && !memberStatus.isMember) {
       return {
         success: false,
-        status: 'Tag conflict (different tag exists)',
+        status: 'User restricted without membership',
+        retryable: false,
+      };
+    }
+
+    // Read member's current tag from Telegram API to check for conflicts
+    const currentTag = memberStatus.tag || null;
+    
+    // Check if there's a different tag we didn't apply
+    const ourRecord = this.getAppliedTag(telegramUserId);
+    if (currentTag && currentTag !== this.tagText) {
+      // Tag exists but doesn't match ours
+      if (!ourRecord || ourRecord.applied_text !== currentTag) {
+        // We didn't apply this tag - don't overwrite
+        console.log('[MemberTag] Tag conflict detected, skip');
+        return {
+          success: false,
+          status: 'Tag conflict (different tag exists)',
+          retryable: false,
+        };
+      }
+    }
+
+    // If tag already matches, no need to apply again
+    if (currentTag === this.tagText) {
+      // Ensure we have a record of it
+      if (!ourRecord) {
+        this.recordTagApplication(telegramUserId, this.tagText);
+      }
+      return {
+        success: true,
+        status: 'Tag already applied',
         retryable: false,
       };
     }
@@ -223,6 +251,15 @@ export class MemberTagManager {
       };
     }
 
+    // Handle rate limiting with retry_after
+    if (result.retryAfter) {
+      return {
+        success: false,
+        status: `Rate limited (retry after ${result.retryAfter}s)`,
+        retryable: true,
+      };
+    }
+
     // Network or transient error
     if (result.error?.includes('Network error') || result.error?.includes('timeout')) {
       return {
@@ -244,7 +281,7 @@ export class MemberTagManager {
    * 
    * Called when enrollment expires or is revoked.
    * IDEMPOTENT: Safe to call even if tag not present.
-   * Only removes if gate applied it and it still matches.
+   * Only removes if gate applied it and current tag still matches.
    * 
    * @param telegramUserId - Telegram user ID
    * @returns Result with sanitized status
@@ -269,8 +306,25 @@ export class MemberTagManager {
       };
     }
 
-    // Only remove if still matches what we applied
-    if (appliedTag.applied_text !== this.tagText) {
+    // Read member's current tag from Telegram API
+    const memberStatus = await this.telegramClient.getChatMember(
+      this.targetChatId,
+      telegramUserId
+    );
+
+    if (!memberStatus.success) {
+      return {
+        success: false,
+        status: 'Cannot check member status',
+        retryable: true,
+      };
+    }
+
+    const currentTag = memberStatus.tag || null;
+
+    // Only remove if current tag matches what we applied
+    if (currentTag !== appliedTag.applied_text) {
+      this.recordTagRemoval(telegramUserId);
       return {
         success: true,
         status: 'Tag changed externally (skip)',
@@ -313,6 +367,15 @@ export class MemberTagManager {
       };
     }
 
+    // Handle rate limiting
+    if (result.retryAfter) {
+      return {
+        success: false,
+        status: `Rate limited (retry after ${result.retryAfter}s)`,
+        retryable: true,
+      };
+    }
+
     // Network or transient error
     if (result.error?.includes('Network error') || result.error?.includes('timeout')) {
       return {
@@ -352,10 +415,62 @@ export class MemberTagManager {
       return { processed: 0, applied: 0, removed: 0, skipped: 0, failed: 0 };
     }
 
-    // Note: EnrollmentStore interface doesn't have getAllEnrollments
-    // Reconciliation requires external coordination (e.g., operator script)
-    // For now, return empty result
-    return { processed: 0, applied: 0, removed: 0, skipped: 0, failed: 0 };
+    let processed = 0;
+    let applied = 0;
+    let removed = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    try {
+      // Get all enrollments for this action
+      const allEnrollments = this.db.prepare(`
+        SELECT telegram_user_id, revoked, expires_at
+        FROM enrollments
+        WHERE action = ?
+      `).all(this.action) as Array<{
+        telegram_user_id: number;
+        revoked: number;
+        expires_at: number;
+      }>;
+
+      const now = Math.floor(Date.now() / 1000);
+
+      for (const row of allEnrollments) {
+        processed++;
+        const isExpired = row.expires_at <= now;
+        const isRevoked = row.revoked === 1;
+
+        if (isExpired || isRevoked) {
+          // Remove tag
+          const result = await this.removeTagFromMember(row.telegram_user_id);
+          if (result.success && result.status === 'Tag removed') {
+            removed++;
+          } else if (!result.success && result.retryable) {
+            failed++;
+          } else {
+            skipped++;
+          }
+        } else {
+          // Apply tag (will skip if already present)
+          const result = await this.applyTagToMember(row.telegram_user_id);
+          if (result.success && (result.status === 'Tag applied' || result.status === 'Tag already applied')) {
+            if (result.status === 'Tag applied') {
+              applied++;
+            } else {
+              skipped++;
+            }
+          } else if (!result.success && result.retryable) {
+            failed++;
+          } else {
+            skipped++;
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[MemberTag] Reconciliation error');
+    }
+
+    return { processed, applied, removed, skipped, failed };
   }
 
   /**
@@ -364,9 +479,10 @@ export class MemberTagManager {
    * Verifies bot can manage tags in target chat before attempting operations.
    * Call during startup or configuration to detect permission issues early.
    * 
+   * @param timeoutMs - Optional timeout in milliseconds (default: 5000)
    * @returns Result indicating permission status
    */
-  async checkPermissions(): Promise<TagOperationResult> {
+  async checkPermissions(timeoutMs: number = 5000): Promise<TagOperationResult> {
     if (!this.enabled) {
       return {
         success: false,
@@ -375,40 +491,71 @@ export class MemberTagManager {
       };
     }
 
-    const result = await this.telegramClient.checkTagPermission(this.targetChatId);
+    // Add timeout to permission check
+    const timeoutPromise = new Promise<TagOperationResult>((resolve) => {
+      setTimeout(() => {
+        resolve({
+          success: false,
+          status: 'Permission check timeout',
+          retryable: true,
+        });
+      }, timeoutMs);
+    });
 
-    if (result.success) {
+    const checkPromise = this.telegramClient.checkTagPermission(this.targetChatId).then(result => {
+      if (result.success) {
+        return {
+          success: true,
+          status: 'Bot can manage tags',
+          retryable: false,
+        };
+      }
       return {
-        success: true,
-        status: 'Bot can manage tags',
+        success: false,
+        status: result.error || 'Permission check failed',
         retryable: false,
       };
-    }
+    });
 
-    return {
-      success: false,
-      status: result.error || 'Permission check failed',
-      retryable: false,
-    };
+    return Promise.race([checkPromise, timeoutPromise]);
   }
 
   /**
-   * Start expiry sweeper (removes tags from expired enrollments).
+   * Start expiry sweeper (applies missing tags and removes tags from expired enrollments).
    * Runs initial sweep immediately, then at configured interval (default 24 hours).
    */
-  async startSweeper(): Promise<void> {
+  startSweeper(): void {
     if (!this.enabled || this.sweeperInterval) {
       return;
     }
 
-    // Run initial sweep at startup
-    await this.sweepExpiredTags();
+    // Run initial sweep in background (don't block startup)
+    this.runSweeperCycle().catch(error => {
+      console.error('[MemberTag] Initial sweep failed');
+    });
 
     // Schedule periodic sweeps
     const intervalMs = this.sweepIntervalHours * 60 * 60 * 1000;
-    this.sweeperInterval = setInterval(async () => {
-      await this.sweepExpiredTags();
+    this.sweeperInterval = setInterval(() => {
+      this.runSweeperCycle().catch(error => {
+        console.error('[MemberTag] Periodic sweep failed');
+      });
     }, intervalMs);
+  }
+
+  /**
+   * Run one sweeper cycle: re-check permissions and reconcile all tags.
+   */
+  private async runSweeperCycle(): Promise<void> {
+    // Re-check permissions each cycle (allows granting rights without restart)
+    const permCheck = await this.checkPermissions();
+    if (!permCheck.success) {
+      console.log('[MemberTag] Permission check failed during sweep, skip');
+      return;
+    }
+
+    // Reconcile all tags
+    await this.reconcileAllTags();
   }
 
   /**
@@ -421,30 +568,6 @@ export class MemberTagManager {
     }
   }
 
-  /**
-   * Sweep expired enrollments and remove their tags.
-   */
-  private async sweepExpiredTags(): Promise<void> {
-    try {
-      // Get all applied tags
-      const appliedTags = this.db.prepare(`
-        SELECT telegram_user_id
-        FROM member_tags
-        WHERE chat_id = ? AND removed_at IS NULL
-      `).all(this.getChatIdNumeric()) as any[];
-
-      for (const row of appliedTags) {
-        const enrollment = await this.enrollmentService.findEnrollment(row.telegram_user_id);
-        
-        // Remove tag if enrollment is expired or revoked
-        if (!enrollment || enrollment.expired || enrollment.revoked) {
-          await this.removeTagFromMember(row.telegram_user_id);
-        }
-      }
-    } catch (error) {
-      console.error('[MemberTag] Sweeper error:', error);
-    }
-  }
 
   /**
    * Record tag application in database.
@@ -460,12 +583,12 @@ export class MemberTagManager {
           removed_at = NULL
       `).run(
         telegramUserId,
-        this.getChatIdNumeric(),
+        this.getChatIdString(),
         tagText,
         new Date().toISOString()
       );
     } catch (error) {
-      console.error('[MemberTag] Failed to record tag application:', error);
+      console.error('[MemberTag] Failed to record tag application');
     }
   }
 
@@ -481,10 +604,10 @@ export class MemberTagManager {
       `).run(
         new Date().toISOString(),
         telegramUserId,
-        this.getChatIdNumeric()
+        this.getChatIdString()
       );
     } catch (error) {
-      console.error('[MemberTag] Failed to record tag removal:', error);
+      console.error('[MemberTag] Failed to record tag removal');
     }
   }
 
@@ -497,35 +620,19 @@ export class MemberTagManager {
         SELECT applied_text
         FROM member_tags
         WHERE telegram_user_id = ? AND chat_id = ? AND removed_at IS NULL
-      `).get(telegramUserId, this.getChatIdNumeric()) as any;
+      `).get(telegramUserId, this.getChatIdString()) as any;
       
       return row || null;
     } catch (error) {
-      console.error('[MemberTag] Failed to get applied tag:', error);
+      console.error('[MemberTag] Failed to get applied tag');
       return null;
     }
   }
 
   /**
-   * Convert chat ID to numeric (handle @username format).
+   * Convert chat ID to string for storage.
    */
-  private getChatIdNumeric(): number | string {
-    // If already numeric, return as-is
-    if (typeof this.targetChatId === 'number') {
-      return this.targetChatId;
-    }
-    
-    // If string starting with @, return as-is
-    if (typeof this.targetChatId === 'string' && this.targetChatId.startsWith('@')) {
-      return this.targetChatId;
-    }
-    
-    // Try to parse as number
-    const parsed = parseInt(this.targetChatId as string, 10);
-    if (!isNaN(parsed)) {
-      return parsed;
-    }
-    
-    return this.targetChatId;
+  private getChatIdString(): string {
+    return String(this.targetChatId);
   }
 }

@@ -180,13 +180,20 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     
+    // Validate sweep interval (1-168 hours)
+    const sweepInterval = openclawIntegrationConfig.memberTags.sweepIntervalHours;
+    if (!Number.isInteger(sweepInterval) || sweepInterval < 1 || sweepInterval > 168) {
+      console.error('FATAL: MEMBER_TAG_SWEEP_INTERVAL_HOURS must be 1-168');
+      process.exit(1);
+    }
+    
     telegramApiClient = new TelegramApiClient({
       botToken: config.telegramBotToken,
     });
     
     console.log('Member tags enabled:');
     console.log(`  Tag text: ${openclawIntegrationConfig.memberTags.tagText}`);
-    console.log(`  Target chat: ${openclawIntegrationConfig.memberTags.targetChatId}`);
+    console.log(`  Sweep interval: ${sweepInterval}h`);
   }
 
   // Create enrollment service
@@ -214,16 +221,22 @@ async function main(): Promise<void> {
       sweepIntervalHours: openclawIntegrationConfig.memberTags.sweepIntervalHours,
     });
     
-    // Check permissions on startup
-    const permCheck = await memberTagManager.checkPermissions();
-    if (!permCheck.success) {
-      console.warn(`[MemberTag] Permission check failed: ${permCheck.status}`);
+    // Check permissions in background (don't block startup)
+    const permCheckPromise = memberTagManager.checkPermissions();
+    permCheckPromise.then(permCheck => {
+      if (!permCheck.success) {
+        console.warn(`[MemberTag] Permission check failed: ${permCheck.status}`);
+        console.warn('[MemberTag] Tagging disabled (enrollment will continue normally)');
+        memberTagManager = undefined;
+      } else {
+        console.log(`[MemberTag] Permission check passed, starting sweeper (interval: ${openclawIntegrationConfig.memberTags.sweepIntervalHours}h)`);
+        memberTagManager!.startSweeper();
+      }
+    }).catch(() => {
+      console.warn('[MemberTag] Permission check failed (network error)');
       console.warn('[MemberTag] Tagging disabled (enrollment will continue normally)');
-      memberTagManager = undefined; // Disable tagging
-    } else {
-      console.log(`[MemberTag] Permission check passed, starting sweeper (interval: ${openclawIntegrationConfig.memberTags.sweepIntervalHours}h)`);
-      await memberTagManager.startSweeper();
-    }
+      memberTagManager = undefined;
+    });
   }
 
   // Update enrollment service with member tag manager
