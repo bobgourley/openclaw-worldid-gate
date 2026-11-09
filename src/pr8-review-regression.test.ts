@@ -810,7 +810,7 @@ describe('PR 8 Review Regression Tests', () => {
  * tests hung.
  */
 function runSkill(args: string[], env: NodeJS.ProcessEnv): Promise<{ code: number; stdout: string; stderr: string }> {
-  const scriptPath = join(process.cwd(), 'deploy/openclaw-skill/worldid-status/query-worldid-status');
+  const scriptPath = join(process.cwd(), 'openclaw/skills/worldid-status/query-worldid-status');
   return new Promise((resolve) => {
     execFile('bash', [scriptPath, ...args], { env: { ...process.env, ...env }, timeout: 15000, encoding: 'utf8' }, (error: any, stdout, stderr) => {
       const code = error ? (typeof error.code === 'number' ? error.code : -1) : 0;

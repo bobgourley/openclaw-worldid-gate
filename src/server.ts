@@ -172,7 +172,7 @@ async function main(): Promise<void> {
   if (config.diagnosticLogEnabled) {
     if (!config.diagnosticLogDir) {
       console.error('DIAGNOSTIC_LOG_ENABLED=true requires DIAGNOSTIC_LOG_DIR to be set');
-      console.error('Example: DIAGNOSTIC_LOG_DIR=/Users/finn/worldid-gate-runtime/private/diagnostics');
+      console.error('Example: DIAGNOSTIC_LOG_DIR=/var/log/worldid-gate/diagnostics');
       process.exit(1);
     }
   }

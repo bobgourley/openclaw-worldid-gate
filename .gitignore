@@ -10,6 +10,20 @@ dist/
 *.pem
 config.production.ts
 secrets/
+*.txt
+!package-lock.txt
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Archives and releases
+*.tar.gz
+*.zip
+*.tgz
 
 # TypeScript
 *.tsbuildinfo

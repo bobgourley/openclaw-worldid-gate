@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 #
 # Query World ID enrollment status via Unix domain socket.
-# 
+#
 # Usage: query-worldid-status <telegram_user_id>
-# 
+#
 # Required environment variables:
-#   WORLDID_STATUS_SOCKET - Path to Unix domain socket
-#   WORLDID_STATUS_SECRET_FILE - Path to file containing bearer token
+#   WORLDID_STATUS_SOCKET       Path to Unix domain socket
+#                               (recommended default: ${HOME}/.worldid-gate/status.sock)
+#   WORLDID_STATUS_SECRET_FILE  Path to file containing bearer token
+#                               (recommended default: ${HOME}/.worldid-gate/status-secret.txt)
+#
+# Optional:
+#   WORLDID_STATUS_TZ           Timezone for expiresAtET (default: America/New_York)
 #
 # Exit codes:
 #   0 - Success
@@ -31,14 +36,16 @@ if ! [[ "$USER_ID" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-# Check required environment variables
+# Check required environment variables (no hardcoded host paths)
 if [ -z "${WORLDID_STATUS_SOCKET:-}" ]; then
   echo "Error: WORLDID_STATUS_SOCKET environment variable not set" >&2
+  echo "Hint: set it to \${HOME}/.worldid-gate/status.sock (or your gate socket path)" >&2
   exit 3
 fi
 
 if [ -z "${WORLDID_STATUS_SECRET_FILE:-}" ]; then
   echo "Error: WORLDID_STATUS_SECRET_FILE environment variable not set" >&2
+  echo "Hint: set it to \${HOME}/.worldid-gate/status-secret.txt (or your secret file path)" >&2
   exit 2
 fi
 
@@ -47,6 +54,8 @@ if [ ! -f "$WORLDID_STATUS_SECRET_FILE" ]; then
   echo "Error: Secret file not found: $WORLDID_STATUS_SECRET_FILE" >&2
   exit 2
 fi
+
+STATUS_TZ="${WORLDID_STATUS_TZ:-America/New_York}"
 
 # Create temp file for response
 RESPONSE_FILE=$(mktemp)
@@ -78,7 +87,29 @@ fi
 # Check HTTP status
 case "$HTTP_CODE" in
   200)
-    cat "$RESPONSE_FILE"
+    # Add human-readable fields so the agent never converts the epoch itself.
+    BODY=$(cat "$RESPONSE_FILE")
+    EXP=$(printf '%s' "$BODY" | sed -nE 's/.*"expiresAt":[[:space:]]*([0-9]+).*/\1/p')
+    if printf '%s' "$BODY" | grep -qE '"verified":[[:space:]]*true' && printf '%s' "$BODY" | grep -qE '"state":[[:space:]]*"active"'; then
+      IS_VERIFIED=1
+    else
+      IS_VERIFIED=0
+    fi
+    EXP_ET="none"
+    if [ -n "$EXP" ]; then
+      # expiresAt is Unix seconds; convert milliseconds defensively.
+      if [ "${#EXP}" -ge 13 ]; then EXP=$((EXP / 1000)); fi
+      EXP_ET=$(TZ="$STATUS_TZ" /bin/date -r "$EXP" '+%a %b %-d, %Y %-I:%M %p ET' 2>/dev/null \
+        || TZ="$STATUS_TZ" /bin/date -d "@$EXP" '+%a %b %-d, %Y %-I:%M %p ET' 2>/dev/null \
+        || echo "unknown")
+    fi
+    if [ "$IS_VERIFIED" -eq 1 ]; then
+      ANSWER="VERIFIED HUMAN: World ID verified (unique Orb-verified human), active until ${EXP_ET}"
+    else
+      ANSWER="NOT VERIFIED: no active World ID verification for this Telegram account"
+    fi
+    BODY_TRIM=$(printf '%s' "$BODY" | sed -E 's/}[[:space:]]*$//')
+    printf '%s,"expiresAtET":"%s","answer":"%s"}\n' "$BODY_TRIM" "$EXP_ET" "$ANSWER"
     exit 0
     ;;
   401)

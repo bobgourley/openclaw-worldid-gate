@@ -414,15 +414,15 @@ The status socket provides a private interface for enrollment status queries.
 
 ```bash
 # Enable private status socket for OpenClaw integration
-WORLDID_STATUS_SOCKET=/Users/finn/.worldid-gate/status.sock
-WORLDID_STATUS_SECRET_FILE=/Users/finn/.worldid-gate/status-secret.txt
+WORLDID_STATUS_SOCKET=${HOME}/.worldid-gate/status.sock
+WORLDID_STATUS_SECRET_FILE=${HOME}/.worldid-gate/status-secret.txt
 ```
 
 **WORLDID_STATUS_SOCKET**: Path to Unix domain socket for private enrollment status queries. Must be in a directory owned by `finn` with mode 0700. Socket created with mode 0600 (owner-only).
 
 **WORLDID_STATUS_SECRET_FILE**: Path to file containing bearer authentication secret (minimum 32 characters). File must have mode 0600 and be owned by `finn`. The secret is loaded at startup and used for constant-time authentication.
 
-**Important:** Both the gate service and main OpenClaw gateway run as user `finn`, so the socket directory (`/Users/finn/.worldid-gate`) must be owned by finn with mode 0700, and the secret file must be owned by finn with mode 0600.
+**Important:** Both the gate service and main OpenClaw gateway run as the same OS user, so the socket directory (`~/.worldid-gate`) must be owned by that user with mode 0700, and the secret file must be owned by the same user with mode 0600.
 
 **Security Notes**:
 - The status socket is NOT mounted on the public HTTP server (port 3000)
@@ -522,23 +522,22 @@ The status query functionality is exposed to OpenClaw agents via a skill at `dep
 1. Create secure directory for socket and secret (owned by finn, mode 0700):
 
 ```bash
-mkdir -p /Users/finn/.worldid-gate
-chmod 0700 /Users/finn/.worldid-gate
+mkdir -p ~/.worldid-gate
+chmod 0700 ~/.worldid-gate
 ```
 
 2. Create secret file (owned by finn, mode 0600):
 
 ```bash
 # Generate secret with mode 0600 (umask 077 ensures secure permissions)
-(umask 077 && openssl rand -hex 32 > /Users/finn/.worldid-gate/status-secret.txt)
-chown finn:staff /Users/finn/.worldid-gate/status-secret.txt
+(umask 077 && openssl rand -hex 32 > ~/.worldid-gate/status-secret.txt)
 ```
 
 3. Copy the skill to Finn's workspace:
 
 ```bash
 cp -r /path/to/worldid-gate/deploy/openclaw-skill/worldid-status \
-      /Users/finn/.openclaw/workspace/skills/worldid-status
+      ~/.openclaw/workspace/skills/worldid-status
 ```
 
 4. Add environment variables to Finn's OpenClaw configuration under `skills.entries.worldid-status.env`:
@@ -548,8 +547,8 @@ skills:
   entries:
     worldid-status:
       env:
-        WORLDID_STATUS_SOCKET: /Users/finn/.worldid-gate/status.sock
-        WORLDID_STATUS_SECRET_FILE: /Users/finn/.worldid-gate/status-secret.txt
+        WORLDID_STATUS_SOCKET: ${HOME}/.worldid-gate/status.sock
+        WORLDID_STATUS_SECRET_FILE: ${HOME}/.worldid-gate/status-secret.txt
 ```
 
 5. Add the skill to Finn's allowlist under `agents.entries.main.skills`:
@@ -564,7 +563,7 @@ agents:
 
 6. Restart Finn to load the skill.
 
-**Important:** Both the gate service and the main OpenClaw gateway run as user `finn`. The socket directory (`/Users/finn/.worldid-gate`) has mode 0700, and the secret file has mode 0600, both owned by finn.
+**Important:** Both the gate service and the main OpenClaw gateway run as the same OS user. The socket directory (`~/.worldid-gate`) has mode 0700, and the secret file has mode 0600, both owned by that user.
 
 **Tool Permission:**
 
@@ -620,8 +619,8 @@ No manual intervention required.
 The launcher must pass through these new environment variables:
 
 **Status Socket:**
-- `WORLDID_STATUS_SOCKET` (path to Unix domain socket, e.g., `/Users/finn/.worldid-gate/status.sock`)
-- `WORLDID_STATUS_SECRET_FILE` (path to secret file with mode 0600, e.g., `/Users/finn/.worldid-gate/status-secret.txt`)
+- `WORLDID_STATUS_SOCKET` (path to Unix domain socket, e.g., `~/.worldid-gate/status.sock`)
+- `WORLDID_STATUS_SECRET_FILE` (path to secret file with mode 0600, e.g., `~/.worldid-gate/status-secret.txt`)
 
 **Member Tags:**
 - `MEMBER_TAGS_ENABLED` (set to `true` to enable, default `false`)
@@ -629,7 +628,7 @@ The launcher must pass through these new environment variables:
 - `MEMBER_TAG_SWEEP_INTERVAL_HOURS` (reconciliation interval, 1-168 hours, default 24)
 - `MEMBER_TAG_GROUPS` (comma-separated list of negative integers for multi-group tagging, defaults to OPENCLAW_ALLOWED_GROUP if unset)
 
-**Socket and secret paths must use Finn's home directory** (`/Users/finn/`) not `/etc` or `/var/run`, since both the gate service and main OpenClaw gateway run as user `finn`.
+**Socket and secret paths should use the OpenClaw user's home directory** (not `/etc` or `/var/run`), since both the gate service and main OpenClaw gateway typically run as the same OS user.
 
 ### Security Checklist
 
