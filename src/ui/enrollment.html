@@ -701,7 +701,7 @@
           rp_context: rp_context,
           session_id: 'create',
           allow_legacy_proofs: false,
-        }).constraints(CredentialRequest('proof_of_human', { signal: session.signedChallenge.signal }));
+        }).constraints(CredentialRequest('proof_of_human', { signal: session.signal }));
         
         await displayConnectorAndPoll(request, '/api/enrollment/complete');
         
