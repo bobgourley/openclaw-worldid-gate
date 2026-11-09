@@ -189,7 +189,8 @@ export class HttpService {
           }
           const bundle = readFileSync(bundlePath, 'utf-8');
           res.setHeader('Content-Type', 'application/javascript');
-          res.setHeader('Cache-Control', 'public, max-age=3600');
+          // No caching for unversioned bundles to prevent stale SDK after deployment
+          res.setHeader('Cache-Control', 'no-cache, must-revalidate');
           res.send(bundle);
         } catch (error) {
           console.error('IDKit bundle serving error:', error);
@@ -209,7 +210,8 @@ export class HttpService {
           }
           const bundle = readFileSync(bundlePath, 'utf-8');
           res.setHeader('Content-Type', 'application/javascript');
-          res.setHeader('Cache-Control', 'public, max-age=3600');
+          // No caching for unversioned bundles to prevent stale SDK after deployment
+          res.setHeader('Cache-Control', 'no-cache, must-revalidate');
           res.send(bundle);
         } catch (error) {
           console.error('QR code bundle serving error:', error);

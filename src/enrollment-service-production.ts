@@ -1449,30 +1449,26 @@ export class EnrollmentService {
 
     const [sessionNullifier, sessionAction] = sessionResponse.session_nullifier;
 
-    // Step 9: Verify action in tuple matches service action
-    if (sessionAction !== this.action) {
-      return {
-        success: false,
-        error: 'Session nullifier action mismatch',
-      };
-    }
+    // Step 9: Session nullifier tuple for replay protection
+    // Per World ID 4.0 specs: "Session Proofs use a randomized `action` as circuit input.
+    // This randomized `action` ensures the circuit's nullifier output is unique per proof,
+    // preserving the one-time use property."
+    // Source: https://worldcoin.github.io/world-id-protocol/world-id-4-specs/
+    //
+    // IMPORTANT: sessionAction is RANDOMIZED (not enrollment action)
+    // IMPORTANT: sessionNullifier is DIFFERENT from enrollment nullifier
+    // Replay protection uses the complete tuple [sessionNullifier, sessionAction]
+    // Do NOT compare to enrollment action or enrollment nullifier
 
-    // Step 10: Verify nullifier matches enrollment (session must be for THIS enrollment)
-    if (sessionNullifier !== enrollment.nullifier) {
-      return {
-        success: false,
-        error: 'Session nullifier does not match enrollment (wrong World ID)',
-      };
-    }
-
-    // Step 11: Verify session proof via backend (async, outside transaction)
+    // Step 10: Verify session proof via backend (async, outside transaction)
     // Note: World ID verification API validates the cryptographic proof
+    // Session proofs do NOT include enrollment action in verification request
     let verificationResult: BackendVerificationResult;
     try {
       verificationResult = await this.verificationClient.verify(
         request.idkitResult as any, // IDKitResultSession is compatible with verify
         {
-          action: this.action,
+          action: null as any, // Session proofs do not verify against enrollment action
           nonce: request.idkitResult.nonce,
           signalHash: null as any, // No signal in session proofs
         }
@@ -1545,7 +1541,9 @@ export class EnrollmentService {
         }
       }
 
-      // Check session nullifier replay (composite key: session_nullifier + action)
+      // Check session nullifier replay (composite key: session_nullifier + randomized action)
+      // Per World ID 4.0: session_nullifier is a tuple [nullifier, action] where action
+      // is randomized per proof. The complete tuple provides replay protection.
       const replayCheck = this.db.prepare(`
         SELECT session_nullifier, action
         FROM session_nullifier_claims
@@ -1556,7 +1554,9 @@ export class EnrollmentService {
         throw new Error('Session nullifier already used (replay attack detected)');
       }
 
-      // Record session nullifier claim (prevents replay)
+      // Record session nullifier claim (with randomized action from tuple)
+      // The tuple [sessionNullifier, sessionAction] is used for replay protection
+      // sessionAction is randomized per proof and does NOT match enrollment action
       this.db.prepare(`
         INSERT INTO session_nullifier_claims (
           session_nullifier,
@@ -1570,9 +1570,9 @@ export class EnrollmentService {
       `).run(
         sessionNullifier,
         sessionAction,
-        enrollment.sessionId,
+        enrollment.session_id,
         authenticatedUserId,
-        enrollment.nullifier,
+        enrollment.nullifier, // Enrollment nullifier (for reference only, NOT compared to session nullifier)
         txNow,
         this.clock.nowISO()
       );
