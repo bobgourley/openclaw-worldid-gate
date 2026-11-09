@@ -1,0 +1,49 @@
+{
+  "name": "openclaw-worldid-gate",
+  "version": "0.1.0",
+  "description": "World ID-gated Telegram bot admission control for OpenClaw",
+  "type": "module",
+  "scripts": {
+    "test": "tsx --test 'src/**/!(*.browser).test.ts'",
+    "test:browser": "playwright test src/**/*.browser.test.ts",
+    "test:all": "npm test && npm run test:browser",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc && mkdir -p dist/ui && node scripts/bundle-idkit.js && node scripts/bundle-qrcode.js && cp src/ui/enrollment.html dist/ui/",
+    "start": "node dist/server.js",
+    "start:dev": "tsx src/server.ts"
+  },
+  "keywords": [
+    "world-id",
+    "telegram",
+    "openclaw",
+    "authentication",
+    "proof-of-humanity"
+  ],
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@types/express": "^4.17.25",
+    "@types/jsdom": "^30.0.0",
+    "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.6",
+    "canvas": "^3.2.3",
+    "elliptic": "^6.6.1",
+    "esbuild": "^0.28.2",
+    "jsdom": "^31.0.0",
+    "jsqr": "^1.4.0",
+    "keccak": "^3.0.4",
+    "playwright": "^1.65.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@worldcoin/idkit-core": "4.6.0",
+    "@worldcoin/idkit-server": "^1.2.0",
+    "better-sqlite3": "^13.0.3",
+    "express": "^4.22.3",
+    "qrcode": "^1.5.4"
+  }
+}

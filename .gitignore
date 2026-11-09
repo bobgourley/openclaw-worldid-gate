@@ -1,0 +1,43 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# Secrets and credentials
+.env
+.env.local
+*.key
+*.pem
+config.production.ts
+secrets/
+.status-secret
+status-secret.txt
+*secret*.txt
+*.pem.bak
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Archives and releases
+*.tar.gz
+*.zip
+*.tgz
+
+# TypeScript
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test coverage
+coverage/
+.nyc_output/
+test-results/

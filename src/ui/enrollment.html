@@ -1,0 +1,1586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>World ID Verification</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    }
+    .container {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      max-width: 420px;
+      width: 100%;
+      max-height: calc(100vh - 32px);
+      max-height: calc(100dvh - 32px);
+      overflow-y: auto;
+      padding: 24px 20px;
+      text-align: center;
+    }
+    
+    @media (max-height: 400px) {
+      .container {
+        padding: max(6px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+      }
+      h1 {
+        font-size: 18px;
+        margin-bottom: 3px;
+      }
+      .subtitle {
+        font-size: 12px;
+        margin-bottom: 6px;
+      }
+      #status {
+        padding: 7px;
+        margin-bottom: 6px;
+        font-size: 11px;
+      }
+      #connectorDisplay {
+        margin: 6px 0;
+      }
+      #qrCode {
+        max-width: 140px;
+        max-height: 140px;
+        padding: 4px;
+        margin-bottom: 4px;
+      }
+      .qr-instruction {
+        font-size: 11px;
+        margin-bottom: 4px;
+      }
+      #connectorLink {
+        font-size: 11px;
+        padding: 6px 12px;
+        margin-top: 4px;
+      }
+      .button {
+        padding: 7px 14px;
+        font-size: 13px;
+        margin-top: 6px;
+      }
+      .info {
+        position: absolute;
+        bottom: 2px;
+        left: 8px;
+        right: 8px;
+        font-size: 7px;
+        line-height: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        opacity: 0.7;
+      }
+      #diagnostics {
+        margin-top: 4px;
+        margin-bottom: 12px;
+      }
+    }
+    h1 {
+      font-size: 24px;
+      font-weight: 700;
+      color: #1a202c;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      font-size: 14px;
+      color: #718096;
+      margin-bottom: 20px;
+      line-height: 1.4;
+    }
+    #status {
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    #status.loading {
+      background: #edf2f7;
+      color: #4a5568;
+    }
+    #status.error {
+      background: #fed7d7;
+      color: #c53030;
+    }
+    #status.success {
+      background: #c6f6d5;
+      color: #22543d;
+    }
+    #status.warning {
+      background: #fefcbf;
+      color: #744210;
+    }
+    .button {
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      width: 100%;
+      margin-top: 12px;
+    }
+    .button:hover {
+      background: #5a67d8;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+    .button:disabled {
+      background: #cbd5e0;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    .info {
+      font-size: 12px;
+      color: #a0aec0;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #e2e8f0;
+    }
+    .spinner {
+      border: 3px solid #e2e8f0;
+      border-top: 3px solid #667eea;
+      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      animation: spin 1s linear infinite;
+      margin: 12px auto;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .hidden {
+      display: none;
+    }
+    #connectorDisplay {
+      margin: 16px 0;
+    }
+    #qrCode {
+      margin: 0 auto 12px;
+      display: inline-block;
+      padding: 8px;
+      background: white;
+      border-radius: 8px;
+      max-width: 100%;
+    }
+    #qrCode canvas {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      width: auto;
+    }
+    .qr-instruction {
+      margin-bottom: 8px;
+      font-size: 13px;
+      color: #4a5568;
+      font-weight: 600;
+    }
+    .connector-link {
+      display: inline-block;
+      padding: 10px 20px;
+      background: #667eea;
+      color: white;
+      text-decoration: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-top: 8px;
+      transition: all 0.2s;
+    }
+    .connector-link:hover {
+      background: #5a67d8;
+      transform: translateY(-1px);
+    }
+    
+    #diagnostics {
+      display: none;
+      margin-top: 20px;
+      padding: 16px;
+      background: #f7fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    #diagnostics.visible {
+      display: block;
+    }
+    .diag-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 6px 0;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .diag-row:last-child {
+      border-bottom: none;
+    }
+    .diag-label {
+      font-weight: 600;
+      color: #4a5568;
+    }
+    .diag-value {
+      font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+      color: #2d3748;
+    }
+    .diag-value.pass {
+      color: #22c55e;
+    }
+    .diag-value.fail {
+      color: #ef4444;
+    }
+    .diag-value.unknown {
+      color: #718096;
+    }
+    
+    @media (max-width: 480px) {
+      body {
+        padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+      }
+      .container {
+        padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+        max-height: calc(100vh - 24px);
+        max-height: calc(100dvh - 24px);
+      }
+      h1 {
+        font-size: 22px;
+      }
+      .subtitle {
+        font-size: 13px;
+        margin-bottom: 16px;
+      }
+      #status {
+        padding: 10px;
+        font-size: 12px;
+        margin-bottom: 12px;
+      }
+      .spinner {
+        width: 28px;
+        height: 28px;
+      }
+      .info {
+        font-size: 11px;
+        margin-top: 12px;
+        padding-top: 12px;
+      }
+    }
+    
+    @media (max-height: 700px) {
+      .container {
+        padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+      }
+      h1 {
+        font-size: 22px;
+        margin-bottom: 6px;
+      }
+      .subtitle {
+        font-size: 13px;
+        margin-bottom: 16px;
+      }
+      #status {
+        margin-bottom: 12px;
+        padding: 10px;
+      }
+      #connectorDisplay {
+        margin: 12px 0;
+      }
+      #qrCode {
+        margin-bottom: 8px;
+        padding: 6px;
+      }
+      .qr-instruction {
+        font-size: 12px;
+        margin-bottom: 6px;
+      }
+      .connector-link {
+        padding: 8px 16px;
+        font-size: 12px;
+        margin-top: 6px;
+      }
+      .info {
+        margin-top: 12px;
+        padding-top: 12px;
+        font-size: 11px;
+      }
+    }
+    
+    @media (max-height: 580px) {
+      .container {
+        padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+      }
+      h1 {
+        font-size: 20px;
+        margin-bottom: 4px;
+      }
+      .subtitle {
+        font-size: 12px;
+        margin-bottom: 12px;
+      }
+      #status {
+        padding: 8px;
+        font-size: 11px;
+        margin-bottom: 10px;
+      }
+      .spinner {
+        width: 24px;
+        height: 24px;
+        margin: 8px auto;
+      }
+      #connectorDisplay {
+        margin: 10px 0;
+      }
+      #qrCode {
+        padding: 4px;
+        margin-bottom: 6px;
+      }
+      .qr-instruction {
+        font-size: 11px;
+        margin-bottom: 4px;
+      }
+      .connector-link {
+        padding: 6px 14px;
+        font-size: 11px;
+        margin-top: 4px;
+      }
+      .button {
+        padding: 10px 20px;
+        font-size: 14px;
+      }
+      .info {
+        font-size: 10px;
+        margin-top: 10px;
+        padding-top: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>World ID Verification</h1>
+    <p class="subtitle">Verify your unique personhood to access this Telegram group</p>
+    
+    <div id="status" class="loading">
+      <div class="spinner"></div>
+      Loading verification session...
+    </div>
+    
+    <div id="connectorDisplay" class="hidden">
+      <div id="qrCode"></div>
+      <p class="qr-instruction">
+        Scan QR code with World App
+      </p>
+      <a id="connectorLink" href="#" target="_blank" class="connector-link">
+        Or tap to open on this device
+      </a>
+    </div>
+    
+    <button id="verifyButton" class="button hidden" disabled>
+      Connect World App
+    </button>
+    
+    <div id="diagnostics">
+      <div class="diag-row">
+        <span class="diag-label">Error Code:</span>
+        <span class="diag-value" id="diagErrorCode">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">SDK Version:</span>
+        <span class="diag-value" id="diagSdkVersion">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">Transport:</span>
+        <span class="diag-value" id="diagTransport">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">Environment Match:</span>
+        <span class="diag-value" id="diagEnvMatch">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">Action Match:</span>
+        <span class="diag-value" id="diagActionMatch">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">App ID Match:</span>
+        <span class="diag-value" id="diagAppIdMatch">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">RP ID Match:</span>
+        <span class="diag-value" id="diagRpIdMatch">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">Nonce Match:</span>
+        <span class="diag-value" id="diagNonceMatch">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">Signature Match:</span>
+        <span class="diag-value" id="diagSignatureMatch">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">CreatedAt Match:</span>
+        <span class="diag-value" id="diagCreatedAtMatch">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">ExpiresAt Match:</span>
+        <span class="diag-value" id="diagExpiresAtMatch">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">Timestamp Valid:</span>
+        <span class="diag-value" id="diagTimestampValid">-</span>
+      </div>
+      <div class="diag-row">
+        <span class="diag-label">TTL (seconds):</span>
+        <span class="diag-value" id="diagTtl">-</span>
+      </div>
+    </div>
+    
+    <div class="info">
+      <strong>Privacy:</strong> Only a zero-knowledge proof is verified. Our service receives no raw biometric data.
+    </div>
+  </div>
+
+  <!-- Load Telegram WebApp SDK -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <!-- Load World ID SDK bundles -->
+  <script src="/idkit-bundle.js"></script>
+  <script type="module">
+    // Import QRCode as ES module
+    import { QRCode } from '/qrcode-bundle.js';
+    window.QRCodeLib = QRCode;
+  </script>
+
+  <script>
+    // NO SECRETS IN CLIENT CODE
+    // Configuration injected via URL params and Telegram WebApp context
+    
+    const urlParams = new URLSearchParams(window.location.search);
+    const sessionId = urlParams.get('session');
+    
+    const statusEl = document.getElementById('status');
+    const buttonEl = document.getElementById('verifyButton');
+    
+    // Check for Telegram WebApp SDK (must be loaded before use)
+    if (typeof window.Telegram === 'undefined' || !window.Telegram.WebApp) {
+      showError('Telegram WebApp SDK failed to load. Please open this page in Telegram.');
+      throw new Error('Telegram WebApp SDK not loaded');
+    }
+    
+    // Check for Telegram Mini App context (required for authentication)
+    const telegramWebApp = window.Telegram.WebApp;
+    const initData = telegramWebApp.initData;
+    
+    function showStatus(message, type = 'loading') {
+      statusEl.className = type;
+      
+      // SECURITY: Use textContent to prevent XSS, not innerHTML
+      statusEl.textContent = '';
+      
+      if (type === 'loading') {
+        const spinner = document.createElement('div');
+        spinner.className = 'spinner';
+        statusEl.appendChild(spinner);
+      }
+      
+      const text = document.createTextNode(message);
+      statusEl.appendChild(text);
+    }
+    
+    function showError(message) {
+      showStatus(message, 'error');
+      buttonEl.classList.add('hidden');
+    }
+    
+    function showSuccess(message) {
+      showStatus(message, 'success');
+      buttonEl.classList.add('hidden');
+    }
+    
+    function showWarning(message) {
+      showStatus(message, 'warning');
+      buttonEl.classList.add('hidden');
+    }
+    
+    async function initializeSession() {
+      // SECURITY: Require Telegram Mini App context (fail-closed)
+      if (!initData) {
+        showWarning('⚠️ This page must be opened from the Telegram bot. Verification is disabled in external browsers for security. Please open the link in Telegram.');
+        return;
+      }
+      
+      try {
+        // Display ready state
+        showStatus('Ready to verify with World App', 'success');
+        buttonEl.classList.remove('hidden');
+        buttonEl.disabled = false;
+        
+        // Set up verification handler
+        buttonEl.onclick = handleVerification;
+        
+      } catch (error) {
+        console.error('Session initialization error:', error);
+        showError('Network error. Please check your connection and try again.');
+      }
+    }
+    
+    /**
+     * Generate standards-compliant QR code using bundled qrcode library
+     * Responsive sizing based on viewport constraints
+     * 
+     * @param text - Data to encode (connectorURI)
+     * @param container - DOM element to render into
+     */
+    async function generateQRCode(text, container) {
+      try {
+        // Access QRCode from window (loaded by ES module)
+        const QRCode = window.QRCodeLib;
+        
+        // Calculate responsive QR size based on viewport
+        const viewportHeight = window.innerHeight;
+        const viewportWidth = window.innerWidth;
+        const containerWidth = Math.min(viewportWidth - 80, 420);
+        
+        let qrSize;
+        if (viewportHeight < 580) {
+          // Very short viewports: minimal but scannable
+          qrSize = Math.min(160, containerWidth - 40);
+        } else if (viewportHeight < 700) {
+          // Short viewports: compact
+          qrSize = Math.min(200, containerWidth - 40);
+        } else if (viewportWidth < 480) {
+          // Mobile portrait: medium
+          qrSize = Math.min(240, containerWidth - 40);
+        } else {
+          // Desktop/tablet: full size
+          qrSize = Math.min(280, containerWidth - 40);
+        }
+        
+        // Ensure minimum scannable size
+        qrSize = Math.max(140, qrSize);
+        
+        // Generate standards-compliant QR code
+        // Settings per ISO/IEC 18004 standard:
+        // - Error correction: M (15% recovery)
+        // - Margin: 4 modules (standard quiet zone)
+        // - Scale: 8 pixels per module (high resolution)
+        const canvas = document.createElement('canvas');
+        
+        await QRCode.toCanvas(canvas, text, {
+          errorCorrectionLevel: 'M',
+          margin: 4,
+          scale: 8,
+          width: qrSize,
+          color: {
+            dark: '#1a202c',
+            light: '#ffffff'
+          }
+        });
+        
+        container.innerHTML = '';
+        container.appendChild(canvas);
+      } catch (error) {
+        console.error('QR generation failed:', error);
+        // Fallback: show clickable URL
+        container.innerHTML = `<div style="padding: 16px; background: #f7fafc; border-radius: 8px;"><a href="${text}" target="_blank" style="color: #667eea; text-decoration: none; font-size: 13px; font-weight: 600;">Open World App on this device</a></div>`;
+      }
+    }
+    
+    // Expose generateQRCode for testing
+    window.generateQRCode = generateQRCode;
+
+    // Check enrollment status (server-driven flow decision)
+    // FAIL CLOSED: only return 'new' when server explicitly says so
+    async function checkEnrollmentStatus() {
+      try {
+        const response = await fetch('/api/enrollment/query', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            initData: initData,
+          }),
+        });
+
+        if (!response.ok) {
+          // Network error or non-2xx: fail closed
+          return { status: 'error', error: 'network' };
+        }
+
+        const data = await response.json();
+        
+        // Validate response has status field
+        if (!data || typeof data.status !== 'string') {
+          return { status: 'error', error: 'malformed' };
+        }
+
+        return data;
+      } catch (error) {
+        console.error('Status check error:', error);
+        // Network error, JSON parse error, etc: fail closed
+        return { status: 'error', error: 'exception' };
+      }
+    }
+
+    // Guard flag to prevent concurrent IDKit requests
+    let verificationInProgress = false;
+
+    async function handleVerification() {
+      if (!initData) {
+        showError('Telegram authentication required. Please open from the bot.');
+        return;
+      }
+      
+      // Prevent concurrent requests
+      if (verificationInProgress) {
+        console.log('[Verification] Already in progress, ignoring duplicate tap');
+        return;
+      }
+      
+      verificationInProgress = true;
+      buttonEl.disabled = true;
+      showStatus('Checking enrollment status...', 'loading');
+
+      try {
+        // Check current enrollment status (server decides flow)
+        const enrollmentStatus = await checkEnrollmentStatus();
+        
+        // FAIL CLOSED: only proceed if server explicitly returned a known status
+        if (enrollmentStatus.status === 'error') {
+          showError('Could not check your enrollment status. Please try again.');
+          buttonEl.disabled = false;
+          verificationInProgress = false;
+          return;
+        }
+        
+        // Import IDKit once (reused across flows)
+        // Access IDKit from global IIFE bundle
+        const { IDKit, CredentialRequest } = window.WorldIDKitBundle;
+        
+        if (enrollmentStatus.status === 'renewal') {
+          // Returning user flow - use session verification
+          await handleReturningUser(enrollmentStatus, IDKit, CredentialRequest);
+        } else if (enrollmentStatus.status === 'new' || enrollmentStatus.status === 'upgrade') {
+          // New or upgrade flow - create fresh enrollment with session
+          await handleNewEnrollment(IDKit, CredentialRequest);
+        } else {
+          // Unknown status - fail closed
+          showError('Unexpected enrollment status. Please try again.');
+          buttonEl.disabled = false;
+          verificationInProgress = false;
+        }
+      } catch (error) {
+        console.error('[Verification] Unexpected error:', error);
+        showError('Verification failed. Please try again.');
+        buttonEl.disabled = false;
+        verificationInProgress = false;
+      }
+    }
+
+    // Handle new enrollment (initial or upgrade from UNKNOWN)
+    async function handleNewEnrollment(IDKit, CredentialRequest) {
+      showStatus('Initializing World ID verification...', 'loading');
+      
+      try {
+        // Fetch challenge from backend
+        const response = await fetch('/api/challenge/create', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            initData: initData,
+          }),
+        });
+        
+        if (!response.ok) {
+          showError('Failed to create verification challenge. Please try again.');
+          verificationInProgress = false;
+          buttonEl.disabled = false;
+          return;
+        }
+        
+        const session = await response.json();
+        
+        if (!session.signedChallenge) {
+          showError('Invalid challenge response from server. Please try again.');
+          buttonEl.disabled = false;
+          return;
+        }
+        
+        // Store session for diagnostics (no sensitive data in window scope is fine - it's already in the DOM)
+        window.enrollmentSession = {
+          appId: session.signedChallenge.appId,
+          rpId: session.signedChallenge.rpId,
+          signedChallenge: session.signedChallenge,
+        };
+        
+        // Extract RP context from session (signed by backend)
+        const rp_context = {
+          rp_id: session.signedChallenge.rpId,
+          nonce: session.signedChallenge.nonce,
+          created_at: session.signedChallenge.createdAt,
+          expires_at: session.signedChallenge.expiresAt,
+          signature: session.signedChallenge.signature,
+        };
+        
+        // Create verification request with session creation
+        const request = await IDKit.request({
+          app_id: session.signedChallenge.appId,
+          action: session.signedChallenge.action,
+          rp_context: rp_context,
+          session_id: 'create',
+          allow_legacy_proofs: false,
+        }).constraints(CredentialRequest('proof_of_human', { signal: session.signal }));
+        
+        // Store request for diagnostics access to getDebugReport()
+        window.enrollmentRequest = request;
+        
+        await displayConnectorAndPoll(request, '/api/enrollment/complete');
+        
+      } catch (error) {
+        console.error('New enrollment error:', error);
+        showError('Unable to connect to World App. Please try again.');
+        verificationInProgress = false;
+        buttonEl.disabled = false;
+      }
+    }
+
+    // Handle returning user (renewal only)
+    async function handleReturningUser(enrollmentStatus, IDKit, CredentialRequest) {
+      if (enrollmentStatus.expired) {
+        showStatus('Your enrollment expired. Renewing with World ID...', 'loading');
+      } else {
+        showStatus('Verifying your World ID session...', 'loading');
+      }
+      
+      try {
+        // Fetch session challenge
+        const response = await fetch('/api/session/challenge/create', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            initData: initData,
+          }),
+        });
+        
+        if (!response.ok) {
+          showError('Failed to create session challenge. Please try again.');
+          verificationInProgress = false;
+          buttonEl.disabled = false;
+          return;
+        }
+        
+        const challenge = await response.json();
+        
+        // Store session for diagnostics (returning user path)
+        window.enrollmentSession = {
+          appId: challenge.appId || challenge.signedChallenge.appId,
+          rpId: challenge.signedChallenge.rpId || challenge.rpId,
+          signedChallenge: challenge.signedChallenge,
+        };
+        
+        // Extract RP context (no action for session proofs)
+        const rp_context = {
+          rp_id: challenge.signedChallenge.rpId || challenge.rpId,
+          nonce: challenge.signedChallenge.nonce,
+          created_at: challenge.signedChallenge.createdAt,
+          expires_at: challenge.signedChallenge.expiresAt,
+          signature: challenge.signedChallenge.signature,
+        };
+        
+        // Use proveSession for returning user (session ID in memory only, never stored)
+        const sessionId = enrollmentStatus.sessionId;
+        const request = await IDKit.proveSession(sessionId, {
+          app_id: challenge.appId || challenge.signedChallenge.appId,
+          rp_context: rp_context,
+        }).constraints(CredentialRequest('proof_of_human'));
+        
+        // Store request for diagnostics access to getDebugReport()
+        window.enrollmentRequest = request;
+        
+        await displayConnectorAndPoll(request, '/api/session/verify');
+        
+      } catch (error) {
+        console.error('Returning user error:', error);
+        showError('Unable to verify session. Please try again.');
+        verificationInProgress = false;
+        buttonEl.disabled = false;
+      }
+    }
+
+    // Display connector (QR + link) and poll for completion
+    async function displayConnectorAndPoll(request, submitEndpoint) {
+      if (!request.connectorURI) {
+        showError('Failed to generate World App connection. Please try again.');
+        verificationInProgress = false;
+        buttonEl.disabled = false;
+        return;
+      }
+      
+      // Display connectorURI as QR code and link
+      const connectorDisplay = document.getElementById('connectorDisplay');
+      const connectorLink = document.getElementById('connectorLink');
+      const qrCodeEl = document.getElementById('qrCode');
+      
+      await generateQRCode(request.connectorURI, qrCodeEl);
+      
+      connectorLink.href = request.connectorURI;
+      connectorDisplay.classList.remove('hidden');
+      
+      showStatus('Scan QR code with World App on your phone', 'success');
+      buttonEl.classList.add('hidden');
+      
+      // Track QR shown for better error messaging
+      window.qrWasShown = true;
+      
+      // Manual polling loop with visibility handling (replaces pollUntilCompletion)
+      const pollInterval = 2000; // 2 seconds
+      const timeout = 300000; // 5 minutes (300s to match challenge TTL)
+      const startTime = Date.now();
+      
+      // Track diagnostics for privacy-safe logging
+      const diagnostics = {
+        pollCount: 0,
+        visibilityChanges: 0,
+        lastStatusClass: null,
+        errorCode: null,
+        startedAt: startTime,
+      };
+      
+      // Listen for visibility changes
+      const visibilityHandler = () => {
+        diagnostics.visibilityChanges++;
+        console.log('[Visibility] Page visibility:', document.visibilityState);
+      };
+      document.addEventListener('visibilitychange', visibilityHandler);
+      
+      let lastPollTime = 0;
+      let result = null;
+      
+      try {
+        while (true) {
+          // Check timeout (300s deadline matching challenge TTL)
+          if (Date.now() - startTime > timeout) {
+            diagnostics.errorCode = 'timeout';
+            result = { success: false, error: 'timeout' };
+            break;
+          }
+          
+          // Only poll when page is visible
+          if (document.visibilityState !== 'visible') {
+            // Wait for visibility before next poll
+            await new Promise(resolve => setTimeout(resolve, 500));
+            continue;
+          }
+          
+          // Wait about 750ms after becoming visible again (settling period)
+          const timeSinceLastPoll = Date.now() - lastPollTime;
+          if (lastPollTime > 0 && timeSinceLastPoll < 750) {
+            await new Promise(resolve => setTimeout(resolve, 750 - timeSinceLastPoll));
+          }
+          
+          // Enforce poll interval (about every 2s when visible)
+          if (lastPollTime > 0) {
+            const elapsed = Date.now() - lastPollTime;
+            if (elapsed < pollInterval) {
+              await new Promise(resolve => setTimeout(resolve, pollInterval - elapsed));
+            }
+          }
+          
+          lastPollTime = Date.now();
+          diagnostics.pollCount++;
+          
+          // Poll once using IDKit's pollOnce() API
+          let pollResult;
+          try {
+            pollResult = await request.pollOnce();
+          } catch (error) {
+            // Check if error indicates permanent failure
+            // (decryption, unexpected response, malformed data, crypto errors)
+            const errorStr = String(error);
+            const errorMsg = error instanceof Error ? error.message : errorStr;
+            const isPermanentFailure = 
+              errorStr.includes('unexpected_response') ||
+              errorStr.includes('decrypt') ||
+              errorMsg.includes('unexpected_response') ||
+              errorMsg.includes('decrypt') ||
+              errorMsg.includes('invalid') ||
+              errorMsg.includes('malformed') ||
+              errorMsg.includes('crypto');
+            
+            if (isPermanentFailure) {
+              // Permanent failure - stop polling with error
+              console.error('[Poll] Permanent failure detected:', error);
+              diagnostics.errorCode = 'unexpected_response';
+              diagnostics.lastStatusClass = 'failed';
+              result = { success: false, error: 'unexpected_response' };
+              break;
+            }
+            // Treat other thrown errors as retryable (network errors, etc.)
+            console.warn('[Poll] Error during pollOnce, will retry:', error);
+            diagnostics.lastStatusClass = 'network_error';
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+            continue;
+          }
+          
+          // Handle poll result
+          if (pollResult.type === 'confirmed') {
+            // Success - proof received
+            result = { success: true, result: pollResult.result };
+            break;
+          } else if (pollResult.type === 'failed') {
+            // Failure - error from World App or bridge
+            diagnostics.errorCode = pollResult.error;
+            diagnostics.lastStatusClass = 'failed';
+            result = { success: false, error: pollResult.error };
+            break;
+          } else if (pollResult.type === 'waiting_for_connection' || pollResult.type === 'awaiting_confirmation') {
+            // Still waiting - continue polling
+            // waiting_for_connection = QR shown, user hasn't scanned yet
+            // awaiting_confirmation = User scanned, waiting for them to confirm in World App
+            diagnostics.lastStatusClass = 'awaiting';
+            continue;
+          } else {
+            // Unknown result type - treat as error
+            console.warn('[Poll] Unknown poll result type:', pollResult.type);
+            diagnostics.errorCode = 'unknown_poll_type';
+            result = { success: false, error: 'unexpected_response' };
+            break;
+          }
+        }
+        
+        // Send privacy-safe diagnostics to server (no ids, proofs, or payloads)
+        await sendClientDiagnostics({
+          event: 'poll_complete',
+          pollCount: diagnostics.pollCount,
+          visibilityChanges: diagnostics.visibilityChanges,
+          durationMs: Date.now() - diagnostics.startedAt,
+          finalStatus: result.success ? 'success' : 'failure',
+          errorCode: diagnostics.errorCode,
+          // HTTP status class captured from bridge errors if available
+          lastStatusClass: diagnostics.lastStatusClass,
+        });
+        
+      } finally {
+        document.removeEventListener('visibilitychange', visibilityHandler);
+      }
+      
+      if (result.success) {
+        await handleProofReceived(result.result, submitEndpoint);
+      } else {
+        handleProofError(result.error);
+      }
+    }
+    
+    async function handleProofReceived(result, submitEndpoint) {
+      showStatus('Submitting proof for verification...', 'loading');
+      
+      try {
+        // SECURITY: Send both initData and proof for same-requester binding
+        const response = await fetch(submitEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            initData: initData,
+            idkitResult: result,
+          }),
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok && data.success) {
+          // SUCCESS: Clean up IDKit request and show success state
+          verificationInProgress = false;
+          
+          // Stop/cleanup pending IDKit request
+          if (window.enrollmentRequest && typeof window.enrollmentRequest.cancel === 'function') {
+            try {
+              window.enrollmentRequest.cancel();
+            } catch (e) {
+              // Ignore cancel errors
+            }
+          }
+          
+          // Hide QR code and connector display (label + open button)
+          const qrCodeEl = document.getElementById('qrCode');
+          const connectorDisplayEl = document.getElementById('connectorDisplay');
+          if (qrCodeEl) qrCodeEl.style.display = 'none';
+          if (connectorDisplayEl) connectorDisplayEl.style.display = 'none';
+          
+          // Hide verify button
+          buttonEl.classList.add('hidden');
+          
+          // Format expiry date in plain words
+          const expiryText = formatExpiryPlainWords(data.expiresAt);
+          
+          // Show clean success state
+          const statusEl = document.getElementById('status');
+          statusEl.className = 'status success';
+          statusEl.innerHTML = `
+            <div style="text-align: center;">
+              <div style="font-size: 48px; margin-bottom: 16px;">✓</div>
+              <div style="font-size: 20px; font-weight: bold; margin-bottom: 12px;">You're verified</div>
+              <div style="margin-bottom: 24px;">${expiryText}</div>
+              <button id="returnButton" style="padding: 12px 24px; font-size: 16px; cursor: pointer; background: #0088cc; color: white; border: none; border-radius: 6px; margin-bottom: 16px;">Return to Telegram</button>
+              <div style="font-size: 12px; color: #666; margin-top: 16px;">Your enrollment status is stored encrypted and only accessible through Telegram.</div>
+            </div>
+          `;
+          
+          // Wire up Return to Telegram button
+          const returnButton = document.getElementById('returnButton');
+          if (returnButton) {
+            returnButton.addEventListener('click', () => {
+              if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.close === 'function') {
+                window.Telegram.WebApp.close();
+              } else {
+                // Fallback: show message if Telegram.WebApp.close not available
+                alert('Please close this page and return to Telegram.');
+              }
+            });
+          }
+        } else {
+          // SECURITY: Use textContent for error messages to prevent XSS
+          const errorMsg = data.error || 'Verification failed. Please try again.';
+          showError(errorMsg);
+          verificationInProgress = false;
+          buttonEl.disabled = false;
+        }
+        
+      } catch (error) {
+        console.error('Proof submission error:', error);
+        showError('Network error while submitting proof. Please try again.');
+        verificationInProgress = false;
+        buttonEl.disabled = false;
+      }
+    }
+    
+    function handleProofError(errorCode) {
+      console.error('World App error:', errorCode);
+      
+      // PRIVACY-SAFE DIAGNOSTICS POPULATION
+      // Extract debug_report from error if available (NO secrets/proofs/sessions displayed)
+      try {
+        const session = window.enrollmentSession;
+        const request = window.enrollmentRequest;
+        const diagnosticsEl = document.getElementById('diagnostics');
+        
+        // Debug report may be attached to error object by SDK
+        let debugReport = null;
+        if (typeof errorCode === 'object' && errorCode !== null) {
+          if ('debug_report' in errorCode) {
+            debugReport = errorCode.debug_report;
+          }
+          // Extract actual error code string
+          if ('code' in errorCode) {
+            errorCode = errorCode.code;
+          }
+        }
+        
+        // Try to get debug report from request object if not on error
+        if (!debugReport && request && typeof request.getDebugReport === 'function') {
+          try {
+            debugReport = request.getDebugReport();
+          } catch (e) {
+            console.warn('[Diagnostics] Failed to get debug report from request:', e);
+          }
+        }
+        
+        // Descriptor-safe getter (prevents proxy/toString attacks)
+        function safeGet(obj, key) {
+          if (!obj || typeof obj !== 'object') return undefined;
+          try {
+            const desc = Object.getOwnPropertyDescriptor(obj, key);
+            if (!desc) return undefined;
+            return desc.value;
+          } catch (e) {
+            return undefined;
+          }
+        }
+        
+        // Extract safe fields for comparison
+        const expectedEnv = 'production';
+        const expectedAppId = session.appId;
+        const expectedRpId = session.rpId;
+        const expectedNonce = session.signedChallenge.nonce;
+        const expectedSignature = session.signedChallenge.signature;
+        const sessionCreatedAt = session.signedChallenge.createdAt;
+        const sessionExpiresAt = session.signedChallenge.expiresAt;
+        
+        // Validate timestamps are finite SAFE bounded integers BEFORE any checks
+        const createdAtSafe = typeof sessionCreatedAt === 'number' 
+          && Number.isFinite(sessionCreatedAt)
+          && Number.isSafeInteger(sessionCreatedAt)
+          && sessionCreatedAt >= 0
+          && sessionCreatedAt <= 2147483647; // Max int32 (year 2038)
+        
+        const expiresAtSafe = typeof sessionExpiresAt === 'number'
+          && Number.isFinite(sessionExpiresAt)
+          && Number.isSafeInteger(sessionExpiresAt)
+          && sessionExpiresAt >= 0
+          && sessionExpiresAt <= 2147483647;
+        
+        // idkit-core 4.6.0 has no hashAction export, so we cannot verify action hash
+        // Show N/A instead of fake PASS/FAIL
+        const expectedActionHash = null; // Always null - no hashAction in 4.6.0
+        
+        // Allowlisted SDK versions (strict primitives only)
+        const allowedVersions = ['4.6.0', '4.5.0', '4.4.0', '4.3.0', '4.2.0', '4.1.0', '4.0.0'];
+        
+        // Allowlisted transports (strict primitives only)
+        const allowedTransports = ['bridge', 'redirect'];
+        
+        // Extract debug report fields with descriptor-safe reads
+        const reportVersion = safeGet(debugReport, 'package_version');
+        const reportTransport = safeGet(debugReport, 'transport');
+        const reportPayload = safeGet(debugReport, 'request_payload');
+        
+        // Sanitize version: use static known bundle version 4.6.0 if report missing
+        let safeVersion = 'unknown';
+        if (typeof reportVersion === 'string' && allowedVersions.includes(reportVersion)) {
+          safeVersion = reportVersion;
+        } else if (!debugReport) {
+          // Known bundle version (built with idkit-core@4.6.0)
+          safeVersion = '4.6.0';
+        }
+        
+        const safeTransport = (typeof reportTransport === 'string' && allowedTransports.includes(reportTransport))
+          ? reportTransport
+          : 'unknown';
+        
+        // Extract payload fields
+        const payloadEnv = safeGet(reportPayload, 'environment');
+        const payloadAppId = safeGet(reportPayload, 'app_id');
+        const proofRequest = safeGet(reportPayload, 'proof_request');
+        
+        // Extract proof_request fields
+        const prRpId = safeGet(proofRequest, 'rp_id');
+        const prNonce = safeGet(proofRequest, 'nonce');
+        const prSignature = safeGet(proofRequest, 'signature');
+        const prCreatedAt = safeGet(proofRequest, 'created_at');
+        const prExpiresAt = safeGet(proofRequest, 'expires_at');
+        const prActionHash = safeGet(proofRequest, 'action');
+        
+        // Validate proof_request timestamps are also safe
+        const prCreatedAtSafe = typeof prCreatedAt === 'number'
+          && Number.isFinite(prCreatedAt)
+          && Number.isSafeInteger(prCreatedAt);
+        
+        const prExpiresAtSafe = typeof prExpiresAt === 'number'
+          && Number.isFinite(prExpiresAt)
+          && Number.isSafeInteger(prExpiresAt);
+        
+        // Tri-state checks: PASS/FAIL/UNKNOWN
+        function triState(hasData, isMatch) {
+          if (!hasData) return { text: '? UNKNOWN', className: 'unknown' };
+          return isMatch ? { text: '✓ PASS', className: 'pass' } : { text: '✗ FAIL', className: 'fail' };
+        }
+        
+        // Environment check
+        const envState = triState(
+          typeof payloadEnv === 'string',
+          payloadEnv === expectedEnv
+        );
+        
+        // App ID check
+        const appIdState = triState(
+          typeof payloadAppId === 'string',
+          payloadAppId === expectedAppId
+        );
+        
+        // RP ID check
+        const rpIdState = triState(
+          typeof prRpId === 'string',
+          prRpId === expectedRpId
+        );
+        
+        // Nonce Match (presence + equality)
+        const nonceState = triState(
+          typeof prNonce === 'string' && prNonce.length > 0,
+          prNonce === expectedNonce
+        );
+        
+        // Signature Match (presence + equality)
+        const signatureState = triState(
+          typeof prSignature === 'string' && prSignature.length > 0,
+          prSignature === expectedSignature
+        );
+        
+        // Action hash check: N/A because hashAction is not exported in idkit-core 4.6.0
+        const actionState = {
+          text: 'N/A',
+          className: 'unknown'
+        };
+        
+        // Signed timestamp checks (only if both sides safe)
+        const createdAtState = triState(
+          createdAtSafe && prCreatedAtSafe,
+          prCreatedAt === sessionCreatedAt
+        );
+        
+        const expiresAtState = triState(
+          expiresAtSafe && prExpiresAtSafe,
+          prExpiresAt === sessionExpiresAt
+        );
+        
+        // Timestamp validity (only if safe timestamps, valid order, now within range)
+        const now = Math.floor(Date.now() / 1000);
+        const timestampValidState = triState(
+          createdAtSafe && expiresAtSafe && sessionCreatedAt <= sessionExpiresAt,
+          now >= sessionCreatedAt && now <= sessionExpiresAt
+        );
+        
+        // Finite bounded TTL (only if safe timestamps, valid order)
+        let safeTtl = 'unknown';
+        if (createdAtSafe && expiresAtSafe) {
+          const ttl = sessionExpiresAt - sessionCreatedAt;
+          if (ttl >= 0 && ttl <= 86400) { // Max 24 hours, already finite via safe check
+            safeTtl = ttl + 's';
+          } else {
+            safeTtl = 'invalid';
+          }
+        }
+        
+        // Display safe diagnostics on screen
+        document.getElementById('diagErrorCode').textContent = errorCode;
+        document.getElementById('diagSdkVersion').textContent = safeVersion;
+        document.getElementById('diagTransport').textContent = safeTransport;
+        
+        // Boolean checks with tri-state indicators
+        const envMatchEl = document.getElementById('diagEnvMatch');
+        envMatchEl.textContent = envState.text;
+        envMatchEl.className = 'diag-value ' + envState.className;
+        
+        const actionMatchEl = document.getElementById('diagActionMatch');
+        actionMatchEl.textContent = actionState.text;
+        actionMatchEl.className = 'diag-value ' + actionState.className;
+        
+        const appIdMatchEl = document.getElementById('diagAppIdMatch');
+        appIdMatchEl.textContent = appIdState.text;
+        appIdMatchEl.className = 'diag-value ' + appIdState.className;
+        
+        const rpIdMatchEl = document.getElementById('diagRpIdMatch');
+        rpIdMatchEl.textContent = rpIdState.text;
+        rpIdMatchEl.className = 'diag-value ' + rpIdState.className;
+        
+        const nonceMatchEl = document.getElementById('diagNonceMatch');
+        nonceMatchEl.textContent = nonceState.text;
+        nonceMatchEl.className = 'diag-value ' + nonceState.className;
+        
+        const signatureMatchEl = document.getElementById('diagSignatureMatch');
+        signatureMatchEl.textContent = signatureState.text;
+        signatureMatchEl.className = 'diag-value ' + signatureState.className;
+        
+        const createdAtEl = document.getElementById('diagCreatedAtMatch');
+        createdAtEl.textContent = createdAtState.text;
+        createdAtEl.className = 'diag-value ' + createdAtState.className;
+        
+        const expiresAtEl = document.getElementById('diagExpiresAtMatch');
+        expiresAtEl.textContent = expiresAtState.text;
+        expiresAtEl.className = 'diag-value ' + expiresAtState.className;
+        
+        const timestampValidEl = document.getElementById('diagTimestampValid');
+        timestampValidEl.textContent = timestampValidState.text;
+        timestampValidEl.className = 'diag-value ' + timestampValidState.className;
+        
+        document.getElementById('diagTtl').textContent = safeTtl;
+        
+        // Show diagnostics panel
+        diagnosticsEl.classList.add('visible');
+        
+      } catch (error) {
+        // Descriptor/proxy errors - show static UNKNOWN panel
+        console.error('Diagnostics generation failed');
+        try {
+          document.getElementById('diagErrorCode').textContent = typeof errorCode === 'string' ? errorCode : 'unknown';
+          document.getElementById('diagSdkVersion').textContent = '4.6.0';
+          document.getElementById('diagTransport').textContent = 'unknown';
+          document.getElementById('diagEnvMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagActionMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagAppIdMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagRpIdMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagNonceMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagSignatureMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagCreatedAtMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagExpiresAtMatch').textContent = '? UNKNOWN';
+          document.getElementById('diagTimestampValid').textContent = '? UNKNOWN';
+          document.getElementById('diagTtl').textContent = 'unknown';
+          document.getElementById('diagnostics').classList.add('visible');
+        } catch (e) {
+          // Even fallback failed - fail silently
+        }
+      }
+      
+      // USER-FACING ERROR MESSAGES
+      let message = 'World App verification failed. Please try again.';
+      let category = 'generic';
+      
+      // Map error codes to user-friendly messages
+      // Based on https://docs.world.org/world-id/idkit/error-codes.md
+      
+      // User-initiated cancellation
+      if (errorCode === 'user_rejected') {
+        message = 'Verification was cancelled. Please try again when ready.';
+        category = 'user_cancelled';
+      } else if (errorCode === 'verification_rejected') {
+        message = 'Verification was rejected by World App. Please try again.';
+        category = 'rejected';
+      } else if (errorCode === 'timeout') {
+        message = 'Verification timed out. Please try again.';
+        category = 'timeout';
+      }
+      
+      // Credential/identity issues
+      else if (errorCode === 'credential_unavailable') {
+        message = 'Required World ID credential is not available. Please verify your account in World App.';
+        category = 'credential';
+      } else if (errorCode === 'world_id_4_not_available') {
+        message = 'World ID 4.0 credential is not available. Please update your World App.';
+        category = 'credential';
+      } else if (errorCode === 'world_id_3_not_available') {
+        message = 'World ID 3.0 credential is not available. Please contact support.';
+        category = 'credential';
+      }
+      
+      // Session/timing issues
+      else if (errorCode === 'rp_signature_expired') {
+        message = 'Verification session expired. Please request a new verification link from the bot.';
+        category = 'expired';
+      } else if (errorCode === 'timestamp_too_old' || errorCode === 'timestamp_too_far_in_future') {
+        message = 'Verification session is no longer valid. Please request a new verification link.';
+        category = 'timestamp';
+      } else if (errorCode === 'invalid_timestamp') {
+        message = 'Verification session has an invalid timestamp. Please request a new verification link.';
+        category = 'timestamp';
+      }
+      
+      // Replay/duplicate issues
+      else if (errorCode === 'nullifier_replayed') {
+        message = 'This World ID was already used for this enrollment. Please contact the group admin.';
+        category = 'replay';
+        
+        // Send privacy-safe diagnostic event for nullifier replay
+        sendClientDiagnostics({
+          event: 'nullifier_replayed',
+          errorCode: 'nullifier_replayed',
+          timestamp: Date.now(),
+        }).catch(() => {
+          // Diagnostic send failed, ignore
+        });
+      } else if (errorCode === 'duplicate_nonce') {
+        message = 'Verification session has already been used. Please request a new verification link.';
+        category = 'replay';
+      }
+      
+      // RP configuration issues
+      else if (errorCode === 'invalid_rp_signature') {
+        message = 'Verification configuration error. Please contact support with code: invalid_rp_signature';
+        category = 'config';
+      } else if (errorCode === 'unknown_rp' || errorCode === 'inactive_rp') {
+        message = 'Service configuration error. Please contact support with code: ' + errorCode;
+        category = 'rp';
+      } else if (errorCode === 'invalid_rp_id_format') {
+        message = 'Service configuration error. Please contact support with code: invalid_rp_id_format';
+        category = 'config';
+      }
+      
+      // Network/connection
+      else if (errorCode === 'connection_failed') {
+        // Better message if QR was shown and user may have tapped "open on this device"
+        if (window.qrWasShown) {
+          message = 'World App\'s answer was lost. This can happen if the app was minimized. Please tap "Verify with World App" again.';
+        } else {
+          message = 'Connection to World App failed. Please check your connection and try again.';
+        }
+        category = 'network';
+      } else if (errorCode === 'unexpected_response') {
+        message = 'Unexpected response from World App. Please try again.';
+        category = 'network';
+      }
+      
+      // Rate limiting
+      else if (errorCode === 'max_verifications_reached') {
+        message = 'Maximum verifications reached. Please try again later.';
+        category = 'rate_limit';
+      }
+      
+      // Technical errors
+      else if (errorCode === 'inclusion_proof_pending' || errorCode === 'inclusion_proof_failed') {
+        message = 'Verification processing error. Please try again in a moment.';
+        category = 'inclusion_proof';
+      } else if (errorCode === 'malformed_request') {
+        message = 'Verification request error. Please contact support with code: malformed_request';
+        category = 'malformed';
+      } else if (errorCode === 'invalid_network') {
+        message = 'Network configuration mismatch. Please contact support with code: invalid_network';
+        category = 'config';
+      } else if (errorCode === 'user_presence_failed') {
+        message = 'User presence check failed. Please try again.';
+        category = 'presence';
+      } else if (errorCode === 'failed_by_host_app') {
+        message = 'Verification failed during processing. Please try again.';
+        category = 'host_app';
+      } else if (errorCode === 'feature_unavailable') {
+        message = 'Requested feature is not available. Please contact support.';
+        category = 'feature';
+      } else if (errorCode === 'identity_attributes_not_matched') {
+        message = 'Identity attributes did not match requirements. Please contact support.';
+        category = 'identity';
+      } else if (errorCode === 'generic_error') {
+        message = 'An unknown error occurred. Please try again or contact support.';
+        category = 'generic';
+      } else if (errorCode === 'cancelled') {
+        message = 'Verification was cancelled. Please try again when ready.';
+        category = 'user_cancelled';
+      }
+      
+      // Unknown error code (safely log unmapped codes)
+      else {
+        category = 'unmapped_' + (errorCode || 'unknown').replace(/[^a-z0-9_]/gi, '');
+        message = 'Verification failed. Please try again or contact support with code: ' + errorCode;
+      }
+      
+      // Privacy-safe structured error logging (no PII, no proof data)
+      console.error('World App verification error:', {
+        category: category,
+        errorCode: errorCode,
+        timestamp: new Date().toISOString(),
+      });
+      
+      showError(message);
+      verificationInProgress = false;
+      buttonEl.disabled = false;
+    }
+    
+    function formatExpiry(timestamp) {
+      const date = new Date(timestamp * 1000);
+      const days = Math.floor((date - Date.now()) / (1000 * 60 * 60 * 24));
+      return days > 0 ? `in ${days} days` : 'soon';
+    }
+    
+    function formatExpiryPlainWords(timestamp) {
+      const date = new Date(timestamp * 1000);
+      const days = Math.floor((date - Date.now()) / (1000 * 60 * 60 * 24));
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const dateStr = `${monthNames[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+      const daysStr = days > 0 ? `${days} days` : 'less than 1 day';
+      return `Your verification is valid until ${dateStr} (${daysStr})`;
+    }
+    
+    // Send privacy-safe client diagnostics to server
+    // PRIVACY: Never send ids, nonces, signatures, proofs, nullifiers, or session ids
+    async function sendClientDiagnostics(data) {
+      try {
+        // Only send privacy-safe fields
+        const safeData = {
+          event: data.event || 'unknown',
+          pollCount: typeof data.pollCount === 'number' ? data.pollCount : 0,
+          visibilityChanges: typeof data.visibilityChanges === 'number' ? data.visibilityChanges : 0,
+          durationMs: typeof data.durationMs === 'number' ? data.durationMs : 0,
+          finalStatus: data.finalStatus || 'unknown',
+          errorCode: data.errorCode || null,
+          lastStatusClass: data.lastStatusClass || null,
+          timestamp: Date.now(),
+        };
+        
+        // Ensure payload stays under 2KB limit (server has 2KB body limit)
+        // Count bytes, not characters
+        let body = JSON.stringify(safeData);
+        let byteSize = new TextEncoder().encode(body).length;
+        
+        if (byteSize > 2000) {
+          // Payload too large - truncate non-essential fields and errorCode
+          let errorCode = safeData.errorCode || '';
+          
+          // Try minimal data first
+          let minimalData = {
+            event: safeData.event,
+            errorCode: errorCode,
+            timestamp: safeData.timestamp,
+          };
+          body = JSON.stringify(minimalData);
+          byteSize = new TextEncoder().encode(body).length;
+          
+          // If still too large, truncate errorCode
+          while (byteSize > 2000 && errorCode.length > 0) {
+            errorCode = errorCode.substring(0, errorCode.length - 10);
+            minimalData.errorCode = errorCode;
+            body = JSON.stringify(minimalData);
+            byteSize = new TextEncoder().encode(body).length;
+          }
+        }
+        
+        await fetch('/api/diagnostics/client', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: body,
+        });
+      } catch (error) {
+        // Failed to send diagnostics - log but don't fail the flow
+        console.warn('[Diagnostics] Failed to send client diagnostics:', error);
+      }
+    }
+    
+    // Store current connector URI for regeneration on viewport changes
+    let currentConnectorURI = null;
+    
+    // Handle dynamic viewport changes (resize, orientation, visualViewport)
+    async function handleViewportChange() {
+      // If QR code is displayed, regenerate at new viewport size
+      const qrCodeEl = document.getElementById('qrCode');
+      const connectorDisplay = document.getElementById('connectorDisplay');
+      
+      if (currentConnectorURI && qrCodeEl && connectorDisplay && !connectorDisplay.classList.contains('hidden')) {
+        try {
+          // Regenerate QR at responsive size for new viewport
+          await generateQRCode(currentConnectorURI, qrCodeEl);
+        } catch (error) {
+          console.error('QR regeneration failed on viewport change:', error);
+        }
+      }
+    }
+    
+    // Wrap generateQRCode to track current URI
+    const originalGenerateQRCode = generateQRCode;
+    window.generateQRCode = async function(text, container) {
+      currentConnectorURI = text;
+      return originalGenerateQRCode(text, container);
+    };
+    
+    // Register viewport change handlers
+    if ('visualViewport' in window && window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleViewportChange);
+    }
+    
+    window.addEventListener('resize', handleViewportChange);
+    window.addEventListener('orientationchange', handleViewportChange);
+    
+    // Initialize on page load
+    initializeSession();
+  </script>
+</body>
+</html>

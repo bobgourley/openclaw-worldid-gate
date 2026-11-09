@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+#
+# Query World ID enrollment status via Unix domain socket.
+#
+# Usage: query-worldid-status <telegram_user_id>
+#
+# Required environment variables:
+#   WORLDID_STATUS_SOCKET       Path to Unix domain socket
+#                               (recommended default: ${HOME}/.worldid-gate/status.sock)
+#   WORLDID_STATUS_SECRET_FILE  Path to file containing bearer token
+#                               (recommended default: ${HOME}/.worldid-gate/status-secret.txt)
+#
+# Optional:
+#   WORLDID_STATUS_TZ           Timezone for expiresAtET (default: America/New_York)
+#
+# Exit codes:
+#   0 - Success
+#   1 - Invalid arguments
+#   2 - Authentication failed
+#   3 - Network error or socket unavailable
+#   4 - Rate limit exceeded
+
+set -euo pipefail
+
+# Check arguments
+if [ $# -ne 1 ]; then
+  echo "Usage: query-worldid-status <telegram_user_id>" >&2
+  exit 1
+fi
+
+USER_ID="$1"
+
+# Validate user ID is numeric
+if ! [[ "$USER_ID" =~ ^[0-9]+$ ]]; then
+  echo "Error: telegram_user_id must be numeric" >&2
+  exit 1
+fi
+
+# Check required environment variables (no hardcoded host paths)
+if [ -z "${WORLDID_STATUS_SOCKET:-}" ]; then
+  echo "Error: WORLDID_STATUS_SOCKET environment variable not set" >&2
+  echo "Hint: set it to \${HOME}/.worldid-gate/status.sock (or your gate socket path)" >&2
+  exit 3
+fi
+
+if [ -z "${WORLDID_STATUS_SECRET_FILE:-}" ]; then
+  echo "Error: WORLDID_STATUS_SECRET_FILE environment variable not set" >&2
+  echo "Hint: set it to \${HOME}/.worldid-gate/status-secret.txt (or your secret file path)" >&2
+  exit 2
+fi
+
+# Check secret file exists
+if [ ! -f "$WORLDID_STATUS_SECRET_FILE" ]; then
+  echo "Error: Secret file not found: $WORLDID_STATUS_SECRET_FILE" >&2
+  exit 2
+fi
+
+STATUS_TZ="${WORLDID_STATUS_TZ:-America/New_York}"
+
+# Create temp file for response
+RESPONSE_FILE=$(mktemp)
+trap "rm -f '$RESPONSE_FILE'" EXIT
+
+# Read secret from file and query the status socket
+# Capture curl exit code explicitly (under set -euo pipefail, errors would kill the script)
+CURL_EXIT=0
+HTTP_CODE=$(printf "Authorization: Bearer %s" "$(cat "$WORLDID_STATUS_SECRET_FILE")" | \
+  curl --silent --show-error \
+  --unix-socket "$WORLDID_STATUS_SOCKET" \
+  --header @- \
+  --write-out "\n%{http_code}" \
+  --output "$RESPONSE_FILE" \
+  "http://localhost/status/$USER_ID" 2>&1 | tail -1) || CURL_EXIT=$?
+
+# Check if curl failed (connection error / missing socket)
+if [ "$CURL_EXIT" -ne 0 ]; then
+  echo "Error: Cannot connect to socket (is the gate service running?)" >&2
+  exit 3
+fi
+
+# Check if HTTP_CODE is numeric
+if [ -z "$HTTP_CODE" ] || ! [[ "$HTTP_CODE" =~ ^[0-9]+$ ]]; then
+  echo "Error: Invalid response from socket" >&2
+  exit 3
+fi
+
+# Check HTTP status
+case "$HTTP_CODE" in
+  200)
+    # Add human-readable fields so the agent never converts the epoch itself.
+    BODY=$(cat "$RESPONSE_FILE")
+    EXP=$(printf '%s' "$BODY" | sed -nE 's/.*"expiresAt":[[:space:]]*([0-9]+).*/\1/p')
+    if printf '%s' "$BODY" | grep -qE '"verified":[[:space:]]*true' && printf '%s' "$BODY" | grep -qE '"state":[[:space:]]*"active"'; then
+      IS_VERIFIED=1
+    else
+      IS_VERIFIED=0
+    fi
+    EXP_ET="none"
+    if [ -n "$EXP" ]; then
+      # expiresAt is Unix seconds; convert milliseconds defensively.
+      if [ "${#EXP}" -ge 13 ]; then EXP=$((EXP / 1000)); fi
+      EXP_ET=$(TZ="$STATUS_TZ" /bin/date -r "$EXP" '+%a %b %-d, %Y %-I:%M %p ET' 2>/dev/null \
+        || TZ="$STATUS_TZ" /bin/date -d "@$EXP" '+%a %b %-d, %Y %-I:%M %p ET' 2>/dev/null \
+        || echo "unknown")
+    fi
+    if [ "$IS_VERIFIED" -eq 1 ]; then
+      ANSWER="VERIFIED HUMAN: World ID verified (unique Orb-verified human), active until ${EXP_ET}"
+    else
+      ANSWER="NOT VERIFIED: no active World ID verification for this Telegram account"
+    fi
+    BODY_TRIM=$(printf '%s' "$BODY" | sed -E 's/}[[:space:]]*$//')
+    printf '%s,"expiresAtET":"%s","answer":"%s"}\n' "$BODY_TRIM" "$EXP_ET" "$ANSWER"
+    exit 0
+    ;;
+  401)
+    echo "Error: Authentication failed (invalid bearer token)" >&2
+    exit 2
+    ;;
+  404)
+    echo "Error: Endpoint not found (check socket path)" >&2
+    exit 3
+    ;;
+  429)
+    echo "Error: Rate limit exceeded" >&2
+    exit 4
+    ;;
+  *)
+    echo "Error: Unexpected HTTP status $HTTP_CODE" >&2
+    cat "$RESPONSE_FILE" >&2
+    exit 3
+    ;;
+esac
