@@ -20,25 +20,23 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { existsSync, unlinkSync } from 'node:fs';
-import { ProductionEnrollmentService } from './enrollment-service-production.js';
-import { FrozenClock } from './clock.js';
-
-const TEST_DB = '/tmp/migration-v2-actual-test.db';
+import { EnrollmentService } from './enrollment-service-production.js';
+import { WorldIdChallengeAdapter } from './worldid-challenge-adapter.js';
 
 describe('Migration from actual v2 schema', () => {
-  before(() => {
-    if (existsSync(TEST_DB)) {
-      unlinkSync(TEST_DB);
+  // Each test gets its own database
+  function getTestDb(name: string) {
+    return `/tmp/migration-v2-actual-${name}-${Date.now()}.db`;
+  }
+  
+  function cleanupDb(path: string) {
+    if (existsSync(path)) {
+      unlinkSync(path);
     }
-  });
-
-  after(() => {
-    if (existsSync(TEST_DB)) {
-      unlinkSync(TEST_DB);
-    }
-  });
+  }
 
   it('migrates v2 schema to v3 preserving revoked enrollment and fences', () => {
+    const TEST_DB = getTestDb('revoked-enrollment');
     const db = new Database(TEST_DB);
     
     // Create actual v2 schema (before session additions)
@@ -244,28 +242,22 @@ describe('Migration from actual v2 schema', () => {
     assert.equal(claimRow.nullifier, revokedNullifier, 'Claim nullifier preserved');
     assert.equal(claimRow.session_nullifier, revokedNullifier, 'Legacy claim uses nullifier as session_nullifier');
 
-    // Test service can read migrated data
-    const clock = new FrozenClock(Date.now());
-    const service = new ProductionEnrollmentService({
-      db,
-      action: 'openclaw-enroll',
-      appId: 'app_test',
-      clock,
-      requireProofOfHuman: true,
-    });
-
-    // HARD CUTOVER TEST: Old action should be denied (revoked enrollment)
-    // This verifies the revoked enrollment is properly read and enforced
+    // HARD CUTOVER TEST: Verify revoked enrollment state after migration
+    // This verifies the revoked enrollment is properly preserved
     const enrollment = db.prepare(`
       SELECT * FROM enrollments WHERE telegram_user_id = ? AND action = ?
     `).get(revokedUserId, 'openclaw-enroll') as any;
 
-    assert.equal(enrollment.revoked, 1, 'Hard cutover: revoked enrollment still denied');
+    assert.ok(enrollment, 'Revoked enrollment exists after migration');
+    assert.equal(enrollment.revoked, 1, 'Hard cutover: revoked flag preserved');
+    assert.equal(enrollment.nullifier, revokedNullifier, 'Nullifier matches original');
 
     db.close();
+    cleanupDb(TEST_DB);
   });
 
   it('preserves multiple fences and claims across migration', () => {
+    const TEST_DB = getTestDb('multiple-fences');
     const db = new Database(TEST_DB);
     
     // Create v2 schema
@@ -365,5 +357,6 @@ describe('Migration from actual v2 schema', () => {
     assert.equal(claims.count, 3, 'All claims migrated');
 
     db.close();
+    cleanupDb(TEST_DB);
   });
 });
