@@ -14,7 +14,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
-import { ProductionEnrollmentService } from './enrollment-service-production.js';
+import { EnrollmentService } from './enrollment-service-production.js';
 import { FrozenClock } from './clock.js';
 import type { VerifySessionRequest } from './types.js';
 
@@ -23,7 +23,7 @@ describe('Session Proof Contract (World ID 4.0 Specs)', () => {
     const db = new Database(':memory:');
     const clock = new FrozenClock(Date.now());
     
-    const service = new ProductionEnrollmentService({
+    const service = new EnrollmentService({
       db,
       action: 'test-action',
       appId: 'app_test',
@@ -101,7 +101,7 @@ describe('Session Proof Contract (World ID 4.0 Specs)', () => {
     const db = new Database(':memory:');
     const clock = new FrozenClock(Date.now());
     
-    const service = new ProductionEnrollmentService({
+    const service = new EnrollmentService({
       db,
       action: 'test-action',
       appId: 'app_test',
@@ -179,7 +179,7 @@ describe('Session Proof Contract (World ID 4.0 Specs)', () => {
     const db = new Database(':memory:');
     const clock = new FrozenClock(Date.now());
     
-    const service = new ProductionEnrollmentService({
+    const service = new EnrollmentService({
       db,
       action: 'test-action',
       appId: 'app_test',
