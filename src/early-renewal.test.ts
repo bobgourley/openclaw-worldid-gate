@@ -553,7 +553,7 @@ test('Early renewal via proveSession', async (t) => {
       async () => {
         await service.createChallenge(initData);
       },
-      /reactivation/,
+      /revoked/,
       'createChallenge should reject revoked user with session'
     );
   });

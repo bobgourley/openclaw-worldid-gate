@@ -311,9 +311,12 @@ describe('HttpService Integration', () => {
       assert.equal(response.status, 200);
       const data = await response.json();
       assert.equal(data.success, true);
-      // No telegramUserId returned (privacy fix)
+      // Privacy: no PII fields returned
       assert.ok(data.expiresAt);
       assert.ok(data.protocolVersion);
+      assert.strictEqual(data.telegramUserId, undefined, 'Must not return telegramUserId');
+      assert.strictEqual(data.nullifier, undefined, 'Must not return nullifier');
+      assert.strictEqual(data.sessionId, undefined, 'Must not return sessionId');
     });
 
     it('rejects missing initData', async () => {
@@ -473,8 +476,10 @@ describe('HttpService Integration', () => {
 
       const data = await verifyResponse.json();
       assert.equal(data.success, true);
-      // No telegramUserId returned (privacy fix)
+      // Privacy: no PII fields returned
       assert.ok(data.expiresAt);
+      assert.strictEqual(data.telegramUserId, undefined, 'Must not return telegramUserId');
+      assert.strictEqual(data.nullifier, undefined, 'Must not return nullifier');
     });
 
     it('rejects missing initData', async () => {
@@ -496,6 +501,34 @@ describe('HttpService Integration', () => {
       assert.equal(response.status, 404);
       const data = await response.json();
       assert.match(data.error, /not found/i);
+    });
+  });
+
+  describe('Error logging privacy', () => {
+    it('does not log PII from malformed JSON requests', async () => {
+      // Capture console.error output
+      const originalConsoleError = console.error;
+      const loggedMessages: string[] = [];
+      console.error = (...args: any[]) => {
+        loggedMessages.push(args.map(a => String(a)).join(' '));
+      };
+
+      try {
+        // Post malformed JSON containing a fake Telegram ID
+        const malformedBody = '{"initData": "user=123456789&hash=abc", invalid json}';
+        await fetch(`http://127.0.0.1:${testPort}/api/challenge/create`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: malformedBody,
+        });
+
+        // Verify the fake ID is NOT in any logged message
+        const combinedLogs = loggedMessages.join(' ');
+        assert.ok(!combinedLogs.includes('123456789'), 'Logs must not contain Telegram ID from malformed request');
+        assert.ok(!combinedLogs.includes('user='), 'Logs must not contain initData from malformed request');
+      } finally {
+        console.error = originalConsoleError;
+      }
     });
   });
 });

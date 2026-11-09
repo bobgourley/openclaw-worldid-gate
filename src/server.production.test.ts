@@ -229,11 +229,7 @@ describe('Production dist/server.js launch', () => {
     // User 444 attempts to view user 333's session (session ID copied/leaked)
     const initData444 = generateValidInitData(444, TEST_BOT_TOKEN);
     
-    // Session info endpoint should not leak details without proper authentication
-    // (Current implementation returns public session info, but completion requires auth)
-    const sessionResponse = await fetch(`http://127.0.0.1:${TEST_PORT}/api/enrollment/session/${sessionId}`);
-    
-    // Even if session info is visible, completion must validate requester
+    // Completion must validate requester (different user cannot complete another's enrollment)
     const completionResponse = await fetch(`http://127.0.0.1:${TEST_PORT}/api/enrollment/complete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

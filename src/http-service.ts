@@ -320,15 +320,6 @@ export class HttpService {
         }
       });
 
-      // Session info API (for UI initialization)
-      this.app.get('/api/enrollment/session/:sessionId', async (req: Request, res: Response) => {
-        try {
-          await this.handleGetSessionInfo(req, res);
-        } catch (error) {
-          console.error('Session info error:', error);
-          res.status(500).json({ error: 'Session retrieval failed' });
-        }
-      });
     }
 
     // 404 handler
@@ -339,7 +330,8 @@ export class HttpService {
     // Generic error handler (no identity leaks)
     // MUST be registered AFTER all routes and 404 handler
     this.app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-      console.error('Request error:', err);
+      // Log only safe fields, never the full error or body (could contain PII)
+      console.error('Request error:', err.type || 'unknown', err.status || 'no-status');
 
       if (err.type === 'entity.parse.failed') {
         return res.status(400).json({ error: 'Invalid JSON' });
@@ -568,7 +560,7 @@ export class HttpService {
    * - new: No enrollment exists (fresh v2 enrollment)
    * - upgrade: Historical UNKNOWN/no-session enrollment (fresh v2 enrollment)
    * - renewal: Active or expired enrollment with saved session
-   * - reactivation: Revoked enrollment with saved session
+   * - error: Revoked enrollment (cannot use system)
    * 
    * Session ID returned ONLY when needed by frontend for proveSession flow.
    * NEVER returned for new/upgrade flows (no session exists yet).
@@ -683,34 +675,6 @@ export class HttpService {
    * 
    * Security: Validates session ID format, checks expiry.
    */
-  private async handleGetSessionInfo(req: Request, res: Response): Promise<void> {
-    if (!this.telegramBotHandler) {
-      res.status(404).json({ error: 'Bot not configured' });
-      return;
-    }
-
-    const sessionId = req.params.sessionId;
-
-    if (!sessionId || typeof sessionId !== 'string') {
-      res.status(400).json({ error: 'Invalid session ID' });
-      return;
-    }
-
-    const sessionInfo = await this.telegramBotHandler.getSessionInfo(sessionId);
-
-    if (!sessionInfo) {
-      res.status(404).json({ error: 'Session not found or expired' });
-      return;
-    }
-
-    // Return session configuration (NO SECRETS, no PII signal)
-    res.json({
-      signedChallenge: sessionInfo.signedChallenge,
-      appId: sessionInfo.appId,
-      rpId: (sessionInfo as any).rpId, // Include rpId if present
-    });
-  }
-
   /**
    * Handle client diagnostics (privacy-safe metrics only).
    * 

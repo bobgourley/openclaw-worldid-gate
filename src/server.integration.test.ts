@@ -182,38 +182,6 @@ describe('Production server integration', () => {
     });
   });
 
-  describe('Session API routes', () => {
-    test('GET /api/enrollment/session/:sessionId with invalid format returns 404', async () => {
-      const response = await fetch(`http://127.0.0.1:${testPort}/api/enrollment/session/invalid!@#`);
-      
-      // Invalid session ID format returns 404 (session not found)
-      assert.equal(response.status, 404);
-      const data = await response.json();
-      assert.ok(data.error);
-    });
-
-    test('GET /api/enrollment/session/:sessionId with non-existent session returns 404', async () => {
-      const validSessionId = 'a'.repeat(32);
-      const response = await fetch(`http://127.0.0.1:${testPort}/api/enrollment/session/${validSessionId}`);
-      
-      assert.equal(response.status, 404);
-      const data = await response.json();
-      assert.ok(data.error);
-    });
-
-    test('Session info route does not leak identity without proper auth', async () => {
-      // Even with a valid-format session ID, should not expose user identity
-      const validSessionId = 'b'.repeat(32);
-      const response = await fetch(`http://127.0.0.1:${testPort}/api/enrollment/session/${validSessionId}`);
-      
-      // Should fail (404 or 403), not expose user ID
-      assert.ok(response.status >= 400, 'Should deny access');
-      const text = await response.text();
-      assert.ok(!text.includes('userId'), 'Should not leak user ID');
-      assert.ok(!text.includes('telegramUserId'), 'Should not leak Telegram user ID');
-    });
-  });
-
   describe('Webhook route security', () => {
     test('POST /telegram/webhook with missing secret returns 403', async () => {
       const response = await fetch(`http://127.0.0.1:${testPort}/telegram/webhook`, {

@@ -529,8 +529,7 @@ export class EnrollmentService {
           ON session_nullifier_claims(telegram_user_id, action)
         `);
 
-        // Add mode column to challenge_sessions (durably binds challenge to renewal or reactivation)
-        // CRITICAL: Challenge created before revocation must fail even if mode was 'reactivation'
+        // Add mode column to challenge_sessions (binds challenge to renewal)
         // Defensive: Only alter if table exists (handles incomplete v1 schemas in tests)
         const challengeTableExists = this.db.prepare(`
           SELECT name FROM sqlite_master WHERE type='table' AND name='challenge_sessions'
@@ -628,11 +627,11 @@ export class EnrollmentService {
     const authenticatedUserId = initDataValidation.user.id;
 
     // Check for existing enrollment with session
-    // CRITICAL: Any user with stored session_id must use renewal/reactivation, never uniqueness proof
+    // CRITICAL: Any user with stored session_id must use renewal, never uniqueness proof
     const existingEnrollment = await this.findEnrollment(authenticatedUserId);
     if (existingEnrollment && existingEnrollment.sessionId) {
       if (existingEnrollment.revoked) {
-        throw new Error('Enrollment revoked. Use reactivation via session verification.');
+        throw new Error('Enrollment revoked.');
       } else {
         throw new Error('Enrollment exists with session. Use renewal via session verification.');
       }
@@ -713,13 +712,8 @@ export class EnrollmentService {
   /**
    * Create session challenge for returning user (no action, session-only).
    * 
-   * Supports three modes:
-   * 1. Ordinary renewal: Active enrollment, not revoked, not expired
-   * 2. Expired renewal: Expired but not revoked (credential policy permits)
-   * 3. Explicit reactivation: Revoked enrollment with authenticated user intent
-   * 
-   * Modes determined by enrollment state. Challenge generation uses current
-   * generation (prevents pre-revoke challenges from completing).
+   * Supports renewal for active or expired enrollments.
+   * Revoked enrollments are rejected (no reactivation flow).
    */
   async createSessionChallenge(initData: string): Promise<CreateChallengeResult> {
     // Authenticate Telegram initData
@@ -825,7 +819,7 @@ export class EnrollmentService {
 
     const authenticatedUser = initDataValidation.user;
 
-    // ROUTE: Detect session proof (renewal/reactivation) vs uniqueness proof (new enrollment)
+    // ROUTE: Detect session proof (renewal) vs uniqueness proof (new enrollment)
     // Session proofs have session_id but no action; uniqueness proofs have action but no/create session_id
     const hasSessionId = 'session_id' in request.idkitResult && request.idkitResult.session_id;
     const isCreateSession = hasSessionId && (request.idkitResult as any).session_id === 'create';
@@ -833,7 +827,7 @@ export class EnrollmentService {
     const isSessionProof = hasSessionId && !isCreateSession && !hasAction;
     
     if (isSessionProof) {
-      // Route to session verification (renewal/reactivation)
+      // Route to session verification (renewal)
       const sessionResult = await this.verifySession({
         initData: request.initData,
         idkitResult: request.idkitResult as any, // Cast to IDKitResultSession
@@ -1528,7 +1522,7 @@ export class EnrollmentService {
           action: null, // Session proofs do not verify against enrollment action
           nonce: request.idkitResult.nonce,
           signalHash: null, // No signal in session proofs
-          expectedMode: 'session', // Renewal/reactivation use session proofs
+          expectedMode: 'session', // Renewal uses session proofs
           sessionId: enrollment.sessionId, // Expected session_id from enrollment
         }
       );

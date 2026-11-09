@@ -191,15 +191,6 @@ export class TelegramBotHandler {
     if (message.chat.type !== 'private') {
       const text = message.text?.trim() || '';
       
-      // Check for /revoke in group - direct to private DM without exposing details
-      if (text === '/revoke' || text.match(/^\/revoke@\w+$/)) {
-        await this.transport.sendMessage(
-          message.chat.id,
-          '⚠️ Please message me privately.'
-        ).catch(err => console.error('Failed to send group revoke error:', err));
-        return;
-      }
-      
       if (this.openclawConfig && message.chat.id === this.allowedGroupId) {
         // OpenClaw dispatch in allowed group
         if (text.startsWith('/ask ')) {
