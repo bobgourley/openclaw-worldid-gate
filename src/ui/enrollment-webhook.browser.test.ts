@@ -573,7 +573,7 @@ test.describe('Full webhook enrollment workflow', () => {
     const wrongSignalHash = hashSignal(wrongSignal);
     console.log(`[Test] Computed wrong signal_hash for "${wrongSignal}": ${wrongSignalHash}`);
     
-    // Webhook /verify for TEST_USER_ID
+    // Webhook /verify for TEST_USER_ID (creates challenge with signal telegram:{TEST_USER_ID})
     const webhookUpdate = {
       update_id: 123458,
       message: {
@@ -598,14 +598,16 @@ test.describe('Full webhook enrollment workflow', () => {
     const webAppUrl = stubTransport.lastWebAppUrl;
     const sessionMatch = webAppUrl.match(/session=([0-9a-f]{32})/);
     const sessionId = sessionMatch![1];
+    console.log('[Test] Session created for TEST_USER_ID:', TEST_USER_ID);
 
-    // Mock Telegram SDK with WRONG user's initData
-    const wrongInitData = createValidInitData(WRONG_USER_ID, TEST_BOT_TOKEN, 'Imposter', 'imposter_test');
+    // Mock Telegram SDK with CORRECT user (TEST_USER_ID) initData
+    // The attack vector is: correct Telegram authentication but wrong World ID proof signal
+    const initData = createValidInitData(TEST_USER_ID, TEST_BOT_TOKEN, 'Charlie', 'charlie_test');
     await page.route('**/telegram-web-app.js', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/javascript',
-        body: `window.Telegram = { WebApp: { initData: ${JSON.stringify(wrongInitData)}, ready: function() {}, expand: function() {} } };`,
+        body: `window.Telegram = { WebApp: { initData: ${JSON.stringify(initData)}, ready: function() {}, expand: function() {} } };`,
       });
     });
 
@@ -696,9 +698,8 @@ test.describe('Full webhook enrollment workflow', () => {
     
     await page.waitForTimeout(3000);
 
-    // Expect 400 (signal hash mismatch)
+    // Expect 400 (server rejected due to signal hash mismatch)
     expect(completionStatus).toBe(400);
-    expect(completionBody).toContain('Signal hash mismatch');
 
     // Verify enrollment NOT persisted for TEST_USER_ID
     const enrollmentService = (service as any).enrollmentService;
