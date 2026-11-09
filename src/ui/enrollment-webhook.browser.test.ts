@@ -222,12 +222,11 @@ test.describe('Full webhook enrollment workflow', () => {
       }
     });
 
-    // Inject hashSignal from idkit-core into page context
+    // Compute expected signal_hash on Node.js side (signal is predictable: telegram:{userId})
     const { hashSignal } = await import('@worldcoin/idkit-core');
-    await page.addInitScript((hashSignalSource: string) => {
-      eval(hashSignalSource);
-      (window as any).__hashSignal = hashSignal;
-    }, `const hashSignal = ${hashSignal.toString()}`);
+    const expectedSignal = `telegram:${TEST_USER_ID}`;
+    const expectedSignalHash = hashSignal(expectedSignal);
+    console.log(`[Test] Computed expected signal_hash for "${expectedSignal}": ${expectedSignalHash}`);
 
     // Serve test IDKit bundle that stubs at public API
     await page.route('**/idkit-bundle.js', async (route) => {
@@ -242,7 +241,6 @@ test.describe('Full webhook enrollment workflow', () => {
             IDKit: {
               request: function(config) {
                 console.log('[Test IDKit] request() called');
-                let capturedSignal = null;
                 
                 const connector = {
                   uri: 'https://world.org/verify?t=wld&i=test123&k=abc',
@@ -261,15 +259,9 @@ test.describe('Full webhook enrollment workflow', () => {
                       session_id: config.session_id,
                     };
                     
-                    // Compute signal_hash from captured signal using SDK hashSignal
-                    let signal_hash;
-                    if (capturedSignal && window.__hashSignal) {
-                      signal_hash = window.__hashSignal(capturedSignal);
-                      console.log('[Test IDKit] Computed signal_hash:', signal_hash, 'from signal:', capturedSignal);
-                    } else {
-                      signal_hash = '0x0000000000000000000000000000000000000000000000000000000000000000';
-                      console.log('[Test IDKit] No signal captured, using default signal_hash');
-                    }
+                    // Use precomputed signal_hash from Node.js side
+                    const signal_hash = '${expectedSignalHash}';
+                    console.log('[Test IDKit] Using signal_hash:', signal_hash);
                     
                     // Realistic format: 0x hex nullifier, 5 decimal proof strings
                     return {
@@ -318,11 +310,6 @@ test.describe('Full webhook enrollment workflow', () => {
                   },
                   constraints: function(credReq) {
                     console.log('[Test IDKit] constraints() called with', credReq);
-                    // Extract signal from CredentialRequest options
-                    if (credReq && credReq.options && credReq.options.signal) {
-                      capturedSignal = credReq.options.signal;
-                      console.log('[Test IDKit] Captured signal:', capturedSignal);
-                    }
                     return thenable;
                   }
                 };
@@ -426,12 +413,10 @@ test.describe('Full webhook enrollment workflow', () => {
   test('Negative case: verifier rejects proof, nothing persisted', async ({ page }) => {
     console.log('\n=== Negative Test: Verifier Rejects ===');
 
-    // Inject hashSignal for this test too
+    // Compute signal_hash for TEST_USER_ID + 1
     const { hashSignal } = await import('@worldcoin/idkit-core');
-    await page.addInitScript((hashSignalSource: string) => {
-      eval(hashSignalSource);
-      (window as any).__hashSignal = hashSignal;
-    }, `const hashSignal = ${hashSignal.toString()}`);
+    const expectedSignal = `telegram:${TEST_USER_ID + 1}`;
+    const expectedSignalHash = hashSignal(expectedSignal);
 
     // Override verifier to reject
     const enrollmentService = (service as any).enrollmentService;
@@ -493,16 +478,9 @@ test.describe('Full webhook enrollment workflow', () => {
           window.WorldIDKitBundle = {
             IDKit: {
               request: function(config) {
-                let capturedSignal = null;
                 const connector = {
                   uri: 'https://world.org/verify?t=wld&i=test456&k=xyz',
                   async poll() {
-                    let signal_hash;
-                    if (capturedSignal && window.__hashSignal) {
-                      signal_hash = window.__hashSignal(capturedSignal);
-                    } else {
-                      signal_hash = '0x0000000000000000000000000000000000000000000000000000000000000000';
-                    }
                     return {
                       type: 'confirmed',
                       result: {
@@ -515,7 +493,7 @@ test.describe('Full webhook enrollment workflow', () => {
                           issuer_schema_id: 1,
                           proof: ['111', '222', '333', '444', '555'],
                           nullifier: '0x1111111111111111111111111111111111111111111111111111111111111111',
-                          signal_hash: signal_hash,
+                          signal_hash: '${expectedSignalHash}',
                           expires_at_min: Math.floor(Date.now() / 1000) + 86400,
                         }],
                         environment: 'staging',
@@ -539,9 +517,6 @@ test.describe('Full webhook enrollment workflow', () => {
                     return Promise.resolve(requestObj).then(onResolve);
                   },
                   constraints: function(credReq) {
-                    if (credReq && credReq.options && credReq.options.signal) {
-                      capturedSignal = credReq.options.signal;
-                    }
                     return thenable;
                   }
                 };
@@ -590,14 +565,13 @@ test.describe('Full webhook enrollment workflow', () => {
   test('Negative case: wrong signal, rejection and nothing persisted', async ({ page }) => {
     console.log('\n=== Negative Test: Wrong Signal ===');
 
-    // Inject hashSignal
-    const { hashSignal } = await import('@worldcoin/idkit-core');
-    await page.addInitScript((hashSignalSource: string) => {
-      eval(hashSignalSource);
-      (window as any).__hashSignal = hashSignal;
-    }, `const hashSignal = ${hashSignal.toString()}`);
-
     const WRONG_USER_ID = TEST_USER_ID + 999;
+    
+    // Compute signal_hash for WRONG_USER_ID (the wrong signal that will be sent by IDKit)
+    const { hashSignal } = await import('@worldcoin/idkit-core');
+    const wrongSignal = `telegram:${WRONG_USER_ID}`;
+    const wrongSignalHash = hashSignal(wrongSignal);
+    console.log(`[Test] Computed wrong signal_hash for "${wrongSignal}": ${wrongSignalHash}`);
     
     // Webhook /verify for TEST_USER_ID
     const webhookUpdate = {
@@ -635,7 +609,7 @@ test.describe('Full webhook enrollment workflow', () => {
       });
     });
 
-    // IDKit stub that captures and hashes the signal (which will be telegram:{WRONG_USER_ID})
+    // IDKit stub that returns the wrong signal_hash (for WRONG_USER_ID instead of TEST_USER_ID)
     await page.route('**/idkit-bundle.js', async (route) => {
       await route.fulfill({
         status: 200,
@@ -644,17 +618,10 @@ test.describe('Full webhook enrollment workflow', () => {
           window.WorldIDKitBundle = {
             IDKit: {
               request: function(config) {
-                let capturedSignal = null;
                 const connector = {
                   uri: 'https://world.org/verify',
                   async poll() {
-                    let signal_hash;
-                    if (capturedSignal && window.__hashSignal) {
-                      signal_hash = window.__hashSignal(capturedSignal);
-                      console.log('[Test IDKit] Hashed wrong signal:', capturedSignal, 'to', signal_hash);
-                    } else {
-                      signal_hash = '0x0000000000000000000000000000000000000000000000000000000000000000';
-                    }
+                    console.log('[Test IDKit] Returning proof with wrong signal_hash');
                     return {
                       type: 'confirmed',
                       result: {
@@ -667,7 +634,7 @@ test.describe('Full webhook enrollment workflow', () => {
                           issuer_schema_id: 1,
                           proof: ['999', '888', '777', '666', '555'],
                           nullifier: '0x9999999999999999999999999999999999999999999999999999999999999999',
-                          signal_hash: signal_hash,
+                          signal_hash: '${wrongSignalHash}',
                           expires_at_min: Math.floor(Date.now() / 1000) + 86400,
                         }],
                         environment: 'staging',
@@ -691,9 +658,6 @@ test.describe('Full webhook enrollment workflow', () => {
                     return Promise.resolve(requestObj).then(onResolve);
                   },
                   constraints: function(credReq) {
-                    if (credReq && credReq.options && credReq.options.signal) {
-                      capturedSignal = credReq.options.signal;
-                    }
                     return thenable;
                   }
                 };
