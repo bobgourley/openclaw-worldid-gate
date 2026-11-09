@@ -222,6 +222,13 @@ test.describe('Full webhook enrollment workflow', () => {
       }
     });
 
+    // Inject hashSignal from idkit-core into page context
+    const { hashSignal } = await import('@worldcoin/idkit-core');
+    await page.addInitScript((hashSignalSource: string) => {
+      eval(hashSignalSource);
+      (window as any).__hashSignal = hashSignal;
+    }, `const hashSignal = ${hashSignal.toString()}`);
+
     // Serve test IDKit bundle that stubs at public API
     await page.route('**/idkit-bundle.js', async (route) => {
       console.log('[Route] Serving test IDKit bundle');
@@ -235,7 +242,8 @@ test.describe('Full webhook enrollment workflow', () => {
             IDKit: {
               request: function(config) {
                 console.log('[Test IDKit] request() called');
-                console.log('[Test IDKit] rp_context.signal_hash:', config.rp_context?.signal_hash);
+                let capturedSignal = null;
+                
                 const connector = {
                   uri: 'https://world.org/verify?t=wld&i=test123&k=abc',
                   async poll() {
@@ -253,6 +261,16 @@ test.describe('Full webhook enrollment workflow', () => {
                       session_id: config.session_id,
                     };
                     
+                    // Compute signal_hash from captured signal using SDK hashSignal
+                    let signal_hash;
+                    if (capturedSignal && window.__hashSignal) {
+                      signal_hash = window.__hashSignal(capturedSignal);
+                      console.log('[Test IDKit] Computed signal_hash:', signal_hash, 'from signal:', capturedSignal);
+                    } else {
+                      signal_hash = '0x0000000000000000000000000000000000000000000000000000000000000000';
+                      console.log('[Test IDKit] No signal captured, using default signal_hash');
+                    }
+                    
                     // Realistic format: 0x hex nullifier, 5 decimal proof strings
                     return {
                       type: 'confirmed',
@@ -269,7 +287,7 @@ test.describe('Full webhook enrollment workflow', () => {
                                   '2222222222222222222222222222222222222222',
                                   '3333333333333333333333333333333333333333'],
                           nullifier: '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-                          signal_hash: config.rp_context.signal_hash,
+                          signal_hash: signal_hash,
                           expires_at_min: Math.floor(Date.now() / 1000) + 86400,
                         }],
                         environment: 'staging',
@@ -300,6 +318,11 @@ test.describe('Full webhook enrollment workflow', () => {
                   },
                   constraints: function(credReq) {
                     console.log('[Test IDKit] constraints() called with', credReq);
+                    // Extract signal from CredentialRequest options
+                    if (credReq && credReq.options && credReq.options.signal) {
+                      capturedSignal = credReq.options.signal;
+                      console.log('[Test IDKit] Captured signal:', capturedSignal);
+                    }
                     return thenable;
                   }
                 };
@@ -403,6 +426,13 @@ test.describe('Full webhook enrollment workflow', () => {
   test('Negative case: verifier rejects proof, nothing persisted', async ({ page }) => {
     console.log('\n=== Negative Test: Verifier Rejects ===');
 
+    // Inject hashSignal for this test too
+    const { hashSignal } = await import('@worldcoin/idkit-core');
+    await page.addInitScript((hashSignalSource: string) => {
+      eval(hashSignalSource);
+      (window as any).__hashSignal = hashSignal;
+    }, `const hashSignal = ${hashSignal.toString()}`);
+
     // Override verifier to reject
     const enrollmentService = (service as any).enrollmentService;
     const originalVerifier = enrollmentService.verificationClient;
@@ -463,22 +493,29 @@ test.describe('Full webhook enrollment workflow', () => {
           window.WorldIDKitBundle = {
             IDKit: {
               request: function(config) {
+                let capturedSignal = null;
                 const connector = {
                   uri: 'https://world.org/verify?t=wld&i=test456&k=xyz',
                   async poll() {
+                    let signal_hash;
+                    if (capturedSignal && window.__hashSignal) {
+                      signal_hash = window.__hashSignal(capturedSignal);
+                    } else {
+                      signal_hash = '0x0000000000000000000000000000000000000000000000000000000000000000';
+                    }
                     return {
                       type: 'confirmed',
                       result: {
                         protocol_version: '4.0',
                         nonce: config.rp_context.nonce,
-                        action: config.rp_context.action,
-                        session_id: config.rp_context.session_id,
+                        action: config.action,
+                        session_id: config.session_id === 'create' ? 'session_' + '0'.repeat(128) : config.session_id,
                         responses: [{
                           identifier: 'proof_of_human',
                           issuer_schema_id: 1,
                           proof: ['111', '222', '333', '444', '555'],
                           nullifier: '0x1111111111111111111111111111111111111111111111111111111111111111',
-                          signal_hash: config.rp_context.signal_hash,
+                          signal_hash: signal_hash,
                           expires_at_min: Math.floor(Date.now() / 1000) + 86400,
                         }],
                         environment: 'staging',
@@ -487,9 +524,33 @@ test.describe('Full webhook enrollment workflow', () => {
                   },
                   cancel() {}
                 };
-                return { connector };
+                const requestObj = {
+                  connector: connector,
+                  connectorURI: connector.uri,
+                  pollUntilCompletion: async function() {
+                    const pollResult = await connector.poll();
+                    return pollResult.type === 'confirmed' 
+                      ? { success: true, result: pollResult.result }
+                      : { success: false, error: 'Verification failed' };
+                  }
+                };
+                const thenable = {
+                  then: function(onResolve) {
+                    return Promise.resolve(requestObj).then(onResolve);
+                  },
+                  constraints: function(credReq) {
+                    if (credReq && credReq.options && credReq.options.signal) {
+                      capturedSignal = credReq.options.signal;
+                    }
+                    return thenable;
+                  }
+                };
+                return thenable;
               },
-              proveSession: function(config) { return this.request(config); }
+              proveSession: function(sessionId, config) { return this.request(config); }
+            },
+            CredentialRequest: function(type, options) {
+              return { type: type, options: options };
             }
           };
         `,
@@ -524,5 +585,167 @@ test.describe('Full webhook enrollment workflow', () => {
 
     // Restore verifier
     enrollmentService.verificationClient = originalVerifier;
+  });
+
+  test('Negative case: wrong signal, rejection and nothing persisted', async ({ page }) => {
+    console.log('\n=== Negative Test: Wrong Signal ===');
+
+    // Inject hashSignal
+    const { hashSignal } = await import('@worldcoin/idkit-core');
+    await page.addInitScript((hashSignalSource: string) => {
+      eval(hashSignalSource);
+      (window as any).__hashSignal = hashSignal;
+    }, `const hashSignal = ${hashSignal.toString()}`);
+
+    const WRONG_USER_ID = TEST_USER_ID + 999;
+    
+    // Webhook /verify for TEST_USER_ID
+    const webhookUpdate = {
+      update_id: 123458,
+      message: {
+        message_id: 791,
+        from: { id: TEST_USER_ID, is_bot: false, first_name: 'Charlie' },
+        chat: { id: TEST_USER_ID, type: 'private' as const },
+        date: Math.floor(Date.now() / 1000),
+        text: '/verify',
+      },
+    };
+
+    const webhookResponse = await page.request.post(`http://127.0.0.1:${serverPort}/telegram/webhook`, {
+      data: webhookUpdate,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Telegram-Bot-Api-Secret-Token': TEST_WEBHOOK_SECRET,
+      },
+    });
+
+    expect(webhookResponse.ok()).toBe(true);
+    const stubTransport = (service as any).stubTransport;
+    const webAppUrl = stubTransport.lastWebAppUrl;
+    const sessionMatch = webAppUrl.match(/session=([0-9a-f]{32})/);
+    const sessionId = sessionMatch![1];
+
+    // Mock Telegram SDK with WRONG user's initData
+    const wrongInitData = createValidInitData(WRONG_USER_ID, TEST_BOT_TOKEN, 'Imposter', 'imposter_test');
+    await page.route('**/telegram-web-app.js', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `window.Telegram = { WebApp: { initData: ${JSON.stringify(wrongInitData)}, ready: function() {}, expand: function() {} } };`,
+      });
+    });
+
+    // IDKit stub that captures and hashes the signal (which will be telegram:{WRONG_USER_ID})
+    await page.route('**/idkit-bundle.js', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `
+          window.WorldIDKitBundle = {
+            IDKit: {
+              request: function(config) {
+                let capturedSignal = null;
+                const connector = {
+                  uri: 'https://world.org/verify',
+                  async poll() {
+                    let signal_hash;
+                    if (capturedSignal && window.__hashSignal) {
+                      signal_hash = window.__hashSignal(capturedSignal);
+                      console.log('[Test IDKit] Hashed wrong signal:', capturedSignal, 'to', signal_hash);
+                    } else {
+                      signal_hash = '0x0000000000000000000000000000000000000000000000000000000000000000';
+                    }
+                    return {
+                      type: 'confirmed',
+                      result: {
+                        protocol_version: '4.0',
+                        nonce: config.rp_context.nonce,
+                        action: config.action,
+                        session_id: config.session_id === 'create' ? 'session_' + '0'.repeat(128) : config.session_id,
+                        responses: [{
+                          identifier: 'proof_of_human',
+                          issuer_schema_id: 1,
+                          proof: ['999', '888', '777', '666', '555'],
+                          nullifier: '0x9999999999999999999999999999999999999999999999999999999999999999',
+                          signal_hash: signal_hash,
+                          expires_at_min: Math.floor(Date.now() / 1000) + 86400,
+                        }],
+                        environment: 'staging',
+                      }
+                    };
+                  },
+                  cancel() {}
+                };
+                const requestObj = {
+                  connector: connector,
+                  connectorURI: connector.uri,
+                  pollUntilCompletion: async function() {
+                    const pollResult = await connector.poll();
+                    return pollResult.type === 'confirmed' 
+                      ? { success: true, result: pollResult.result }
+                      : { success: false, error: 'Verification failed' };
+                  }
+                };
+                const thenable = {
+                  then: function(onResolve) {
+                    return Promise.resolve(requestObj).then(onResolve);
+                  },
+                  constraints: function(credReq) {
+                    if (credReq && credReq.options && credReq.options.signal) {
+                      capturedSignal = credReq.options.signal;
+                    }
+                    return thenable;
+                  }
+                };
+                return thenable;
+              },
+              proveSession: function(sessionId, config) { return this.request(config); }
+            },
+            CredentialRequest: function(type, options) {
+              return { type: type, options: options };
+            }
+          };
+        `,
+      });
+    });
+
+    // Load page and click verify
+    const enrollmentUrl = `http://127.0.0.1:${serverPort}/enrollment?session=${sessionId}`;
+    await page.goto(enrollmentUrl);
+    await page.waitForLoadState('networkidle');
+
+    let completionStatus = 0;
+    let completionBody = '';
+    page.on('response', async (response) => {
+      if (response.url().includes('/api/enrollment/complete')) {
+        completionStatus = response.status();
+        if (completionStatus !== 200) {
+          completionBody = await response.text();
+        }
+        console.log('[Monitor] Completion status:', completionStatus, 'body:', completionBody);
+      }
+    });
+
+    const verifyButton = page.locator('#verifyButton');
+    await expect(verifyButton).toBeVisible();
+    await verifyButton.click();
+    
+    await page.waitForTimeout(3000);
+
+    // Expect 400 (signal hash mismatch)
+    expect(completionStatus).toBe(400);
+    expect(completionBody).toContain('Signal hash mismatch');
+
+    // Verify enrollment NOT persisted for TEST_USER_ID
+    const enrollmentService = (service as any).enrollmentService;
+    const enrollment = await enrollmentService.findEnrollment(TEST_USER_ID);
+    expect(enrollment).toBeNull();
+    
+    // Verify enrollment NOT persisted for WRONG_USER_ID either
+    const wrongEnrollment = await enrollmentService.findEnrollment(WRONG_USER_ID);
+    expect(wrongEnrollment).toBeNull();
+    
+    console.log('PASS: Server rejected wrong signal (signal hash mismatch)');
+    console.log('PASS: No enrollment persisted for either user');
   });
 });
