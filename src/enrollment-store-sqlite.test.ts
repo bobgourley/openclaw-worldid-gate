@@ -273,7 +273,7 @@ describe("SqliteEnrollmentStore", () => {
     const store = new SqliteEnrollmentStore(getTestDb());
 
     const enrollment: Enrollment = {
-      nullifier: "0x0000000000000000000000000000000000000000000000000000000000dup111",
+      nullifier: "0x0000000000000000000000000000000000000000000000000000000000de1111",
       telegramUserId: 111222,
       action: "test",
       expiresAt: Math.floor(Date.now() / 1000) + 2592000,
@@ -284,7 +284,7 @@ describe("SqliteEnrollmentStore", () => {
 
     // Try to create enrollment with same nullifier but different user
     const duplicate: Enrollment = {
-      nullifier: "0x0000000000000000000000000000000000000000000000000000000000dup111",
+      nullifier: "0x0000000000000000000000000000000000000000000000000000000000de1111",
       telegramUserId: 333444, // Different user
       action: "test",
       expiresAt: Math.floor(Date.now() / 1000) + 2592000,

@@ -138,7 +138,7 @@ describe("InMemoryEnrollmentStore", () => {
   it("rejects duplicate nullifier creation", async () => {
     const store = new InMemoryEnrollmentStore();
     const enrollment: Enrollment = {
-      nullifier: "0x0000000000000000000000000000000000000000000000000000000000dup111",
+      nullifier: "0x0000000000000000000000000000000000000000000000000000000000de1111",
       telegramUserId: 123,
       action: "action",
       expiresAt: Math.floor(Date.now() / 1000) + 86400,

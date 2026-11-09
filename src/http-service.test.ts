@@ -60,7 +60,7 @@ class MockVerificationClient implements BackendVerificationClient {
 
     return {
       success: true,
-      nullifier: '12345678901234567890',
+      nullifier: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
       issuerSchemaId: 1,
       expiresAtMin: Math.floor(Date.now() / 1000) + 86400,
     };
@@ -99,7 +99,7 @@ function createIDKitResult(nonce: string, action: string, signalHash: string, se
         identifier: 'proof_of_human',
         signal_hash: signalHash,
         proof: ['1', '2', '3', '4', '5'],
-        nullifier: '12345678901234567890',
+        nullifier: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         issuer_schema_id: 1,
         expires_at_min: Math.floor(Date.now() / 1000) + 86400,
       },
@@ -481,7 +481,7 @@ describe('HttpService Integration', () => {
         responses: [
           {
             identifier: 'proof_of_human',
-            session_nullifier: ['12345678901234567890', TEST_ACTION],
+            session_nullifier: ['0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef', TEST_ACTION],
             issuer_schema_id: 1,
             verifiable_credential: {
               expires_at_min: Math.floor(Date.now() / 1000) + 86400,
