@@ -147,6 +147,16 @@ export class HttpService {
       }
     });
 
+    // Client diagnostics endpoint (privacy-safe metrics only)
+    this.app.post('/api/diagnostics/client', jsonParser, async (req: Request, res: Response) => {
+      try {
+        await this.handleClientDiagnostics(req, res);
+      } catch (error) {
+        console.error('Client diagnostics error:', error);
+        res.status(500).json({ error: 'Diagnostics recording failed' });
+      }
+    });
+
     // Telegram bot webhook endpoint (optional, only if bot handler configured)
     if (this.telegramBotHandler) {
       this.app.post('/telegram/webhook', express.raw({ type: 'application/json' }), async (req: Request, res: Response) => {
@@ -622,6 +632,43 @@ export class HttpService {
       rpId: (sessionInfo as any).rpId, // Include rpId if present
       signal: sessionInfo.signal,
     });
+  }
+
+  /**
+   * Handle client diagnostics (privacy-safe metrics only).
+   * 
+   * PRIVACY: This endpoint MUST NOT log or store:
+   * - Telegram user IDs
+   * - World ID nullifiers, nonces, signatures, session IDs
+   * - Proof payloads or any credential data
+   * - Request IDs from bridge
+   * 
+   * Only aggregated, privacy-safe metrics are allowed.
+   */
+  private async handleClientDiagnostics(req: Request, res: Response): Promise<void> {
+    // Validate request body
+    if (!req.body || typeof req.body !== 'object') {
+      res.status(400).json({ error: 'Invalid request body' });
+      return;
+    }
+
+    // Extract privacy-safe fields only
+    const safeData = {
+      event: typeof req.body.event === 'string' ? req.body.event : 'unknown',
+      pollCount: typeof req.body.pollCount === 'number' ? req.body.pollCount : 0,
+      visibilityChanges: typeof req.body.visibilityChanges === 'number' ? req.body.visibilityChanges : 0,
+      durationMs: typeof req.body.durationMs === 'number' ? req.body.durationMs : 0,
+      finalStatus: typeof req.body.finalStatus === 'string' ? req.body.finalStatus : 'unknown',
+      errorCode: typeof req.body.errorCode === 'string' ? req.body.errorCode : null,
+      lastStatusClass: typeof req.body.lastStatusClass === 'string' ? req.body.lastStatusClass : null,
+      timestamp: typeof req.body.timestamp === 'number' ? req.body.timestamp : Date.now(),
+    };
+
+    // Log privacy-safe diagnostics (console only, no persistent storage in this implementation)
+    console.log('[Client Diagnostics]', JSON.stringify(safeData));
+
+    // Respond with success
+    res.json({ success: true });
   }
 
   /**

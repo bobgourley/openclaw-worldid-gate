@@ -685,6 +685,13 @@
           return;
         }
         
+        // Store session for diagnostics (no sensitive data in window scope is fine - it's already in the DOM)
+        window.enrollmentSession = {
+          appId: session.signedChallenge.appId,
+          rpId: session.signedChallenge.rpId,
+          signedChallenge: session.signedChallenge,
+        };
+        
         // Extract RP context from session (signed by backend)
         const rp_context = {
           rp_id: session.signedChallenge.rpId,
@@ -702,6 +709,9 @@
           session_id: 'create',
           allow_legacy_proofs: false,
         }).constraints(CredentialRequest('proof_of_human', { signal: session.signal }));
+        
+        // Store request for diagnostics access to getDebugReport()
+        window.enrollmentRequest = request;
         
         await displayConnectorAndPoll(request, '/api/enrollment/complete');
         
@@ -746,6 +756,13 @@
         
         const challenge = await response.json();
         
+        // Store session for diagnostics (returning user path)
+        window.enrollmentSession = {
+          appId: challenge.appId || challenge.signedChallenge.appId,
+          rpId: challenge.signedChallenge.rpId || challenge.rpId,
+          signedChallenge: challenge.signedChallenge,
+        };
+        
         // Extract RP context (no action for session proofs)
         const rp_context = {
           rp_id: challenge.signedChallenge.rpId || challenge.rpId,
@@ -761,6 +778,9 @@
           app_id: challenge.appId || challenge.signedChallenge.appId,
           rp_context: rp_context,
         }).constraints(CredentialRequest('proof_of_human'));
+        
+        // Store request for diagnostics access to getDebugReport()
+        window.enrollmentRequest = request;
         
         await displayConnectorAndPoll(request, '/api/session/verify');
         
@@ -792,11 +812,119 @@
       showStatus('Scan QR code with World App on your phone', 'success');
       buttonEl.classList.add('hidden');
       
-      // Poll for completion
-      const result = await request.pollUntilCompletion({
-        pollInterval: 2000,
-        timeout: 300000, // 5 minutes
-      });
+      // Track QR shown for better error messaging
+      window.qrWasShown = true;
+      
+      // Manual polling loop with visibility handling (replaces pollUntilCompletion)
+      const pollInterval = 2000; // 2 seconds
+      const timeout = 300000; // 5 minutes (300s to match challenge TTL)
+      const startTime = Date.now();
+      
+      // Track diagnostics for privacy-safe logging
+      const diagnostics = {
+        pollCount: 0,
+        visibilityChanges: 0,
+        lastStatusClass: null,
+        errorCode: null,
+        startedAt: startTime,
+      };
+      
+      // Listen for visibility changes
+      const visibilityHandler = () => {
+        diagnostics.visibilityChanges++;
+        console.log('[Visibility] Page visibility:', document.visibilityState);
+      };
+      document.addEventListener('visibilitychange', visibilityHandler);
+      
+      let lastPollTime = 0;
+      let result = null;
+      
+      try {
+        while (true) {
+          // Check timeout (300s deadline matching challenge TTL)
+          if (Date.now() - startTime > timeout) {
+            diagnostics.errorCode = 'timeout';
+            result = { success: false, error: 'timeout' };
+            break;
+          }
+          
+          // Only poll when page is visible
+          if (document.visibilityState !== 'visible') {
+            // Wait for visibility before next poll
+            await new Promise(resolve => setTimeout(resolve, 500));
+            continue;
+          }
+          
+          // Wait about 750ms after becoming visible again (settling period)
+          const timeSinceLastPoll = Date.now() - lastPollTime;
+          if (lastPollTime > 0 && timeSinceLastPoll < 750) {
+            await new Promise(resolve => setTimeout(resolve, 750 - timeSinceLastPoll));
+          }
+          
+          // Enforce poll interval (about every 2s when visible)
+          if (lastPollTime > 0) {
+            const elapsed = Date.now() - lastPollTime;
+            if (elapsed < pollInterval) {
+              await new Promise(resolve => setTimeout(resolve, pollInterval - elapsed));
+            }
+          }
+          
+          lastPollTime = Date.now();
+          diagnostics.pollCount++;
+          
+          // Poll once using IDKit's pollOnce() API
+          let pollResult;
+          try {
+            pollResult = await request.pollOnce();
+          } catch (error) {
+            // Treat thrown errors as retryable (network errors, etc.)
+            console.warn('[Poll] Error during pollOnce, will retry:', error);
+            diagnostics.lastStatusClass = 'network_error';
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+            continue;
+          }
+          
+          // Handle poll result
+          if (pollResult.type === 'confirmed') {
+            // Success - proof received
+            result = { success: true, result: pollResult.result };
+            break;
+          } else if (pollResult.type === 'failed') {
+            // Failure - error from World App or bridge
+            diagnostics.errorCode = pollResult.error;
+            diagnostics.lastStatusClass = 'failed';
+            result = { success: false, error: pollResult.error };
+            break;
+          } else if (pollResult.type === 'waiting_for_connection' || pollResult.type === 'awaiting_confirmation') {
+            // Still waiting - continue polling
+            // waiting_for_connection = QR shown, user hasn't scanned yet
+            // awaiting_confirmation = User scanned, waiting for them to confirm in World App
+            diagnostics.lastStatusClass = 'awaiting';
+            continue;
+          } else {
+            // Unknown result type - treat as error
+            console.warn('[Poll] Unknown poll result type:', pollResult.type);
+            diagnostics.errorCode = 'unknown_poll_type';
+            result = { success: false, error: 'unexpected_response' };
+            break;
+          }
+        }
+        
+        // Send privacy-safe diagnostics to server (no ids, proofs, or payloads)
+        await sendClientDiagnostics({
+          event: 'poll_complete',
+          pollCount: diagnostics.pollCount,
+          visibilityChanges: diagnostics.visibilityChanges,
+          durationMs: Date.now() - diagnostics.startedAt,
+          finalStatus: result.success ? 'success' : 'failure',
+          errorCode: diagnostics.errorCode,
+          // HTTP status class captured from bridge errors if available
+          lastStatusClass: diagnostics.lastStatusClass,
+        });
+        
+      } finally {
+        document.removeEventListener('visibilitychange', visibilityHandler);
+      }
       
       if (result.success) {
         await handleProofReceived(result.result, submitEndpoint);
@@ -846,6 +974,7 @@
       // Extract debug_report from error if available (NO secrets/proofs/sessions displayed)
       try {
         const session = window.enrollmentSession;
+        const request = window.enrollmentRequest;
         const diagnosticsEl = document.getElementById('diagnostics');
         
         // Debug report may be attached to error object by SDK
@@ -857,6 +986,15 @@
           // Extract actual error code string
           if ('code' in errorCode) {
             errorCode = errorCode.code;
+          }
+        }
+        
+        // Try to get debug report from request object if not on error
+        if (!debugReport && request && typeof request.getDebugReport === 'function') {
+          try {
+            debugReport = request.getDebugReport();
+          } catch (e) {
+            console.warn('[Diagnostics] Failed to get debug report from request:', e);
           }
         }
         
@@ -1157,7 +1295,12 @@
       
       // Network/connection
       else if (errorCode === 'connection_failed') {
-        message = 'Connection to World App failed. Please check your connection and try again.';
+        // Better message if QR was shown and user may have tapped "open on this device"
+        if (window.qrWasShown) {
+          message = 'World App\'s answer was lost. This can happen if the app was minimized. Please tap "Verify with World App" again.';
+        } else {
+          message = 'Connection to World App failed. Please check your connection and try again.';
+        }
         category = 'network';
       } else if (errorCode === 'unexpected_response') {
         message = 'Unexpected response from World App. Please try again.';
@@ -1221,6 +1364,35 @@
       const date = new Date(timestamp * 1000);
       const days = Math.floor((date - Date.now()) / (1000 * 60 * 60 * 24));
       return days > 0 ? `in ${days} days` : 'soon';
+    }
+    
+    // Send privacy-safe client diagnostics to server
+    // PRIVACY: Never send ids, nonces, signatures, proofs, nullifiers, or session ids
+    async function sendClientDiagnostics(data) {
+      try {
+        // Only send privacy-safe fields
+        const safeData = {
+          event: data.event || 'unknown',
+          pollCount: typeof data.pollCount === 'number' ? data.pollCount : 0,
+          visibilityChanges: typeof data.visibilityChanges === 'number' ? data.visibilityChanges : 0,
+          durationMs: typeof data.durationMs === 'number' ? data.durationMs : 0,
+          finalStatus: data.finalStatus || 'unknown',
+          errorCode: data.errorCode || null,
+          lastStatusClass: data.lastStatusClass || null,
+          timestamp: Date.now(),
+        };
+        
+        await fetch('/api/diagnostics/client', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(safeData),
+        });
+      } catch (error) {
+        // Failed to send diagnostics - log but don't fail the flow
+        console.warn('[Diagnostics] Failed to send client diagnostics:', error);
+      }
     }
     
     // Store current connector URI for regeneration on viewport changes

@@ -302,6 +302,12 @@ test.describe('Full webhook enrollment workflow', () => {
                 const requestObj = {
                   connector: connector,
                   connectorURI: connector.uri,
+                  pollOnce: async function() {
+                    console.log('[Test IDKit] pollOnce() called');
+                    // Simulate immediate success for test
+                    const pollResult = await connector.poll();
+                    return pollResult;
+                  },
                   pollUntilCompletion: async function(opts) {
                     console.log('[Test IDKit] pollUntilCompletion() called');
                     const pollResult = await connector.poll();
@@ -310,6 +316,13 @@ test.describe('Full webhook enrollment workflow', () => {
                     } else {
                       return { success: false, error: 'Verification failed' };
                     }
+                  },
+                  getDebugReport: function() {
+                    return {
+                      transport: 'bridge',
+                      package_version: '4.6.0',
+                      request_payload: {}
+                    };
                   }
                 };
                 // Return a thenable (Promise-like) that also has .constraints() method
