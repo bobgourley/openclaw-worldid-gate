@@ -48,6 +48,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        expectedMode: 'uniqueness' as const,
       };
 
       const result = await verifier.verify(idkitResult, expectedContext);
@@ -90,6 +91,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        expectedMode: 'uniqueness' as const,
       };
 
       const result = await verifier.verify(idkitResult, expectedContext);
@@ -141,6 +143,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        expectedMode: 'uniqueness' as const,
       };
 
       const result = await verifier.verify(idkitResult, expectedContext);
@@ -191,6 +194,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        expectedMode: 'uniqueness' as const,
       };
 
       const result = await verifier.verify(idkitResult, expectedContext);
@@ -254,6 +258,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        expectedMode: 'uniqueness' as const,
       };
 
       const result = await verifier.verify(idkitResult, expectedContext);
@@ -302,6 +307,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        expectedMode: 'uniqueness' as const,
       };
 
       const result = await verifier.verify(idkitResult, expectedContext);
@@ -348,6 +354,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        expectedMode: 'uniqueness' as const,
       };
 
       const result = await verifier.verify(idkitResult, expectedContext);
@@ -397,6 +404,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        expectedMode: 'uniqueness' as const,
       };
 
       const result = await verifier.verify(idkitResult, expectedContext);
@@ -439,6 +447,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        expectedMode: 'uniqueness' as const,
       };
 
       const result = await verifier.verify(idkitResult, expectedContext);
@@ -491,6 +500,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        expectedMode: 'uniqueness' as const,
       };
 
       const result = await verifier.verify(idkitResult, expectedContext);
@@ -541,6 +551,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        expectedMode: 'uniqueness' as const,
       };
 
       const result = await verifier.verify(idkitResult, expectedContext);
@@ -591,6 +602,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        expectedMode: 'uniqueness' as const,
       };
 
       const result = await verifier.verify(idkitResult, expectedContext);
@@ -641,6 +653,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        expectedMode: 'uniqueness' as const,
       };
 
       const result = await verifier.verify(idkitResult, expectedContext);
@@ -700,6 +713,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        expectedMode: 'uniqueness' as const,
       };
 
       const result = await verifier.verify(idkitResult, expectedContext);
@@ -762,7 +776,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '',
-      } as any);
+        expectedMode: 'uniqueness' as const,      } as any);
 
       assert.equal(result.success, false);
       assert.match(result.error!, /signalHash.*non-empty.*requester binding/i);
@@ -814,6 +828,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        expectedMode: 'uniqueness' as const,
       };
 
       const result = await verifier.verify(idkitResult, expectedContext);
@@ -866,6 +881,7 @@ describe('WorldIdHttpVerifier Security Regressions', () => {
         action: 'test-action',
         nonce: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
         signalHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        expectedMode: 'uniqueness' as const,
       };
 
       const result = await verifier.verify(idkitResult, expectedContext);
