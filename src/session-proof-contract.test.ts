@@ -13,11 +13,18 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import Database from 'better-sqlite3';
 import { EnrollmentService } from './enrollment-service-production.js';
+import { WorldIdChallengeAdapter } from './worldid-challenge-adapter.js';
+import { WorldIdHttpVerifier } from './worldid-verifier-http.js';
 import { FakeClock } from './clock.js';
 import type { VerifySessionRequest } from './types.js';
 import { createHmac } from 'node:crypto';
+
+const BOT_TOKEN = '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11';
+const TEST_APP_ID = 'app_test_session_proof' as `app_${string}`;
+const TEST_RP_ID = 'rp_test_session' as `rp_${string}`;
+const TEST_SIGNING_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const TEST_ACTION = 'test-session-contract';
 
 // Create valid Telegram initData
 function createValidInitData(userId: number, botToken: string): string {
@@ -31,67 +38,79 @@ function createValidInitData(userId: number, botToken: string): string {
   return `auth_date=${authDate}&hash=${hash}&user=${encodeURIComponent(userJson)}`;
 }
 
+// Stub fetch for WorldIdHttpVerifier
+function createStubFetch(responses: Map<string, any>) {
+  return async (url: string, options: any) => {
+    const body = JSON.parse(options.body);
+    const key = `${body.nonce || 'default'}`;
+    const response = responses.get(key) || { success: false };
+    
+    return {
+      ok: true,
+      status: 200,
+      json: async () => response,
+    } as any;
+  };
+}
+
 describe('Session Proof Contract (World ID 4.0 Specs)', () => {
   it('accepts session proof with different nullifier than enrollment (per spec)', async () => {
-    const testDbPath = `/tmp/session-proof-test-${Date.now()}.db`;
+    const testDbPath = `/tmp/session-proof-test-${Date.now()}-${Math.random()}.db`;
     const clock = new FakeClock();
-    const BOT_TOKEN = '123456:ABC-DEF';
+    const userId = 100001; // Unique per test
     
-    // Session ID for enrollment
-    const sessionId = 'session_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
-    const enrollmentNullifier = '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+    const enrollmentNullifier = '0x' + 'A'.repeat(64);
+    const sessionNullifier = '0x' + 'C'.repeat(64);
+    const sessionAction = '0x' + 'D'.repeat(64);
+    const sessionId = 'session_' + '1'.repeat(128);
     
-    const adapter = {
-      createChallenge: async () => ({
-        nonce: 'test-nonce',
-        signalHash: 'test-signal',
-      }),
-    } as any;
+    const responses = new Map();
     
-    let callCount = 0;
-    const verifier = {
-      verify: async () => {
-        callCount++;
-        if (callCount === 1) {
-          // First call: enrollment with session creation
-          return {
-            success: true,
-            nullifier: enrollmentNullifier,
-            issuerSchemaId: 1,
-            expiresAtMin: clock.nowSeconds() + 86400 * 30,
-          };
-        } else {
-          // Second call: session verification with different nullifier
-          return {
-            success: true,
-            nullifier: '0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
-            issuerSchemaId: 1,
-            expiresAtMin: clock.nowSeconds() + 86400,
-          };
-        }
-      },
-    } as any;
+    // Create adapter
+    const adapter = new WorldIdChallengeAdapter({
+      appId: TEST_APP_ID,
+      rpId: TEST_RP_ID,
+      signingKeyHex: TEST_SIGNING_KEY,
+      environment: 'staging',
+    });
+    
+    // Create verifier with stubbed fetch
+    const verifier = new WorldIdHttpVerifier({
+      appId: TEST_APP_ID,
+      rpId: TEST_RP_ID,
+      environment: 'staging',
+      fetchFn: createStubFetch(responses),
+    });
     
     const service = new EnrollmentService({
       dbPath: testDbPath,
       challengeAdapter: adapter,
       verificationClient: verifier,
       telegramBotToken: BOT_TOKEN,
-      action: 'test-action',
+      action: TEST_ACTION,
       clock,
     });
-
-    // Step 1: Enroll user with session creation
-    const initData = createValidInitData(123456, BOT_TOKEN);
+    
+    const initData = createValidInitData(userId, BOT_TOKEN);
+    
+    // Step 1: Enrollment with session creation
     const enrollChallenge = await service.createChallenge(initData);
-    assert.ok(enrollChallenge.success, 'Enrollment challenge creation should succeed');
+    assert.ok(enrollChallenge.signedChallenge, 'Enrollment challenge should return signed challenge');
+    assert.ok(enrollChallenge.signedChallenge.nonce, 'Challenge should have nonce');
+    
+    responses.set(enrollChallenge.signedChallenge.nonce, {
+      success: true,
+      nullifier: enrollmentNullifier,
+      issuer_schema_id: 1,
+      expires_at_min: clock.nowSeconds() + 86400 * 30,
+    });
     
     const enrollmentRequest = {
       initData,
       idkitResult: {
         protocol_version: '4.0' as const,
         nonce: enrollChallenge.signedChallenge.nonce,
-        action: 'test-action',
+        action: TEST_ACTION,
         signal_hash: enrollChallenge.signedChallenge.signalHash,
         session_id: sessionId,
         responses: [{
@@ -101,22 +120,25 @@ describe('Session Proof Contract (World ID 4.0 Specs)', () => {
           proof: ['1', '2', '3', '4', '5'],
           expires_at_min: clock.nowSeconds() + 86400 * 30,
         }],
-        environment: 'production' as const,
+        environment: 'staging' as const,
       },
     };
     
     const enrollResult = await service.completeEnrollment(enrollmentRequest);
     assert.ok(enrollResult.success, 'Enrollment should succeed');
     assert.equal(enrollResult.sessionId, sessionId, 'Session ID should be captured');
-
-    // Step 2: Create session challenge for returning user
+    
+    // Step 2: Session verification with DIFFERENT nullifier
     const sessionChallenge = await service.createSessionChallenge(initData);
-    assert.ok(sessionChallenge.success, 'Session challenge creation should succeed');
-
-    // Step 3: Verify session with DIFFERENT nullifier (per World ID 4.0 spec)
-    const sessionNullifier = '0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'; // Different from enrollment
-    const sessionAction = '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD'; // Randomized action
-
+    assert.ok(sessionChallenge.signedChallenge, 'Session challenge should return signed challenge');
+    
+    responses.set(sessionChallenge.signedChallenge.nonce, {
+      success: true,
+      nullifier: sessionNullifier, // Different from enrollment
+      issuer_schema_id: 1,
+      expires_at_min: clock.nowSeconds() + 86400,
+    });
+    
     const sessionRequest: VerifySessionRequest = {
       initData,
       idkitResult: {
@@ -130,10 +152,10 @@ describe('Session Proof Contract (World ID 4.0 Specs)', () => {
           issuer_schema_id: 1,
           expires_at_min: clock.nowSeconds() + 86400 * 365 * 3,
         }],
-        environment: 'production' as const,
+        environment: 'staging' as const,
       },
     };
-
+    
     const result = await service.verifySession(sessionRequest);
     assert.equal(result.success, true, 'Session proof with different nullifier should succeed per World ID 4.0 spec');
     
@@ -141,215 +163,225 @@ describe('Session Proof Contract (World ID 4.0 Specs)', () => {
   });
 
   it('accepts session proof with randomized action (per spec)', async () => {
-    const testDbPath = `/tmp/session-proof-test-${Date.now()}.db`;
+    const testDbPath = `/tmp/session-proof-test-${Date.now()}-${Math.random()}.db`;
     const clock = new FakeClock();
-    const adapter = {
-      createChallenge: async () => ({
-        nonce: 'test-nonce-2',
-        signalHash: 'test-signal-2',
-      }),
-    } as any;
-    const verifier = {
-      verify: async () => ({
-        success: true,
-        nullifier: '0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE',
-        issuerSchemaId: 1,
-        expiresAtMin: clock.nowSeconds() + 86400,
-      }),
-    } as any;
+    const userId = 100002; // Unique per test
+    
+    const enrollmentNullifier = '0x' + 'B'.repeat(64);
+    const sessionNullifier = '0x' + 'E'.repeat(64);
+    const randomizedAction = '0x' + '1'.repeat(64); // NOT the enrollment action
+    const sessionId = 'session_' + '2'.repeat(128);
+    
+    const responses = new Map();
+    
+    const adapter = new WorldIdChallengeAdapter({
+      appId: TEST_APP_ID,
+      rpId: TEST_RP_ID,
+      signingKeyHex: TEST_SIGNING_KEY,
+      environment: 'staging',
+    });
+    
+    const verifier = new WorldIdHttpVerifier({
+      appId: TEST_APP_ID,
+      rpId: TEST_RP_ID,
+      environment: 'staging',
+      fetchFn: createStubFetch(responses),
+    });
     
     const service = new EnrollmentService({
       dbPath: testDbPath,
       challengeAdapter: adapter,
       verificationClient: verifier,
       telegramBotToken: BOT_TOKEN,
-      action: 'test-action',
+      action: TEST_ACTION,
       clock,
     });
-
-    // Create enrollment
-    const enrollmentNullifier = '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
-    const sessionId = 'session_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
     
-    const db = (service as any).db;
-    db.prepare(`
-      INSERT INTO enrollments (
-        telegram_user_id, action, nullifier, enrolled_at, enrolled_at_iso,
-        expires_at, expires_at_iso, session_id, protocol_version
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      123456,
-      'test-action',
-      enrollmentNullifier,
-      Math.floor(Date.now() / 1000),
-      new Date().toISOString(),
-      Math.floor(Date.now() / 1000) + 86400 * 30,
-      new Date(Date.now() + 86400 * 30 * 1000).toISOString(),
-      sessionId,
-      'v2'
-    );
-
-    db.prepare(`
-      INSERT INTO generation_fences (telegram_user_id, action, generation, updated_at, updated_at_iso)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(123456, 'test-action', 1, Math.floor(Date.now() / 1000), new Date().toISOString());
-
-    // Create challenge
-    const challenge = await service.createSessionChallenge('query_id=test&user={"id":123456}', {});
-    if (!challenge.success) throw new Error('Challenge creation failed');
-
-    // Mock verifier
-    (service as any).verificationClient = {
-      verify: async () => ({
-        success: true,
-        identifier: 'proof_of_human',
-        nullifier: '0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
-        issuerSchemaId: 1,
-        expiresAt: Date.now() + 86400 * 365 * 3 * 1000,
-      }),
-    };
-
-    // Verify session with randomized action (NOT enrollment action)
-    const sessionNullifier = '0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
-    const randomizedAction = '0x1111111111111111111111111111111111111111111111111111111111111111'; // NOT 'test-action', randomized per spec
-
-    const request: VerifySessionRequest = {
-      initData: 'query_id=test&user={"id":123456}',
+    const initData = createValidInitData(userId, BOT_TOKEN);
+    
+    // Enrollment
+    const enrollChallenge = await service.createChallenge(initData);
+    responses.set(enrollChallenge.signedChallenge.nonce, {
+      success: true,
+      nullifier: enrollmentNullifier,
+      issuer_schema_id: 1,
+      expires_at_min: clock.nowSeconds() + 86400 * 30,
+    });
+    
+    await service.completeEnrollment({
+      initData,
       idkitResult: {
-        protocol_version: '4.0',
-        nonce: challenge.challenge.signedChallenge.nonce,
+        protocol_version: '4.0' as const,
+        nonce: enrollChallenge.signedChallenge.nonce,
+        action: TEST_ACTION,
+        signal_hash: enrollChallenge.signedChallenge.signalHash,
         session_id: sessionId,
         responses: [{
-          identifier: 'proof_of_human',
-          proof: ['1', '2', '3', '4', '5'],
-          session_nullifier: [sessionNullifier, randomizedAction],
+          identifier: 'proof_of_human' as const,
           issuer_schema_id: 1,
-          expires_at_min: Math.floor(Date.now() / 1000) + 86400 * 365 * 3,
+          nullifier: enrollmentNullifier,
+          proof: ['1', '2', '3', '4', '5'],
+          expires_at_min: clock.nowSeconds() + 86400 * 30,
         }],
-        environment: 'production',
+        environment: 'staging' as const,
+      },
+    });
+    
+    // Session verification with randomized action
+    const sessionChallenge = await service.createSessionChallenge(initData);
+    responses.set(sessionChallenge.signedChallenge.nonce, {
+      success: true,
+      nullifier: sessionNullifier,
+      issuer_schema_id: 1,
+      expires_at_min: clock.nowSeconds() + 86400,
+    });
+    
+    const sessionRequest: VerifySessionRequest = {
+      initData,
+      idkitResult: {
+        protocol_version: '4.0' as const,
+        nonce: sessionChallenge.signedChallenge.nonce,
+        session_id: sessionId,
+        responses: [{
+          identifier: 'proof_of_human' as const,
+          proof: ['1', '2', '3', '4', '5'],
+          session_nullifier: [sessionNullifier, randomizedAction], // Randomized action per spec
+          issuer_schema_id: 1,
+          expires_at_min: clock.nowSeconds() + 86400 * 365 * 3,
+        }],
+        environment: 'staging' as const,
       },
     };
-
-    const result = await service.verifySession(request);
+    
+    const result = await service.verifySession(sessionRequest);
     assert.equal(result.success, true, 'Session proof with randomized action should succeed per World ID 4.0 spec');
     
     service.close();
   });
 
   it('rejects replayed session nullifier tuple', async () => {
-    const testDbPath = `/tmp/session-proof-test-${Date.now()}.db`;
+    const testDbPath = `/tmp/session-proof-test-${Date.now()}-${Math.random()}.db`;
     const clock = new FakeClock();
-    const adapter = {
-      createChallenge: async () => ({
-        nonce: 'test-nonce-3',
-        signalHash: 'test-signal-3',
-      }),
-    } as any;
-    const verifier = {
-      verify: async () => ({
-        success: true,
-        nullifier: '0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF',
-        issuerSchemaId: 1,
-        expiresAtMin: clock.nowSeconds() + 86400,
-      }),
-    } as any;
+    const userId = 100003; // Unique per test
+    
+    const enrollmentNullifier = '0x' + 'F'.repeat(64);
+    const sessionNullifier = '0x' + '9'.repeat(64);
+    const sessionAction = '0x' + '2'.repeat(64);
+    const sessionId = 'session_' + '3'.repeat(128);
+    
+    const responses = new Map();
+    
+    const adapter = new WorldIdChallengeAdapter({
+      appId: TEST_APP_ID,
+      rpId: TEST_RP_ID,
+      signingKeyHex: TEST_SIGNING_KEY,
+      environment: 'staging',
+    });
+    
+    const verifier = new WorldIdHttpVerifier({
+      appId: TEST_APP_ID,
+      rpId: TEST_RP_ID,
+      environment: 'staging',
+      fetchFn: createStubFetch(responses),
+    });
     
     const service = new EnrollmentService({
       dbPath: testDbPath,
       challengeAdapter: adapter,
       verificationClient: verifier,
       telegramBotToken: BOT_TOKEN,
-      action: 'test-action',
+      action: TEST_ACTION,
       clock,
     });
-
-    // Create enrollment
-    const enrollmentNullifier = '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
-    const sessionId = 'session_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
     
-    const db = (service as any).db;
-    db.prepare(`
-      INSERT INTO enrollments (
-        telegram_user_id, action, nullifier, created_at, expires_at, session_id, protocol_version
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      123456,
-      'test-action',
-      enrollmentNullifier,
-      clock.nowSeconds(),
-      clock.nowSeconds() + 86400 * 30,
-      sessionId,
-      'v2'
-    );
-
-    db.prepare(`
-      INSERT INTO generation_fences (telegram_user_id, action, generation, updated_at)
-      VALUES (?, ?, ?, ?)
-    `).run(123456, 'test-action', 1, clock.nowSeconds());
-
-    // Mock verifier
-    (service as any).verificationClient = {
-      verify: async () => ({
-        success: true,
-        identifier: 'proof_of_human',
-        nullifier: '0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
-        issuerSchemaId: 1,
-        expiresAt: Date.now() + 86400 * 365 * 3 * 1000,
-      }),
-    };
-
-    const sessionNullifier = '0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
-    const randomizedAction = '0x2222222222222222222222222222222222222222222222222222222222222222';
-
-    // First verification
-    const challenge1 = await service.createSessionChallenge('query_id=test&user={"id":123456}', {});
-    if (!challenge1.success) throw new Error('Challenge 1 creation failed');
-
-    const request1: VerifySessionRequest = {
-      initData: 'query_id=test&user={"id":123456}',
+    const initData = createValidInitData(userId, BOT_TOKEN);
+    
+    // Enrollment
+    const enrollChallenge = await service.createChallenge(initData);
+    responses.set(enrollChallenge.signedChallenge.nonce, {
+      success: true,
+      nullifier: enrollmentNullifier,
+      issuer_schema_id: 1,
+      expires_at_min: clock.nowSeconds() + 86400 * 30,
+    });
+    
+    await service.completeEnrollment({
+      initData,
       idkitResult: {
-        protocol_version: '4.0',
-        nonce: challenge1.challenge.signedChallenge.nonce,
+        protocol_version: '4.0' as const,
+        nonce: enrollChallenge.signedChallenge.nonce,
+        action: TEST_ACTION,
+        signal_hash: enrollChallenge.signedChallenge.signalHash,
         session_id: sessionId,
         responses: [{
-          identifier: 'proof_of_human',
-          proof: ['1', '2', '3', '4', '5'],
-          session_nullifier: [sessionNullifier, randomizedAction],
+          identifier: 'proof_of_human' as const,
           issuer_schema_id: 1,
-          expires_at_min: Math.floor(Date.now() / 1000) + 86400 * 365 * 3,
+          nullifier: enrollmentNullifier,
+          proof: ['1', '2', '3', '4', '5'],
+          expires_at_min: clock.nowSeconds() + 86400 * 30,
         }],
-        environment: 'production',
+        environment: 'staging' as const,
       },
-    };
-
-    const result1 = await service.verifySession(request1);
-    assert.equal(result1.success, true, 'First session proof should succeed');
-
-    // Second verification with SAME tuple (replay attack)
-    const challenge2 = await service.createSessionChallenge('query_id=test2&user={"id":123456}', {});
-    if (!challenge2.success) throw new Error('Challenge 2 creation failed');
-
-    const request2: VerifySessionRequest = {
-      initData: 'query_id=test2&user={"id":123456}',
+    });
+    
+    // First session verification
+    const sessionChallenge1 = await service.createSessionChallenge(initData);
+    responses.set(sessionChallenge1.signedChallenge.nonce, {
+      success: true,
+      nullifier: sessionNullifier,
+      issuer_schema_id: 1,
+      expires_at_min: clock.nowSeconds() + 86400,
+    });
+    
+    const sessionRequest1: VerifySessionRequest = {
+      initData,
       idkitResult: {
-        protocol_version: '4.0',
-        nonce: challenge2.challenge.signedChallenge.nonce,
+        protocol_version: '4.0' as const,
+        nonce: sessionChallenge1.signedChallenge.nonce,
         session_id: sessionId,
         responses: [{
-          identifier: 'proof_of_human',
+          identifier: 'proof_of_human' as const,
           proof: ['1', '2', '3', '4', '5'],
-          session_nullifier: [sessionNullifier, randomizedAction], // SAME tuple
+          session_nullifier: [sessionNullifier, sessionAction],
           issuer_schema_id: 1,
-          expires_at_min: Math.floor(Date.now() / 1000) + 86400 * 365 * 3,
+          expires_at_min: clock.nowSeconds() + 86400 * 365 * 3,
         }],
-        environment: 'production',
+        environment: 'staging' as const,
       },
     };
-
-    await assert.rejects(
-      async () => await service.verifySession(request2),
-      /Session nullifier already used/,
-      'Second session proof with same tuple should be rejected (replay protection)'
-    );
+    
+    const result1 = await service.verifySession(sessionRequest1);
+    assert.equal(result1.success, true, 'First session verification should succeed');
+    
+    // Second verification with SAME session_nullifier tuple - should fail
+    const sessionChallenge2 = await service.createSessionChallenge(initData);
+    responses.set(sessionChallenge2.signedChallenge.nonce, {
+      success: true,
+      nullifier: sessionNullifier,
+      issuer_schema_id: 1,
+      expires_at_min: clock.nowSeconds() + 86400,
+    });
+    
+    const sessionRequest2: VerifySessionRequest = {
+      initData,
+      idkitResult: {
+        protocol_version: '4.0' as const,
+        nonce: sessionChallenge2.signedChallenge.nonce,
+        session_id: sessionId,
+        responses: [{
+          identifier: 'proof_of_human' as const,
+          proof: ['1', '2', '3', '4', '5'],
+          session_nullifier: [sessionNullifier, sessionAction], // SAME tuple
+          issuer_schema_id: 1,
+          expires_at_min: clock.nowSeconds() + 86400 * 365 * 3,
+        }],
+        environment: 'staging' as const,
+      },
+    };
+    
+    const result2 = await service.verifySession(sessionRequest2);
+    assert.equal(result2.success, false, 'Replayed session nullifier tuple should be rejected');
+    
+    service.close();
   });
 });
