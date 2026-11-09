@@ -393,11 +393,6 @@
     }
     
     async function initializeSession() {
-      if (!sessionId) {
-        showError('Invalid verification link. Please request a new one from the bot.');
-        return;
-      }
-      
       // SECURITY: Require Telegram Mini App context (fail-closed)
       if (!initData) {
         showWarning('⚠️ This page must be opened from the Telegram bot. Verification is disabled in external browsers for security. Please open the link in Telegram.');
@@ -405,35 +400,10 @@
       }
       
       try {
-        // Fetch session configuration from backend
-        const response = await fetch(`/api/enrollment/session/${sessionId}`);
-        
-        if (!response.ok) {
-          if (response.status === 404) {
-            showError('Verification session not found or expired. Please request a new one.');
-          } else if (response.status === 410) {
-            showError('This verification session has already been used.');
-          } else {
-            showError('Unable to load verification session. Please try again.');
-          }
-          return;
-        }
-        
-        const session = await response.json();
-        
-        // Validate session data
-        if (!session.signedChallenge || !session.signedChallenge.action || !session.signedChallenge.nonce) {
-          showError('Invalid session configuration.');
-          return;
-        }
-        
         // Display ready state
         showStatus('Ready to verify with World App', 'success');
         buttonEl.classList.remove('hidden');
         buttonEl.disabled = false;
-        
-        // Store session for verification
-        window.enrollmentSession = session;
         
         // Set up verification handler
         buttonEl.onclick = handleVerification;

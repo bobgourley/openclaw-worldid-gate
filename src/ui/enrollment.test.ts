@@ -197,18 +197,17 @@ describe('enrollment.html client execution', () => {
     );
   });
 
-  test('should validate session format and reject invalid sessions', async () => {
+  test('should handle enrollment status check and show ready state', async () => {
     const { window, document, fetchMock } = createDOMEnvironment({
-      sessionId: 'invalid!@#$%',
       hasTelegramWebApp: true,
       initData: 'test',
     });
 
-    // Mock 404 response
+    // Mock successful status check (new user)
     fetchMock.mock.mockImplementationOnce(async (urlInput: string | URL) => ({
-      ok: false,
-      status: 404,
-      json: async () => ({ error: 'Session not found' })
+      ok: true,
+      status: 200,
+      json: async () => ({ status: 'new' })
     }));
 
     // Execute script
@@ -219,9 +218,9 @@ describe('enrollment.html client execution', () => {
 
     await waitForInit(window, 2000);
 
-    // Should show error
+    // Should show ready state (not error)
     const statusEl = document.getElementById('status');
-    assert.strictEqual(statusEl?.className, 'error', 'Should show error state');
+    assert.ok(statusEl?.className !== 'error', 'Should not show error state');
   });
 
   test('should validate no secrets in client code', () => {

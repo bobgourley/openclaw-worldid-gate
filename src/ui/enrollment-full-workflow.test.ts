@@ -96,25 +96,28 @@ describe('Full enrollment workflow with DOM', () => {
     }
   });
 
-  test('Enrollment HTML validates required session fields', () => {
+  test('Enrollment HTML validates initData and checks enrollment status', () => {
     // Read enrollment HTML source
     const html = readFileSync(join(__dirname, 'enrollment.html'), 'utf-8');
     
-    // Verify validation code exists (no synthetic fallbacks)
-    assert.ok(html.includes('if (!session.rpId)'), 'Must validate rpId');
-    assert.ok(html.includes('if (!session.signedChallenge.nonce)'), 'Must validate nonce');
-    assert.ok(html.includes('if (!session.signedChallenge.createdAt)'), 'Must validate createdAt');
-    assert.ok(html.includes('if (!session.signedChallenge.expiresAt)'), 'Must validate expiresAt');
-    assert.ok(html.includes('if (!session.signedChallenge.signature)'), 'Must validate signature');
+    // Verify initData validation (new flow: no session URL parameter)
+    assert.ok(html.includes('initData'), 'Must check initData');
+    assert.ok(html.includes('Telegram'), 'Must check Telegram context');
     
-    // Verify no synthetic fallbacks remain
+    // Verify status check flow
+    assert.ok(html.includes('checkEnrollmentStatus'), 'Must check enrollment status');
+    assert.ok(html.includes('/api/enrollment/query'), 'Must call status endpoint');
+    
+    // Verify returning user flow
+    assert.ok(html.includes('handleReturningUser'), 'Must handle returning users');
+    assert.ok(html.includes('proveSession'), 'Must use proveSession for returning users');
+    
+    // Verify new enrollment flow
+    assert.ok(html.includes('handleNewEnrollment'), 'Must handle new enrollment');
+    
+    // Verify no synthetic fallbacks
     assert.ok(!html.includes("|| 'rp_test'"), 'Must not have rp_test fallback');
     assert.ok(!html.includes('|| Math.floor(Date.now()'), 'Must not have Date.now() fallback in RP context');
-    assert.ok(!html.includes("|| '0x00000000"), 'Must not have zero signature fallback');
-    
-    // Verify error handling
-    assert.ok(html.includes("showError('Invalid session"), 'Must show error for invalid session');
-    assert.ok(html.includes('return;'), 'Must return early on validation failure');
   });
 
   test('Completion payload structure: initData + idkitResult', () => {
