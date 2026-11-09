@@ -88,9 +88,9 @@ function createValidInitData(userId: number, botToken: string): string {
   return `user=${encodeURIComponent(user)}&auth_date=${authDate}&hash=${hash}`;
 }
 
-// Create IDKitResult
-function createIDKitResult(nonce: string, action: string, signalHash: string): IDKitResult {
-  return {
+// Create IDKitResult with session creation
+function createIDKitResult(nonce: string, action: string, signalHash: string, sessionId?: string): IDKitResult {
+  const result: any = {
     protocol_version: '4.0',
     nonce,
     action,
@@ -106,6 +106,13 @@ function createIDKitResult(nonce: string, action: string, signalHash: string): I
     ],
     environment: 'staging',
   };
+  
+  // Add session_id if provided (for enrollment with session creation)
+  if (sessionId) {
+    result.session_id = sessionId;
+  }
+  
+  return result;
 }
 
 describe('HttpService Integration', () => {
@@ -243,10 +250,12 @@ describe('HttpService Integration', () => {
       });
       const challenge1 = await challenge1Response.json();
       
+      const sessionId1 = 'session_' + '1111111111111111'.repeat(8);
       const idkitResult1 = createIDKitResult(
         challenge1.signedChallenge.nonce,
         TEST_ACTION,
-        challenge1.signedChallenge.signalHash
+        challenge1.signedChallenge.signalHash,
+        sessionId1
       );
 
       await fetch(`http://127.0.0.1:${testPort}/api/enrollment/complete`, {
@@ -282,10 +291,12 @@ describe('HttpService Integration', () => {
       const challenge = await challengeResponse.json();
 
       // Complete enrollment
+      const sessionId = 'session_' + '2222222222222222'.repeat(8);
       const idkitResult = createIDKitResult(
         challenge.signedChallenge.nonce,
         TEST_ACTION,
-        challenge.signedChallenge.signalHash
+        challenge.signedChallenge.signalHash,
+        sessionId
       );
 
       const response = await fetch(`http://127.0.0.1:${testPort}/api/enrollment/complete`, {
@@ -325,6 +336,184 @@ describe('HttpService Integration', () => {
       assert.equal(response.status, 400);
       const data = await response.json();
       assert.match(data.error, /idkitResult required/i);
+    });
+  });
+
+  describe('POST /api/session/challenge/create', () => {
+    it('creates session challenge for enrolled user (renewal mode)', async () => {
+      const userId = 12345;
+      const initData = createValidInitData(userId, TEST_BOT_TOKEN);
+
+      // First enroll the user
+      const challenge1Response = await fetch(`http://127.0.0.1:${testPort}/api/challenge/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData }),
+      });
+      const challenge1 = await challenge1Response.json();
+      
+      const sessionId1 = 'session_' + '1234567890abcdef'.repeat(8);
+      const idkitResult1 = createIDKitResult(
+        challenge1.signedChallenge.nonce,
+        challenge1.signedChallenge.action,
+        '1234567890abcdef1234567890abcdef',
+        sessionId1
+      );
+
+      await fetch(`http://127.0.0.1:${testPort}/api/enrollment/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData, idkitResult: idkitResult1 }),
+      });
+
+      // Now create session challenge
+      const sessionChallengeResponse = await fetch(`http://127.0.0.1:${testPort}/api/session/challenge/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData, mode: 'renewal' }),
+      });
+
+      assert.equal(sessionChallengeResponse.status, 200);
+      const sessionChallenge = await sessionChallengeResponse.json();
+      assert.ok(sessionChallenge.signedChallenge);
+      assert.ok(sessionChallenge.signedChallenge.nonce);
+      // Session challenges have no action (SDK returns null, not undefined)
+      assert.ok(!sessionChallenge.signedChallenge.action);
+    });
+
+    it('rejects session challenge for non-enrolled user', async () => {
+      const userId = 99999;
+      const initData = createValidInitData(userId, TEST_BOT_TOKEN);
+
+      const response = await fetch(`http://127.0.0.1:${testPort}/api/session/challenge/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData }),
+      });
+
+      assert.equal(response.status, 404);
+      const data = await response.json();
+      assert.match(data.error, /no enrollment found/i);
+    });
+
+    it('rejects reactivation mode for non-revoked enrollment', async () => {
+      const userId = 23456;
+      const initData = createValidInitData(userId, TEST_BOT_TOKEN);
+
+      // Enroll the user
+      const challenge1Response = await fetch(`http://127.0.0.1:${testPort}/api/challenge/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData }),
+      });
+      const challenge1 = await challenge1Response.json();
+      
+      const sessionId2 = 'session_' + '3333333333333333'.repeat(8);
+      const idkitResult1 = createIDKitResult(
+        challenge1.signedChallenge.nonce,
+        challenge1.signedChallenge.action,
+        '2234567890abcdef1234567890abcdef',
+        sessionId2
+      );
+
+      await fetch(`http://127.0.0.1:${testPort}/api/enrollment/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData, idkitResult: idkitResult1 }),
+      });
+
+      // Try reactivation mode on active enrollment
+      const response = await fetch(`http://127.0.0.1:${testPort}/api/session/challenge/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData, mode: 'reactivation' }),
+      });
+
+      assert.equal(response.status, 400);
+      const data = await response.json();
+      assert.match(data.error, /not revoked/i);
+    });
+  });
+
+  describe('POST /api/session/verify', () => {
+    it('verifies session proof and renews enrollment', async () => {
+      const userId = 34567;
+      const initData = createValidInitData(userId, TEST_BOT_TOKEN);
+
+      // First enroll the user
+      const challenge1Response = await fetch(`http://127.0.0.1:${testPort}/api/challenge/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData }),
+      });
+      const challenge1 = await challenge1Response.json();
+      
+      const sessionId3 = 'session_' + '4444444444444444'.repeat(8);
+      const idkitResult1 = createIDKitResult(
+        challenge1.signedChallenge.nonce,
+        challenge1.signedChallenge.action,
+        '3234567890abcdef1234567890abcdef',
+        sessionId3
+      );
+
+      const enrollResponse = await fetch(`http://127.0.0.1:${testPort}/api/enrollment/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData, idkitResult: idkitResult1 }),
+      });
+      const enrollment = await enrollResponse.json();
+      const sessionId = enrollment.sessionId;
+
+      // Create session challenge
+      const sessionChallengeResponse = await fetch(`http://127.0.0.1:${testPort}/api/session/challenge/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData }),
+      });
+      const sessionChallenge = await sessionChallengeResponse.json();
+
+      // Create session verification result
+      const sessionVerifyResult = {
+        protocol_version: '4.0',
+        nonce: sessionChallenge.signedChallenge.nonce,
+        session_id: sessionId,
+        responses: [
+          {
+            identifier: 'proof_of_human',
+            session_nullifier: ['1234567890abcdef1234567890abcdef', TEST_ACTION],
+            issuer_schema_id: 1,
+            verifiable_credential: {
+              expires_at_min: Math.floor(Date.now() / 1000) + 86400,
+            },
+          },
+        ],
+        environment: 'cloud',
+      };
+
+      // Verify session
+      const verifyResponse = await fetch(`http://127.0.0.1:${testPort}/api/session/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData, idkitResult: sessionVerifyResult }),
+      });
+
+      assert.equal(verifyResponse.status, 200);
+      const data = await verifyResponse.json();
+      assert.equal(data.success, true);
+      assert.equal(data.telegramUserId, userId);
+      assert.ok(data.expiresAt);
+    });
+
+    it('rejects missing initData', async () => {
+      const response = await fetch(`http://127.0.0.1:${testPort}/api/session/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idkitResult: {} }),
+      });
+
+      assert.equal(response.status, 400);
+      const data = await response.json();
+      assert.match(data.error, /initData required/i);
     });
   });
 
