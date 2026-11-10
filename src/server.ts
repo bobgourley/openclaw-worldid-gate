@@ -12,6 +12,8 @@ import { WorldIdHttpVerifier } from './worldid-verifier-http.js';
 import { HttpService } from './http-service.js';
 import { TelegramBotHandler, TelegramHttpTransport } from './telegram-bot-handler.js';
 import { createDiagnosticLogger } from './diagnostic-logger.js';
+import { DiagnosticTokenStore, assertSafeDiagAction, type DiagnosticAbConfig } from './diagnostic-ab.js';
+import { validateTelegramInitData } from './telegram-initdata.js';
 import { StatusSocketServer, loadStatusSecret } from './status-socket-server.js';
 import { MemberTagManager } from './member-tag-manager.js';
 import { TelegramApiClient } from './telegram-api-client.js';
@@ -53,6 +55,8 @@ const config = {
   // DIAGNOSTIC_LOG_DIR must be set explicitly for production use
   diagnosticLogEnabled: process.env.DIAGNOSTIC_LOG_ENABLED === 'true',
   diagnosticLogDir: process.env.DIAGNOSTIC_LOG_DIR || '',  // No default, must be explicit
+  // Diagnostic A/B device tests: off unless a throwaway portal action is configured
+  diagnosticActionA: process.env.WORLDID_DIAG_ACTION_A || '',
 };
 
 // Validate enrollment TTL (fail-closed: exit on invalid values)
@@ -303,6 +307,23 @@ async function main(): Promise<void> {
     console.log(`  Profile: ${config.openclawProfile}`);
   }
   
+  // Diagnostic A/B device tests (off unless WORLDID_DIAG_ACTION_A is set)
+  let diagnosticAb: DiagnosticAbConfig | undefined;
+  if (config.diagnosticActionA) {
+    assertSafeDiagAction(config.diagnosticActionA, [config.action, 'openclaw-verify', 'openclaw-enroll-v2', 'openclaw-enroll-v3']);
+    diagnosticAb = {
+      store: new DiagnosticTokenStore(),
+      adapter: challengeAdapter,
+      actionA: config.diagnosticActionA,
+      verifyInitDataUserId: (initData: unknown) => {
+        if (typeof initData !== 'string' || initData.length > 4096) return null;
+        const r = validateTelegramInitData(initData, { botToken: config.telegramBotToken });
+        return r.valid && r.user && typeof r.user.id === 'number' ? r.user.id : null;
+      },
+    };
+    console.log('Diagnostic A/B tests: enabled (/diagtest)');
+  }
+
   const telegramBotHandler = new TelegramBotHandler({
     botToken: config.telegramBotToken,
     enrollmentService,
@@ -311,12 +332,15 @@ async function main(): Promise<void> {
     webhookSecret: config.telegramWebhookSecret,
     openclawConfig,
     allowedGroupId: config.openclawAllowedGroupId,
+    diagnosticTokens: diagnosticAb?.store,
   });
 
   // Create HTTP service with bot handler
   const httpService = new HttpService({
     enrollmentService,
     telegramBotHandler,
+    diagnosticLogger,
+    diagnosticAb,
     port: config.httpPort,
     host: config.httpHost,
     bodyLimit: '1mb',
