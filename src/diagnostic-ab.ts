@@ -119,3 +119,20 @@ export function buildDiagChallenge(cfg: DiagnosticAbConfig, test: DiagTest): {
   if (test === 'A') { out.action = cfg.actionA; out.signal = DIAG_SIGNAL; }
   return out;
 }
+
+/**
+ * Parse WORLDID_DIAG_ALLOWED_USERS: comma-separated positive Telegram user ids.
+ * Empty means nobody. Malformed input throws so a typo can never open access.
+ */
+export function parseDiagAllowedUsers(raw: string | undefined): ReadonlySet<number> {
+  const out = new Set<number>();
+  if (!raw || !raw.trim()) return out;
+  for (const part of raw.split(',')) {
+    const v = part.trim();
+    if (!/^[1-9][0-9]{0,15}$/.test(v)) throw new Error('WORLDID_DIAG_ALLOWED_USERS must be comma-separated numeric user ids');
+    const n = Number(v);
+    if (!Number.isSafeInteger(n)) throw new Error('WORLDID_DIAG_ALLOWED_USERS must be comma-separated numeric user ids');
+    out.add(n);
+  }
+  return out;
+}

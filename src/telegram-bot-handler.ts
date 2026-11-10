@@ -90,6 +90,9 @@ export interface TelegramBotHandlerConfig {
 
   /** Diagnostic A/B test links (optional; /diagtest exists only when set) */
   diagnosticTokens?: DiagnosticTokenStore;
+
+  /** Telegram users allowed to use /diagtest (server-side config). Empty or unset: nobody. */
+  diagnosticAllowedUserIds?: ReadonlySet<number>;
 }
 
 /** Time zone used for /status expiry times (the operator's zone). */
@@ -135,6 +138,7 @@ export class TelegramBotHandler {
   private readonly openclawConfig?: OpenClawDispatchConfig;
   private readonly allowedGroupId?: number;
   private readonly diagnosticTokens?: DiagnosticTokenStore;
+  private readonly diagnosticAllowedUserIds: ReadonlySet<number>;
   private readonly activeSessions: Map<number, { sessionId: string; createdAt: number }> = new Map();
   private readonly recentDeliveries: Map<string, number> = new Map();
 
@@ -160,6 +164,7 @@ export class TelegramBotHandler {
     this.openclawConfig = config.openclawConfig;
     this.allowedGroupId = config.allowedGroupId;
     this.diagnosticTokens = config.diagnosticTokens;
+    this.diagnosticAllowedUserIds = config.diagnosticAllowedUserIds ?? new Set<number>();
     
     // Validate OpenClaw config if provided
     if (this.openclawConfig) {
@@ -299,8 +304,12 @@ export class TelegramBotHandler {
       });
     } else if (text === '/status') {
       await this.handleStatusCommand(message.from.id);
-    } else if (text === '/diagtest' && this.diagnosticTokens) {
-      await this.handleDiagTestCommand(message.from.id);
+    } else if (text === '/diagtest' || text.startsWith('/diagtest ') || text.startsWith('/diagtest@')) {
+      // Hidden admin tool: answers only when enabled AND the sender is allowlisted.
+      // Otherwise it is completely silent (no reply, no log line), like group traffic.
+      if (this.diagnosticTokens && this.diagnosticAllowedUserIds.has(message.from.id) && text === '/diagtest') {
+        await this.handleDiagTestCommand(message.from.id);
+      }
     } else if (text.startsWith('/ask ')) {
       // OpenClaw CLI dispatch command (private chat only)
       if (this.openclawConfig) {

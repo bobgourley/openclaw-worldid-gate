@@ -63,6 +63,7 @@ test.describe('Diagnostic A/B page', () => {
     enrollmentService = new EnrollmentService({ telegramBotToken: BOT, challengeAdapter: adapter, verificationClient: verifier, action: 'openclaw-enroll-v3', dbPath: ':memory:' });
     const store = new DiagnosticTokenStore();
     bot = new TelegramBotHandler({ botToken: BOT, enrollmentService, enrollmentBaseUrl: 'http://placeholder', diagnosticTokens: store,
+      diagnosticAllowedUserIds: new Set([888000111, 888000222]),
       transport: { async sendMessage(chatId: number, text: string, options?: any) { sent.push({ chatId, text, options }); } } as any });
     service = new HttpService({ enrollmentService, telegramBotHandler: bot, port: 0, host: '127.0.0.1', diagnosticAb: {
       store, adapter, actionA: 'openclaw-diag-a',

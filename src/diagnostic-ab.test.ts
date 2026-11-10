@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHmac } from 'node:crypto';
 import {
-  DiagnosticTokenStore, assertSafeDiagAction, buildDiagChallenge, DIAG_TOKEN_TTL_MS, DIAG_LINK_COOLDOWN_MS, DIAG_SIGNAL,
+  DiagnosticTokenStore, assertSafeDiagAction, buildDiagChallenge, parseDiagAllowedUsers, DIAG_TOKEN_TTL_MS, DIAG_LINK_COOLDOWN_MS, DIAG_SIGNAL,
 } from './diagnostic-ab.js';
 import { WorldIdChallengeAdapter } from './worldid-challenge-adapter.js';
 import { WorldIdHttpVerifier } from './worldid-verifier-http.js';
@@ -86,6 +86,7 @@ async function startAll() {
   const sent: any[] = [];
   const bot = new TelegramBotHandler({
     botToken: BOT, enrollmentService, enrollmentBaseUrl: 'https://example.test', diagnosticTokens: store,
+    diagnosticAllowedUserIds: new Set([777000111]),
     transport: { async sendMessage(chatId: number, text: string, options?: any) { sent.push({ chatId, text, options }); } } as any,
   });
   const diagnosticAb = {
@@ -187,4 +188,62 @@ test('failed enrollment poll: request id and nested reply detail go only to the 
   const consoleText = lines.join('\n');
   assert.ok(consoleText.includes('"payloadKeys":"proof_response.error,proof_response.reason"'));
   assert.ok(!consoleText.includes(UUID), 'request id not in console line');
+});
+
+function dm(userId: number, text: string, chatType = 'private') {
+  return { update_id: 1, message: { message_id: 1, date: 0, chat: { id: chatType === 'private' ? userId : -100123, type: chatType }, from: { id: userId, is_bot: false, first_name: 'T' }, text } } as any;
+}
+
+function botWith(opts: { store?: DiagnosticTokenStore; allowed?: number[] }) {
+  const sent: any[] = [];
+  const menus: any[] = [];
+  const ad = adapter();
+  const verifier = new WorldIdHttpVerifier({ appId: APP, rpId: RP, environment: 'staging', baseUrlOverride: 'http://localhost:9999' });
+  const enrollmentService = new EnrollmentService({ telegramBotToken: BOT, challengeAdapter: ad, verificationClient: verifier, action: 'openclaw-enroll-v3', dbPath: ':memory:' });
+  const bot = new TelegramBotHandler({
+    botToken: BOT, enrollmentService, enrollmentBaseUrl: 'https://example.test',
+    diagnosticTokens: opts.store, diagnosticAllowedUserIds: opts.allowed ? new Set(opts.allowed) : undefined,
+    transport: {
+      async sendMessage(chatId: number, text: string, options?: any) { sent.push({ chatId, text, options }); },
+      async setMyCommands(commands: any, scope: any) { menus.push({ commands, scope }); },
+      async deleteMyCommands() {},
+    } as any,
+  });
+  return { bot, sent, menus };
+}
+
+test('command menu stays verify, status, help even with diagnostics enabled', async () => {
+  const { bot, menus } = botWith({ store: new DiagnosticTokenStore(), allowed: [5] });
+  await bot.registerCommandMenu();
+  const names = menus.flatMap((m) => m.commands.map((c: any) => c.command));
+  assert.deepEqual([...new Set(names)].sort(), ['help', 'status', 'verify']);
+});
+
+test('/diagtest is silent unless enabled and allowlisted, and never answers in groups', async () => {
+  const off = botWith({});
+  await off.bot.handleUpdate(dm(5, '/diagtest'));
+  assert.equal(off.sent.length, 0, 'diag action unset: no reply');
+
+  const emptyList = botWith({ store: new DiagnosticTokenStore() });
+  await emptyList.bot.handleUpdate(dm(5, '/diagtest'));
+  assert.equal(emptyList.sent.length, 0, 'empty allowlist: no reply');
+
+  const on = botWith({ store: new DiagnosticTokenStore(), allowed: [5] });
+  await on.bot.handleUpdate(dm(6, '/diagtest'));
+  await on.bot.handleUpdate(dm(5, '/diagtest extra'));
+  await on.bot.handleUpdate(dm(5, '/diagtest@SomeBot'));
+  await on.bot.handleUpdate(dm(5, '/diagtest', 'supergroup'));
+  assert.equal(on.sent.length, 0, 'not allowlisted, variants, and groups: no reply');
+  await on.bot.handleUpdate(dm(5, '/diagtest'));
+  assert.equal(on.sent.length, 1, 'allowlisted user in a private chat gets the link');
+  assert.ok(on.sent[0].options.reply_markup.inline_keyboard[0][0].web_app.url.includes('/diagnostic?t='));
+});
+
+test('allowlist parsing: empty is nobody, malformed fails closed', () => {
+  assert.equal(parseDiagAllowedUsers(undefined).size, 0);
+  assert.equal(parseDiagAllowedUsers('  ').size, 0);
+  assert.deepEqual([...parseDiagAllowedUsers('12, 34')], [12, 34]);
+  assert.throws(() => parseDiagAllowedUsers('12,abc'));
+  assert.throws(() => parseDiagAllowedUsers('-5'));
+  assert.throws(() => parseDiagAllowedUsers('12,,34'));
 });

@@ -12,7 +12,7 @@ import { WorldIdHttpVerifier } from './worldid-verifier-http.js';
 import { HttpService } from './http-service.js';
 import { TelegramBotHandler, TelegramHttpTransport } from './telegram-bot-handler.js';
 import { createDiagnosticLogger } from './diagnostic-logger.js';
-import { DiagnosticTokenStore, assertSafeDiagAction, type DiagnosticAbConfig } from './diagnostic-ab.js';
+import { DiagnosticTokenStore, assertSafeDiagAction, parseDiagAllowedUsers, type DiagnosticAbConfig } from './diagnostic-ab.js';
 import { validateTelegramInitData } from './telegram-initdata.js';
 import { StatusSocketServer, loadStatusSecret } from './status-socket-server.js';
 import { MemberTagManager } from './member-tag-manager.js';
@@ -57,6 +57,8 @@ const config = {
   diagnosticLogDir: process.env.DIAGNOSTIC_LOG_DIR || '',  // No default, must be explicit
   // Diagnostic A/B device tests: off unless a throwaway portal action is configured
   diagnosticActionA: process.env.WORLDID_DIAG_ACTION_A || '',
+  // Comma-separated Telegram user ids allowed to use /diagtest. Empty: nobody.
+  diagnosticAllowedUsers: process.env.WORLDID_DIAG_ALLOWED_USERS || '',
 };
 
 // Validate enrollment TTL (fail-closed: exit on invalid values)
@@ -323,6 +325,8 @@ async function main(): Promise<void> {
     };
     console.log('Diagnostic A/B tests: enabled (/diagtest)');
   }
+  const diagnosticAllowedUserIds = parseDiagAllowedUsers(config.diagnosticAllowedUsers);
+  if (diagnosticAb) console.log(`  Allowed users: ${diagnosticAllowedUserIds.size}`);
 
   const telegramBotHandler = new TelegramBotHandler({
     botToken: config.telegramBotToken,
@@ -333,6 +337,7 @@ async function main(): Promise<void> {
     openclawConfig,
     allowedGroupId: config.openclawAllowedGroupId,
     diagnosticTokens: diagnosticAb?.store,
+    diagnosticAllowedUserIds,
   });
 
   // Create HTTP service with bot handler
