@@ -435,6 +435,10 @@
         <span class="diag-value" id="diagErrorCode">-</span>
       </div>
       <div class="diag-row">
+        <span class="diag-label">App Reported:</span>
+        <span class="diag-value" id="diagUpstream">-</span>
+      </div>
+      <div class="diag-row">
         <span class="diag-label">SDK Version:</span>
         <span class="diag-value" id="diagSdkVersion">-</span>
       </div>
@@ -995,6 +999,7 @@
       const startTime = Date.now();
       
       // Track diagnostics for privacy-safe logging
+      window.lastUpstreamError = null;
       const diagnostics = {
         pollCount: 0,
         visibilityChanges: 0,
@@ -1089,6 +1094,10 @@
             diagnostics.errorCode = pollResult.error;
             diagnostics.lastStatusClass = 'failed';
             result = { success: false, error: pollResult.error };
+            const upstream = readUpstreamError(request);
+            diagnostics.upstreamCode = upstream.code;
+            diagnostics.upstreamReason = upstream.reason;
+            window.lastUpstreamError = upstream;
             break;
           } else if (pollResult.type === 'waiting_for_connection' || pollResult.type === 'awaiting_confirmation') {
             // Still waiting - continue polling
@@ -1128,6 +1137,8 @@
           tgPlatform: deviceContext.tgPlatform,
           entryPath: window.connectorLinkTapped ? 'link' : 'qr',
           flow: submitEndpoint === '/api/session/verify' ? 'renewal' : 'enroll',
+          upstreamCode: diagnostics.upstreamCode || undefined,
+          upstreamReason: diagnostics.upstreamReason || undefined,
         });
         
       } finally {
@@ -1473,6 +1484,10 @@
         
         document.getElementById('diagTtl').textContent = safeTtl;
         
+        const up = window.lastUpstreamError || {};
+        document.getElementById('diagUpstream').textContent =
+          up.code ? up.code + (up.reason ? ' (' + up.reason + ')' : '') : '-';
+
         // Show diagnostics panel
         diagnosticsEl.classList.add('visible');
         
@@ -1547,6 +1562,12 @@
         message = 'Verification failed. ' + RETRY + ' ' + ASK_ADMIN;
       }
 
+      const upstreamErr = window.lastUpstreamError || {};
+      if (errorCode === 'generic_error' && upstreamErr.code === 'challenge_failed') {
+        category = 'challenge_failed';
+        message = 'World ID could not complete a check it asked for, such as a face check. Open the World ID app (or World App), follow any prompts there, and make sure your Orb verified World ID is set up on this phone. Then tap Verify with World ID to try again. ' + ASK_ADMIN;
+      }
+
       if (errorCode === 'connection_failed' && window.qrWasShown) {
         message = 'Connection failed: World ID\'s answer was lost before it reached this page. This can happen if this page was closed or minimized while World ID was open. Keep this page open and tap Verify with World ID to try again.';
       }
@@ -1604,6 +1625,38 @@
     
     // Send privacy-safe client diagnostics to server
     // PRIVACY: Never send ids, nonces, signatures, proofs, nullifiers, or session ids
+
+    // Raw error code and reason the World ID app put in its bridge reply. IDKit 4.6.0
+    // turns codes it does not know (such as challenge_failed) into generic_error, but the
+    // documented debug report keeps the original reply. Only fixed vocabulary is kept;
+    // anything else becomes 'other'. Nothing else from the reply is read.
+    const UPSTREAM_CODES = ['user_rejected','verification_rejected','credential_unavailable','feature_unavailable','world_id_4_not_available','world_id_3_not_available','malformed_request','invalid_network','inclusion_proof_pending','inclusion_proof_failed','unexpected_response','connection_failed','max_verifications_reached','failed_by_host_app','user_presence_failed','invalid_rp_signature','nullifier_replayed','duplicate_nonce','unknown_rp','inactive_rp','timestamp_too_old','timestamp_too_far_in_future','invalid_timestamp','rp_signature_expired','identity_attributes_not_matched','generic_error','invalid_rp_id_format','timeout','cancelled','challenge_failed'];
+    const UPSTREAM_REASONS = ['face_challenge_quality','face_challenge_mismatch','face_challenge_missing','face_challenge_integrity','face_selfie_quality','face_selfie_mismatch','face_selfie_timeout','spoof_detected','age_below_threshold','username_mismatch','biometric_rejected','user_cancelled','proof_failed','credential_unavailable','pcp_missing','face_auth_unavailable','face_auth_failed','metadata_failed','network_error','server_rejected','client_error','process_challenge_failed','face_quality','face_mismatch','face_auth_timeout','unknown'];
+    function readUpstreamError(request) {
+      const out = { code: null, reason: null };
+      try {
+        const report = request && typeof request.getDebugReport === 'function' ? request.getDebugReport() : null;
+        const d = report && Object.getOwnPropertyDescriptor(report, 'response_payload');
+        let payload = d ? d.value : undefined;
+        if (typeof payload === 'string') {
+          if (payload.length > 4096) return out;
+          payload = JSON.parse(payload);
+        }
+        if (!payload || typeof payload !== 'object') return out;
+        const own = (o, k) => {
+          if (!o || typeof o !== 'object') return undefined;
+          const x = Object.getOwnPropertyDescriptor(o, k);
+          return x ? x.value : undefined;
+        };
+        const inner = own(payload, 'proof_response');
+        const code = [own(payload, 'error_code'), own(payload, 'error'), own(inner, 'error')].find((v) => typeof v === 'string');
+        const reason = [own(payload, 'reason'), own(inner, 'reason')].find((v) => typeof v === 'string');
+        if (typeof code === 'string') out.code = UPSTREAM_CODES.includes(code) ? code : 'other';
+        if (typeof reason === 'string') out.reason = UPSTREAM_REASONS.includes(reason) ? reason : 'other';
+      } catch (_) {}
+      return out;
+    }
+
     async function sendClientDiagnostics(data) {
       try {
         // Only send privacy-safe fields
@@ -1620,6 +1673,8 @@
           tgPlatform: typeof data.tgPlatform === 'string' ? data.tgPlatform : null,
           entryPath: typeof data.entryPath === 'string' ? data.entryPath : null,
           flow: typeof data.flow === 'string' ? data.flow : null,
+          upstreamCode: typeof data.upstreamCode === 'string' ? data.upstreamCode : null,
+          upstreamReason: typeof data.upstreamReason === 'string' ? data.upstreamReason : null,
           timestamp: Date.now(),
         };
         
