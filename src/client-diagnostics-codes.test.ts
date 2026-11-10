@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { IDKitErrorCodes } from '@worldcoin/idkit-core';
-import { HttpService, CLIENT_DIAGNOSTIC_ERROR_CODES } from './http-service.js';
+import { HttpService, CLIENT_DIAGNOSTIC_ERROR_CODES, CLIENT_DIAGNOSTIC_UPSTREAM_CODES } from './http-service.js';
 import { EnrollmentService } from './enrollment-service-production.js';
 import { WorldIdChallengeAdapter } from './worldid-challenge-adapter.js';
 import { WorldIdHttpVerifier } from './worldid-verifier-http.js';
@@ -125,4 +125,22 @@ test('nullifier_replayed client event is accepted (code only)', async () => {
   assert.equal(logged.length, 1);
   assert.equal(logged[0].event, 'nullifier_replayed');
   assert.equal(logged[0].errorCode, 'nullifier_replayed');
+});
+
+test('raw upstream code and reason are logged only from fixed vocabularies', async () => {
+  const { statuses, logged, raw } = await postAndCapture([
+    { event: 'poll_complete', errorCode: 'generic_error', upstreamCode: 'challenge_failed', upstreamReason: 'face_challenge_mismatch' },
+    { event: 'poll_complete', errorCode: 'generic_error', upstreamCode: 'other', upstreamReason: 'other' },
+    { event: 'poll_complete', errorCode: 'generic_error', upstreamCode: '0x' + 'ab'.repeat(32), upstreamReason: 'free text here' },
+  ]);
+  assert.deepEqual(statuses, [204, 204, 204]);
+  assert.equal(logged.length, 3);
+  assert.equal(logged[0].upstreamCode, 'challenge_failed');
+  assert.equal(logged[0].upstreamReason, 'face_challenge_mismatch');
+  assert.equal(logged[1].upstreamCode, 'other');
+  assert.equal(logged[2].upstreamCode, undefined);
+  assert.equal(logged[2].upstreamReason, undefined);
+  assert.ok(!raw.join('').includes('free text'));
+  assert.ok(CLIENT_DIAGNOSTIC_UPSTREAM_CODES.includes('challenge_failed'));
+  assert.ok(!CLIENT_DIAGNOSTIC_UPSTREAM_CODES.includes('unknown_poll_type'));
 });

@@ -152,6 +152,27 @@ export const CLIENT_DIAGNOSTIC_TG_PLATFORMS: readonly string[] = [
 export const CLIENT_DIAGNOSTIC_ENTRY_PATHS: readonly string[] = ['qr', 'link'];
 export const CLIENT_DIAGNOSTIC_FLOWS: readonly string[] = ['enroll', 'renewal'];
 
+/**
+ * Raw error code the World ID app put in its bridge reply, read from the documented
+ * getDebugReport().response_payload. IDKit 4.6.0 collapses codes it does not know
+ * (for example challenge_failed, added in worldcoin/idkit PR 365) into generic_error,
+ * so the raw value is logged separately. Values outside this list are logged as 'other'.
+ */
+export const CLIENT_DIAGNOSTIC_UPSTREAM_CODES: readonly string[] = [
+  ...CLIENT_DIAGNOSTIC_ERROR_CODES.filter((c) => c !== 'unknown_poll_type'),
+  'challenge_failed', 'other',
+];
+/** Optional bridge error reason vocabulary (ErrorReason in worldcoin/idkit PR 365). */
+export const CLIENT_DIAGNOSTIC_UPSTREAM_REASONS: readonly string[] = [
+  'face_challenge_quality', 'face_challenge_mismatch', 'face_challenge_missing',
+  'face_challenge_integrity', 'face_selfie_quality', 'face_selfie_mismatch', 'face_selfie_timeout',
+  'spoof_detected', 'age_below_threshold', 'username_mismatch', 'biometric_rejected',
+  'user_cancelled', 'proof_failed', 'credential_unavailable', 'pcp_missing',
+  'face_auth_unavailable', 'face_auth_failed', 'metadata_failed', 'network_error',
+  'server_rejected', 'client_error', 'process_challenge_failed', 'face_quality', 'face_mismatch',
+  'face_auth_timeout', 'unknown', 'other',
+];
+
 /** Placeholder in enrollment.html replaced with the page build id when served. */
 export const UI_BUILD_PLACEHOLDER = '__UI_BUILD_ID__';
 
@@ -805,6 +826,8 @@ export class HttpService {
     const tgPlatform = pickEnum(req.body.tgPlatform, CLIENT_DIAGNOSTIC_TG_PLATFORMS);
     const entryPath = pickEnum(req.body.entryPath, CLIENT_DIAGNOSTIC_ENTRY_PATHS);
     const flow = pickEnum(req.body.flow, CLIENT_DIAGNOSTIC_FLOWS);
+    const upstreamCode = pickEnum(req.body.upstreamCode, CLIENT_DIAGNOSTIC_UPSTREAM_CODES);
+    const upstreamReason = pickEnum(req.body.upstreamReason, CLIENT_DIAGNOSTIC_UPSTREAM_REASONS);
 
     // Extract and validate timestamp (within last 24 hours)
     const now = Date.now();
@@ -832,6 +855,8 @@ export class HttpService {
     if (tgPlatform) safeData.tgPlatform = tgPlatform;
     if (entryPath) safeData.entryPath = entryPath;
     if (flow) safeData.flow = flow;
+    if (upstreamCode) safeData.upstreamCode = upstreamCode;
+    if (upstreamReason) safeData.upstreamReason = upstreamReason;
     safeData.timestamp = timestamp;
 
     // SECURITY: Scan for sensitive patterns that should never appear
