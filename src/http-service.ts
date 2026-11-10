@@ -11,6 +11,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import type { EnrollmentService, CreateChallengeResult, CompleteEnrollmentRequest, CompleteEnrollmentResult } from './enrollment-service-production.js';
 import type { TelegramBotHandler } from './telegram-bot-handler.js';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -123,6 +124,40 @@ export interface HttpServiceConfig {
 
   /** Request timeout in milliseconds (default: 30000) */
   requestTimeoutMs?: number;
+}
+
+/**
+ * Client diagnostics allowlists (exported for tests).
+ *
+ * Error codes are the official IDKit codes (IDKitErrorCodes in @worldcoin/idkit-core 4.6.0,
+ * https://docs.world.org/world-id/idkit/error-codes) plus 'unknown_poll_type', which the
+ * enrollment page reports when the SDK returns a status type it does not recognize.
+ */
+export const CLIENT_DIAGNOSTIC_EVENTS: readonly string[] = ['poll_complete', 'poll_cancel', 'nullifier_replayed'];
+export const CLIENT_DIAGNOSTIC_ERROR_CODES: readonly string[] = [
+  'user_rejected', 'verification_rejected', 'credential_unavailable', 'feature_unavailable',
+  'world_id_4_not_available', 'world_id_3_not_available', 'malformed_request', 'invalid_network',
+  'inclusion_proof_pending', 'inclusion_proof_failed', 'unexpected_response', 'connection_failed',
+  'max_verifications_reached', 'failed_by_host_app', 'user_presence_failed', 'invalid_rp_signature',
+  'nullifier_replayed', 'duplicate_nonce', 'unknown_rp', 'inactive_rp', 'timestamp_too_old',
+  'timestamp_too_far_in_future', 'invalid_timestamp', 'rp_signature_expired',
+  'identity_attributes_not_matched', 'generic_error', 'invalid_rp_id_format', 'timeout', 'cancelled',
+  'unknown_poll_type',
+];
+export const CLIENT_DIAGNOSTIC_TRANSPORTS: readonly string[] = ['bridge', 'mini_app', 'unknown'];
+export const CLIENT_DIAGNOSTIC_DEVICE_CLASSES: readonly string[] = ['phone', 'tablet', 'desktop', 'unknown'];
+export const CLIENT_DIAGNOSTIC_TG_PLATFORMS: readonly string[] = [
+  'ios', 'android', 'tdesktop', 'macos', 'weba', 'webk', 'web', 'unigram', 'unknown',
+];
+export const CLIENT_DIAGNOSTIC_ENTRY_PATHS: readonly string[] = ['qr', 'link'];
+export const CLIENT_DIAGNOSTIC_FLOWS: readonly string[] = ['enroll', 'renewal'];
+
+/** Placeholder in enrollment.html replaced with the page build id when served. */
+export const UI_BUILD_PLACEHOLDER = '__UI_BUILD_ID__';
+
+/** Build id for the enrollment page: short SHA-256 of the unstamped HTML. */
+export function uiBuildId(rawHtml: string): string {
+  return createHash('sha256').update(rawHtml).digest('hex').slice(0, 16);
 }
 
 /**
@@ -268,13 +303,32 @@ export class HttpService {
           } catch {
             uiPath = join(__dirname, '..', 'dist', 'ui', 'enrollment.html');
           }
-          const html = readFileSync(uiPath, 'utf-8');
+          const rawHtml = readFileSync(uiPath, 'utf-8');
+          // Stamp the page with a content hash so an old page left open in Telegram
+          // can notice a newer build (via /api/ui-build) and reload itself.
+          const html = rawHtml.split(UI_BUILD_PLACEHOLDER).join(uiBuildId(rawHtml));
           res.setHeader('Content-Type', 'text/html');
           res.setHeader('Cache-Control', 'no-store');
           res.send(html);
         } catch (error) {
           console.error('UI serving error:', error);
           res.status(500).send('Service unavailable');
+        }
+      });
+
+      // Current enrollment page build id (content hash only, no secrets)
+      this.app.get('/api/ui-build', (req: Request, res: Response) => {
+        try {
+          let uiPath = join(__dirname, 'ui', 'enrollment.html');
+          try {
+            readFileSync(uiPath, 'utf-8');
+          } catch {
+            uiPath = join(__dirname, '..', 'dist', 'ui', 'enrollment.html');
+          }
+          res.setHeader('Cache-Control', 'no-store');
+          res.json({ build: uiBuildId(readFileSync(uiPath, 'utf-8')) });
+        } catch (error) {
+          res.status(500).json({ error: 'Service unavailable' });
         }
       });
 
@@ -695,19 +749,9 @@ export class HttpService {
       return;
     }
 
-    // Allowlisted event types
-    const ALLOWED_EVENTS = ['poll_complete', 'poll_cancel'];
-    
-    // Allowlisted error codes (IDKit error codes only, no free text)
-    const ALLOWED_ERROR_CODES = [
-      'timeout', 'cancelled', 'connection_failed', 'unexpected_response',
-      'user_rejected', 'verification_rejected', 'credential_unavailable',
-      'world_id_4_not_available', 'rp_signature_expired', 'nullifier_replayed',
-      'invalid_rp_signature', 'max_verifications_reached', null
-    ];
-    
-    // Allowlisted status classes
-    const ALLOWED_STATUS_CLASSES = ['success', 'failure', 'awaiting', 'failed', 'network_error', null];
+    const ALLOWED_EVENTS = CLIENT_DIAGNOSTIC_EVENTS;
+    const ALLOWED_ERROR_CODES: readonly (string | null)[] = [...CLIENT_DIAGNOSTIC_ERROR_CODES, null];
+    const ALLOWED_STATUS_CLASSES: readonly (string | null)[] = ['success', 'failure', 'awaiting', 'failed', 'network_error', null];
 
     // Extract and validate event
     const event = typeof req.body.event === 'string' && ALLOWED_EVENTS.includes(req.body.event)
@@ -753,6 +797,15 @@ export class HttpService {
       ? req.body.lastStatusClass
       : null;
 
+    // Coarse context fields (fixed enums only; anything else is dropped)
+    const pickEnum = (value: unknown, allowed: readonly string[]): string | null =>
+      typeof value === 'string' && allowed.includes(value) ? value : null;
+    const transport = pickEnum(req.body.transport, CLIENT_DIAGNOSTIC_TRANSPORTS);
+    const deviceClass = pickEnum(req.body.deviceClass, CLIENT_DIAGNOSTIC_DEVICE_CLASSES);
+    const tgPlatform = pickEnum(req.body.tgPlatform, CLIENT_DIAGNOSTIC_TG_PLATFORMS);
+    const entryPath = pickEnum(req.body.entryPath, CLIENT_DIAGNOSTIC_ENTRY_PATHS);
+    const flow = pickEnum(req.body.flow, CLIENT_DIAGNOSTIC_FLOWS);
+
     // Extract and validate timestamp (within last 24 hours)
     const now = Date.now();
     let timestamp = now;
@@ -774,6 +827,11 @@ export class HttpService {
     if (finalStatus) safeData.finalStatus = finalStatus;
     if (errorCode) safeData.errorCode = errorCode;
     if (lastStatusClass) safeData.lastStatusClass = lastStatusClass;
+    if (transport) safeData.transport = transport;
+    if (deviceClass) safeData.deviceClass = deviceClass;
+    if (tgPlatform) safeData.tgPlatform = tgPlatform;
+    if (entryPath) safeData.entryPath = entryPath;
+    if (flow) safeData.flow = flow;
     safeData.timestamp = timestamp;
 
     // SECURITY: Scan for sensitive patterns that should never appear

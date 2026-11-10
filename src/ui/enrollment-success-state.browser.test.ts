@@ -316,7 +316,7 @@ test.describe('Success state UI after verification', () => {
     expect(statusText).toContain("You're verified");
 
     // 4. Expiry date should be in plain words
-    expect(statusText).toMatch(/Your verification is valid until .+ \(\d+ days\)/);
+    expect(statusText).toMatch(/Your verification is valid until .+ \d{1,2}:\d{2}\s[AP]M .+ \(\d+ days?, \d+ hours? left\)/);
 
     // 5. Return to Telegram button should be visible
     const returnButton = page.locator('#returnButton');

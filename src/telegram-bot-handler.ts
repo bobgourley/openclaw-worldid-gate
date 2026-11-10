@@ -88,6 +88,37 @@ export interface TelegramBotHandlerConfig {
   allowedGroupId?: number;
 }
 
+/** Time zone used for /status expiry times (the operator's zone). */
+export const STATUS_TIME_ZONE = 'America/New_York';
+
+/**
+ * Expiry as weekday, date and time with a short zone label (EST or EDT).
+ */
+export function formatStatusExpiry(expiry: Date, timeZone: string = STATUS_TIME_ZONE): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+  }).format(expiry);
+}
+
+/**
+ * Remaining time in whole units without rounding a partial day away,
+ * e.g. "4 days, 23 hours", "5 hours, 12 minutes", "less than a minute".
+ */
+export function formatTimeRemaining(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return 'less than a minute';
+  const totalMinutes = Math.floor(ms / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  const unit = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  if (days > 0) return `${unit(days, 'day')}, ${unit(hours, 'hour')}`;
+  if (hours > 0) return `${unit(hours, 'hour')}, ${unit(minutes, 'minute')}`;
+  if (minutes > 0) return unit(minutes, 'minute');
+  return 'less than a minute';
+}
+
 /**
  * Telegram bot handler for enrollment commands.
  */
@@ -598,13 +629,12 @@ export class TelegramBotHandler {
       }
 
       const expiryDate = new Date(enrollment.expiresAt * 1000);
-      const daysRemaining = Math.floor((expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
 
       await this.transport.sendMessage(
         userId,
         `✅ *Verification Status: Active*\n\n` +
-        `Expires: ${expiryDate.toLocaleDateString()}\n` +
-        `Days remaining: ${daysRemaining}\n\n` +
+        `Expires: ${formatStatusExpiry(expiryDate)}\n` +
+        `Time remaining: ${formatTimeRemaining(expiryDate.getTime() - Date.now())}\n\n` +
         `Use /verify to renew if your verification is expiring soon.`,
         { parse_mode: 'Markdown' }
       );
