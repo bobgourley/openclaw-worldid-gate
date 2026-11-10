@@ -33,6 +33,10 @@ const ALLOWED_STAGES = [
   'revoke_not_found',
   'admission_granted',
   'admission_rejected',
+  'client_poll_failed',
+  'diag_link_issued',
+  'diag_challenge_issued',
+  'diag_result',
 ] as const;
 
 type AllowedStage = typeof ALLOWED_STAGES[number];
@@ -81,7 +85,43 @@ export interface DiagnosticLogEntry {
   
   /** Expiry time in seconds */
   expiresInSeconds?: number;
+
+  /**
+   * Client-side failure detail (server-side file only, never sent to Telegram).
+   * Every value is re-validated against a fixed vocabulary or strict pattern.
+   */
+  client?: ClientFailureFields;
 }
+
+/** Fields recorded for a failed World ID poll or a diagnostic A/B test. */
+export interface ClientFailureFields {
+  /** IDKit bridge request id (UUID). Support uses it to find the request. */
+  bridgeRequestId?: string;
+  /** IDKit error code the page saw (fixed vocabulary). */
+  errorCode?: string;
+  /** Raw app error code from the debug report (fixed vocabulary or 'other'). */
+  upstreamCode?: string;
+  /** Raw app code when outside the vocabulary: letters and underscores only. */
+  upstreamCodeRaw?: string;
+  /** Optional app reason (fixed vocabulary or 'other'). */
+  upstreamReason?: string;
+  /** Key names present in the app reply, e.g. "error_code,reason". Names only. */
+  payloadKeys?: string;
+  /** 'enroll' | 'renewal' | 'diag_a' | 'diag_b' */
+  flow?: string;
+  /** 'success' | 'failure' for diagnostic tests */
+  outcome?: string;
+  /** Poll count */
+  pollCount?: number;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Letters and underscores only, so a hex id, nullifier, or number can never match. */
+export const RAW_CODE_RE = /^[a-z][a-z_]{2,47}$/;
+export const PAYLOAD_KEYS_RE = /^[a-z][a-z_.]{0,47}(,[a-z][a-z_.]{0,47}){0,11}$/;
+const CLIENT_FLOWS = ['enroll', 'renewal', 'diag_a', 'diag_b'];
+const CLIENT_OUTCOMES = ['success', 'failure'];
+const SAFE_ENUM_RE = /^[a-z][a-z0-9_]{0,47}$/;
 
 /**
  * Configuration for diagnostic logger
@@ -244,6 +284,41 @@ export class DiagnosticLogger {
       safeEntry.expiresInSeconds = entry.expiresInSeconds;
     }
 
+    if (entry.client !== undefined) {
+      const c = entry.client;
+      if (!c || typeof c !== 'object') throw new Error('Invalid client fields');
+      if (c.bridgeRequestId !== undefined) {
+        if (typeof c.bridgeRequestId !== 'string' || !UUID_RE.test(c.bridgeRequestId)) throw new Error('Invalid request id');
+        safeEntry.bridgeRequestId = c.bridgeRequestId.toLowerCase();
+      }
+      for (const key of ['errorCode', 'upstreamCode', 'upstreamReason'] as const) {
+        const v = c[key];
+        if (v === undefined) continue;
+        if (typeof v !== 'string' || !SAFE_ENUM_RE.test(v)) throw new Error('Invalid ' + key);
+        safeEntry[key] = v;
+      }
+      if (c.upstreamCodeRaw !== undefined) {
+        if (typeof c.upstreamCodeRaw !== 'string' || !RAW_CODE_RE.test(c.upstreamCodeRaw)) throw new Error('Invalid raw code');
+        safeEntry.upstreamCodeRaw = c.upstreamCodeRaw;
+      }
+      if (c.payloadKeys !== undefined) {
+        if (typeof c.payloadKeys !== 'string' || !PAYLOAD_KEYS_RE.test(c.payloadKeys)) throw new Error('Invalid payload keys');
+        safeEntry.payloadKeys = c.payloadKeys;
+      }
+      if (c.flow !== undefined) {
+        if (!CLIENT_FLOWS.includes(c.flow)) throw new Error('Invalid flow');
+        safeEntry.flow = c.flow;
+      }
+      if (c.outcome !== undefined) {
+        if (!CLIENT_OUTCOMES.includes(c.outcome)) throw new Error('Invalid outcome');
+        safeEntry.outcome = c.outcome;
+      }
+      if (c.pollCount !== undefined) {
+        if (!Number.isInteger(c.pollCount) || c.pollCount < 0 || c.pollCount > 1000) throw new Error('Invalid poll count');
+        safeEntry.pollCount = c.pollCount;
+      }
+    }
+
     // NEVER include unknown keys from caller object
     return safeEntry;
   }
@@ -265,6 +340,21 @@ export class DiagnosticLogger {
     }
   }
   
+  /**
+   * Log a failed client poll or a diagnostic A/B event with validated detail fields.
+   */
+  logClientEvent(stage: 'client_poll_failed' | 'diag_link_issued' | 'diag_challenge_issued' | 'diag_result',
+    client: ClientFailureFields, durationMs?: number): void {
+    this.log({
+      timestamp: new Date().toISOString(),
+      correlationId: this.generateCorrelationId(),
+      stage,
+      result: client.outcome === 'success' || stage === 'diag_link_issued' || stage === 'diag_challenge_issued' ? 'success' : 'failure',
+      ...(durationMs === undefined ? {} : { durationMs: Math.max(0, Math.min(300000, Math.floor(durationMs))) }),
+      client,
+    });
+  }
+
   /**
    * Log challenge issuance
    */

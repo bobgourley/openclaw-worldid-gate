@@ -35,6 +35,7 @@ function failingRequestShim(errorCode: string, actionOverride: string | null, re
   var B = window.WorldIDKitBundle;
   var realHash = B.hashSignal;
   B.IDKit.request = function(cfg){
+    window.__rup = cfg.require_user_presence;
     return { constraints: async function(){
       var action = ${actionOverride === null ? 'cfg.action' : JSON.stringify(actionOverride)};
       return {
@@ -45,7 +46,7 @@ function failingRequestShim(errorCode: string, actionOverride: string | null, re
           return { type: 'failed', error: ${JSON.stringify(errorCode)} };
         },
         getDebugReport: function(){ return {
-          version: 1, package_version: '4.6.0', transport: 'bridge', generated_at: new Date().toISOString(),
+          version: 1, package_version: '4.6.0', transport: 'bridge', generated_at: new Date().toISOString(), request_id: '3f2a9c1e-8b7d-4e6f-a5b4-c3d2e1f0a9b8',
           request_payload: { environment: 'production', app_id: cfg.app_id, proof_request: {
             rp_id: cfg.rp_context.rp_id, nonce: cfg.rp_context.nonce, signature: cfg.rp_context.signature,
             created_at: cfg.rp_context.created_at, expires_at: cfg.rp_context.expires_at,
@@ -218,6 +219,31 @@ test.describe('Error guidance and diagnostics', () => {
       expect(diagBodies[0].upstreamReason).toBe('other');
       expect(JSON.stringify(diagBodies)).not.toMatch(/0x[0-9a-f]{64}|session_c/i);
       await expect(page.locator('body')).not.toContainText(secretish);
+    });
+
+    test('nested proof_response error, unknown raw code, key names and request id are captured', async ({ page }) => {
+      const before = logged.length;
+      const diagBodies = await openPage(page, {
+        platform: 'ios', errorCode: 'generic_error',
+        responsePayload: JSON.stringify({ proof_response: { error: 'brand_new_code', reason: 'face_auth_unavailable' }, user_presence_completed: false }),
+      });
+      await page.locator('#verifyButton').click();
+      await expect(page.locator('#status')).toHaveClass(/error/, { timeout: 15000 });
+      await expect(page.locator('#diagUpstream')).toHaveText('brand_new_code (face_auth_unavailable)');
+      expect(await page.evaluate(() => (window as any).__rup)).toBe(false);
+      await expect(page.locator('body')).not.toContainText('3f2a9c1e');
+      await expect.poll(() => diagBodies.length).toBeGreaterThan(0);
+      const sent = diagBodies[0];
+      expect(sent.upstreamCode).toBe('other');
+      expect(sent.upstreamCodeRaw).toBe('brand_new_code');
+      expect(sent.upstreamReason).toBe('face_auth_unavailable');
+      expect(sent.payloadKeys).toBe('proof_response,user_presence_completed,proof_response.error,proof_response.reason');
+      expect(sent.requestId).toBe('3f2a9c1e-8b7d-4e6f-a5b4-c3d2e1f0a9b8');
+      await expect.poll(() => logged.length).toBeGreaterThan(before);
+      const entry = logged[logged.length - 1];
+      expect(entry.upstreamCodeRaw).toBe('brand_new_code');
+      expect(entry.requestId).toBeUndefined();
+      expect(entry.bridgeRequestId).toBeUndefined();
     });
 
     test('world_id_4_not_available explains the upgrade', async ({ page }) => {

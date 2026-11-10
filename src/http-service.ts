@@ -10,6 +10,8 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
 import type { EnrollmentService, CreateChallengeResult, CompleteEnrollmentRequest, CompleteEnrollmentResult } from './enrollment-service-production.js';
 import type { TelegramBotHandler } from './telegram-bot-handler.js';
+import { type DiagnosticLogger, RAW_CODE_RE, PAYLOAD_KEYS_RE } from './diagnostic-logger.js';
+import { type DiagnosticAbConfig, buildDiagChallenge } from './diagnostic-ab.js';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -113,6 +115,12 @@ export interface HttpServiceConfig {
   /** Telegram bot handler (optional, for bot integration) */
   telegramBotHandler?: TelegramBotHandler;
 
+  /** Private file logger (0600). Failed polls are recorded here with the bridge request id. */
+  diagnosticLogger?: DiagnosticLogger;
+
+  /** Diagnostic A/B device tests. Routes exist only when this is set. */
+  diagnosticAb?: DiagnosticAbConfig;
+
   /** Port to bind (default: 3000) */
   port?: number;
 
@@ -173,6 +181,8 @@ export const CLIENT_DIAGNOSTIC_UPSTREAM_REASONS: readonly string[] = [
   'face_auth_timeout', 'unknown', 'other',
 ];
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** Placeholder in enrollment.html replaced with the page build id when served. */
 export const UI_BUILD_PLACEHOLDER = '__UI_BUILD_ID__';
 
@@ -192,6 +202,9 @@ export class HttpService {
   private readonly host: string;
 
   private telegramBotHandler?: TelegramBotHandler;
+  private diagnosticLogger?: DiagnosticLogger;
+  private diagnosticAb?: DiagnosticAbConfig;
+  private diagRateLimiter: RateLimiter = new RateLimiter(60000, 20);
   
   // Rate limiter for diagnostics endpoint: 30 requests per minute per IP
   private diagnosticsRateLimiter: RateLimiter = new RateLimiter(60000, 30);
@@ -199,6 +212,8 @@ export class HttpService {
   constructor(config: HttpServiceConfig) {
     this.enrollmentService = config.enrollmentService;
     this.telegramBotHandler = config.telegramBotHandler;
+    this.diagnosticLogger = config.diagnosticLogger;
+    this.diagnosticAb = config.diagnosticAb;
     this.port = config.port ?? 3000;
     this.host = config.host ?? '127.0.0.1';
 
@@ -302,6 +317,25 @@ export class HttpService {
         res.status(500).json({ error: 'Diagnostics recording failed' });
       }
     });
+
+    // Diagnostic A/B device tests (only when configured)
+    if (this.diagnosticAb) {
+      const diagParser = express.json({ limit: '8kb', strict: true });
+      this.app.get('/diagnostic', (req: Request, res: Response) => {
+        try {
+          let uiPath = join(__dirname, 'ui', 'diagnostic.html');
+          try { readFileSync(uiPath, 'utf-8'); } catch { uiPath = join(__dirname, '..', 'dist', 'ui', 'diagnostic.html'); }
+          res.setHeader('Content-Type', 'text/html');
+          res.setHeader('Cache-Control', 'no-store');
+          res.setHeader('Referrer-Policy', 'no-referrer');
+          res.send(readFileSync(uiPath, 'utf-8'));
+        } catch {
+          res.status(500).send('Service unavailable');
+        }
+      });
+      this.app.post('/api/diagnostic/challenge', diagParser, (req: Request, res: Response) => this.handleDiagChallenge(req, res));
+      this.app.post('/api/diagnostic/result', diagParser, (req: Request, res: Response) => this.handleDiagResult(req, res));
+    }
 
     // Telegram bot webhook endpoint (optional, only if bot handler configured)
     if (this.telegramBotHandler) {
@@ -828,6 +862,13 @@ export class HttpService {
     const flow = pickEnum(req.body.flow, CLIENT_DIAGNOSTIC_FLOWS);
     const upstreamCode = pickEnum(req.body.upstreamCode, CLIENT_DIAGNOSTIC_UPSTREAM_CODES);
     const upstreamReason = pickEnum(req.body.upstreamReason, CLIENT_DIAGNOSTIC_UPSTREAM_REASONS);
+    const upstreamCodeRaw = upstreamCode === 'other' && typeof req.body.upstreamCodeRaw === 'string'
+      && RAW_CODE_RE.test(req.body.upstreamCodeRaw) ? req.body.upstreamCodeRaw : null;
+    const payloadKeys = typeof req.body.payloadKeys === 'string' && PAYLOAD_KEYS_RE.test(req.body.payloadKeys)
+      ? req.body.payloadKeys : null;
+    // Bridge request id: kept out of the console line, written only to the private 0600 file.
+    const bridgeRequestId = typeof req.body.requestId === 'string' && UUID_PATTERN.test(req.body.requestId)
+      ? req.body.requestId : null;
 
     // Extract and validate timestamp (within last 24 hours)
     const now = Date.now();
@@ -857,6 +898,8 @@ export class HttpService {
     if (flow) safeData.flow = flow;
     if (upstreamCode) safeData.upstreamCode = upstreamCode;
     if (upstreamReason) safeData.upstreamReason = upstreamReason;
+    if (upstreamCodeRaw) safeData.upstreamCodeRaw = upstreamCodeRaw;
+    if (payloadKeys) safeData.payloadKeys = payloadKeys;
     safeData.timestamp = timestamp;
 
     // SECURITY: Scan for sensitive patterns that should never appear
@@ -878,10 +921,74 @@ export class HttpService {
       }
     }
 
-    // Log privacy-safe diagnostics (console only, no persistent storage)
+    // Log privacy-safe diagnostics (console line has no request id)
     console.log('[Client Diagnostics]', JSON.stringify(safeData));
 
+    // Failed poll: private file entry that support can match by bridge request id
+    if (event === 'poll_complete' && finalStatus === 'failure' && this.diagnosticLogger) {
+      this.diagnosticLogger.logClientEvent('client_poll_failed', {
+        ...(bridgeRequestId ? { bridgeRequestId } : {}),
+        ...(errorCode ? { errorCode } : {}),
+        ...(upstreamCode ? { upstreamCode } : {}),
+        ...(upstreamCodeRaw ? { upstreamCodeRaw } : {}),
+        ...(upstreamReason ? { upstreamReason } : {}),
+        ...(payloadKeys ? { payloadKeys } : {}),
+        ...(flow ? { flow } : {}),
+        pollCount,
+      }, durationMs);
+    }
+
     // Return 204 No Content (never echo input back)
+    res.status(204).end();
+  }
+
+  /** Start one diagnostic test: one-time per test per token, bound to the token's Telegram user. */
+  private handleDiagChallenge(req: Request, res: Response): void {
+    const cfg = this.diagnosticAb!;
+    res.setHeader('Cache-Control', 'no-store');
+    if (!this.diagRateLimiter.check(req.ip || 'unknown')) { res.status(429).json({ error: 'Too many requests' }); return; }
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const userId = cfg.verifyInitDataUserId(body.initData);
+    if (userId === null || !cfg.store.start(body.token, body.test, userId)) {
+      res.status(403).json({ error: 'This test link is not valid. Ask the bot for a new one.' });
+      return;
+    }
+    try {
+      const challenge = buildDiagChallenge(cfg, body.test);
+      this.diagnosticLogger?.logClientEvent('diag_challenge_issued', { flow: body.test === 'A' ? 'diag_a' : 'diag_b' });
+      res.json(challenge);
+    } catch {
+      res.status(500).json({ error: 'Could not start the test' });
+    }
+  }
+
+  /** Record a diagnostic test outcome. The proof itself is never accepted. */
+  private handleDiagResult(req: Request, res: Response): void {
+    const cfg = this.diagnosticAb!;
+    if (!this.diagRateLimiter.check(req.ip || 'unknown')) { res.status(429).end(); return; }
+    const b = req.body && typeof req.body === 'object' ? req.body : {};
+    const userId = cfg.verifyInitDataUserId(b.initData);
+    if (userId === null || !cfg.store.wasStarted(b.token, b.test, userId)) { res.status(204).end(); return; }
+    const pick = (v: unknown, allowed: readonly string[]) => (typeof v === 'string' && allowed.includes(v) ? v : undefined);
+    const outcome = pick(b.outcome, ['success', 'failure']);
+    if (!outcome) { res.status(204).end(); return; }
+    const upstreamCode = pick(b.upstreamCode, CLIENT_DIAGNOSTIC_UPSTREAM_CODES);
+    const fields = {
+      flow: b.test === 'A' ? 'diag_a' : 'diag_b',
+      outcome,
+      errorCode: pick(b.errorCode, CLIENT_DIAGNOSTIC_ERROR_CODES),
+      upstreamCode,
+      upstreamReason: pick(b.upstreamReason, CLIENT_DIAGNOSTIC_UPSTREAM_REASONS),
+      upstreamCodeRaw: upstreamCode === 'other' && typeof b.upstreamCodeRaw === 'string' && RAW_CODE_RE.test(b.upstreamCodeRaw) ? b.upstreamCodeRaw : undefined,
+      payloadKeys: typeof b.payloadKeys === 'string' && PAYLOAD_KEYS_RE.test(b.payloadKeys) ? b.payloadKeys : undefined,
+      bridgeRequestId: typeof b.requestId === 'string' && UUID_PATTERN.test(b.requestId) ? b.requestId : undefined,
+      pollCount: Number.isInteger(b.pollCount) && b.pollCount >= 0 && b.pollCount <= 1000 ? b.pollCount : undefined,
+    };
+    const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
+    const durationMs = typeof b.durationMs === 'number' && Number.isFinite(b.durationMs) ? b.durationMs : undefined;
+    this.diagnosticLogger?.logClientEvent('diag_result', clean as any, durationMs);
+    const { bridgeRequestId: _omit, ...consoleFields } = clean as any;
+    console.log('[Diagnostic Test]', JSON.stringify({ ...consoleFields, durationMs: durationMs === undefined ? undefined : Math.floor(durationMs) }));
     res.status(204).end();
   }
 

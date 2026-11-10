@@ -874,6 +874,8 @@
           rp_context: rp_context,
           session_id: 'create',
           allow_legacy_proofs: false,
+          // Explicit: never ask World ID for an extra liveness or face step
+          require_user_presence: false,
         }).constraints(CredentialRequest('proof_of_human', { signal: session.signal }));
         
         // Store request for diagnostics access to getDebugReport()
@@ -939,6 +941,7 @@
         const request = await IDKit.proveSession(sessionId, {
           app_id: challenge.appId || challenge.signedChallenge.appId,
           rp_context: rp_context,
+          require_user_presence: false,
         }).constraints(CredentialRequest('proof_of_human'));
         
         // Store request for diagnostics access to getDebugReport()
@@ -1075,6 +1078,7 @@
               diagnostics.errorCode = 'unexpected_response';
               diagnostics.lastStatusClass = 'failed';
               result = { success: false, error: 'unexpected_response' };
+              window.lastUpstreamError = readUpstreamError(request);
               break;
             }
             // Treat other thrown errors as retryable (network errors, etc.)
@@ -1094,10 +1098,7 @@
             diagnostics.errorCode = pollResult.error;
             diagnostics.lastStatusClass = 'failed';
             result = { success: false, error: pollResult.error };
-            const upstream = readUpstreamError(request);
-            diagnostics.upstreamCode = upstream.code;
-            diagnostics.upstreamReason = upstream.reason;
-            window.lastUpstreamError = upstream;
+            window.lastUpstreamError = readUpstreamError(request);
             break;
           } else if (pollResult.type === 'waiting_for_connection' || pollResult.type === 'awaiting_confirmation') {
             // Still waiting - continue polling
@@ -1137,8 +1138,12 @@
           tgPlatform: deviceContext.tgPlatform,
           entryPath: window.connectorLinkTapped ? 'link' : 'qr',
           flow: submitEndpoint === '/api/session/verify' ? 'renewal' : 'enroll',
-          upstreamCode: diagnostics.upstreamCode || undefined,
-          upstreamReason: diagnostics.upstreamReason || undefined,
+          upstreamCode: (window.lastUpstreamError && window.lastUpstreamError.code) || undefined,
+          upstreamReason: (window.lastUpstreamError && window.lastUpstreamError.reason) || undefined,
+          upstreamCodeRaw: (window.lastUpstreamError && window.lastUpstreamError.codeRaw) || undefined,
+          payloadKeys: (window.lastUpstreamError && window.lastUpstreamError.payloadKeys) || undefined,
+          // Only on failure: the bridge request id, for our private server log and World support
+          requestId: (!result.success && window.lastUpstreamError && window.lastUpstreamError.requestId) || undefined,
         });
         
       } finally {
@@ -1486,7 +1491,7 @@
         
         const up = window.lastUpstreamError || {};
         document.getElementById('diagUpstream').textContent =
-          up.code ? up.code + (up.reason ? ' (' + up.reason + ')' : '') : '-';
+          up.code ? (up.codeRaw || up.code) + (up.reason ? ' (' + up.reason + ')' : '') : '-';
 
         // Show diagnostics panel
         diagnosticsEl.classList.add('visible');
@@ -1633,25 +1638,42 @@
     const UPSTREAM_CODES = ['user_rejected','verification_rejected','credential_unavailable','feature_unavailable','world_id_4_not_available','world_id_3_not_available','malformed_request','invalid_network','inclusion_proof_pending','inclusion_proof_failed','unexpected_response','connection_failed','max_verifications_reached','failed_by_host_app','user_presence_failed','invalid_rp_signature','nullifier_replayed','duplicate_nonce','unknown_rp','inactive_rp','timestamp_too_old','timestamp_too_far_in_future','invalid_timestamp','rp_signature_expired','identity_attributes_not_matched','generic_error','invalid_rp_id_format','timeout','cancelled','challenge_failed'];
     const UPSTREAM_REASONS = ['face_challenge_quality','face_challenge_mismatch','face_challenge_missing','face_challenge_integrity','face_selfie_quality','face_selfie_mismatch','face_selfie_timeout','spoof_detected','age_below_threshold','username_mismatch','biometric_rejected','user_cancelled','proof_failed','credential_unavailable','pcp_missing','face_auth_unavailable','face_auth_failed','metadata_failed','network_error','server_rejected','client_error','process_challenge_failed','face_quality','face_mismatch','face_auth_timeout','unknown'];
     function readUpstreamError(request) {
-      const out = { code: null, reason: null };
+      const out = { code: null, reason: null, codeRaw: null, payloadKeys: null, requestId: null };
       try {
         const report = request && typeof request.getDebugReport === 'function' ? request.getDebugReport() : null;
-        const d = report && Object.getOwnPropertyDescriptor(report, 'response_payload');
-        let payload = d ? d.value : undefined;
-        if (typeof payload === 'string') {
-          if (payload.length > 4096) return out;
-          payload = JSON.parse(payload);
-        }
-        if (!payload || typeof payload !== 'object') return out;
         const own = (o, k) => {
           if (!o || typeof o !== 'object') return undefined;
           const x = Object.getOwnPropertyDescriptor(o, k);
           return x ? x.value : undefined;
         };
+        // Bridge request id (UUID only). Sent to our server for its private log; never shown.
+        const rid = own(report, 'request_id');
+        if (typeof rid === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rid)) out.requestId = rid;
+        let payload = own(report, 'response_payload');
+        if (typeof payload === 'string') {
+          if (payload.length > 4096) return out;
+          payload = JSON.parse(payload);
+        }
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return out;
         const inner = own(payload, 'proof_response');
-        const code = [own(payload, 'error_code'), own(payload, 'error'), own(inner, 'error')].find((v) => typeof v === 'string');
+        // Key names only (never values), e.g. "error_code,reason" or "proof_response.error"
+        const keyOk = (k) => /^[a-z][a-z_]{0,31}$/.test(k);
+        const keys = Object.keys(payload).filter(keyOk).sort();
+        if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+          for (const k of Object.keys(inner).filter(keyOk).sort()) keys.push('proof_response.' + k);
+        }
+        if (keys.length) out.payloadKeys = keys.slice(0, 12).join(',');
+        const code = [own(payload, 'error_code'), own(payload, 'error'), own(inner, 'error_code'), own(inner, 'error')].find((v) => typeof v === 'string');
         const reason = [own(payload, 'reason'), own(inner, 'reason')].find((v) => typeof v === 'string');
-        if (typeof code === 'string') out.code = UPSTREAM_CODES.includes(code) ? code : 'other';
+        if (typeof code === 'string') {
+          if (UPSTREAM_CODES.includes(code)) {
+            out.code = code;
+          } else {
+            out.code = 'other';
+            // Letters and underscores only: a hex id, nullifier, or number can never match
+            if (/^[a-z][a-z_]{2,47}$/.test(code)) out.codeRaw = code;
+          }
+        }
         if (typeof reason === 'string') out.reason = UPSTREAM_REASONS.includes(reason) ? reason : 'other';
       } catch (_) {}
       return out;
@@ -1675,6 +1697,9 @@
           flow: typeof data.flow === 'string' ? data.flow : null,
           upstreamCode: typeof data.upstreamCode === 'string' ? data.upstreamCode : null,
           upstreamReason: typeof data.upstreamReason === 'string' ? data.upstreamReason : null,
+          upstreamCodeRaw: typeof data.upstreamCodeRaw === 'string' ? data.upstreamCodeRaw : null,
+          payloadKeys: typeof data.payloadKeys === 'string' ? data.payloadKeys : null,
+          requestId: typeof data.requestId === 'string' ? data.requestId : null,
           timestamp: Date.now(),
         };
         
