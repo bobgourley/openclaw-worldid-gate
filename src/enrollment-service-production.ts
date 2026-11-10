@@ -806,6 +806,12 @@ export class EnrollmentService {
       'renewal' // Only renewal mode supported
     );
 
+    // Log successful renewal challenge issuance (same privacy-safe stage as enrollment)
+    if (this.diagnosticLogger) {
+      const correlationId = this.diagnosticLogger.generateCorrelationId();
+      this.diagnosticLogger.logChallengeIssued(correlationId, this.challengeTtlSeconds);
+    }
+
     return { signedChallenge };
   }
 

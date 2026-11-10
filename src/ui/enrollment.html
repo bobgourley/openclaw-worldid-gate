@@ -35,6 +35,17 @@
     }
     
     @media (max-height: 400px) {
+      /* Very short screens (phone landscape): one-line instruction instead of the list */
+      #connectorDisplay ol.qr-instruction {
+        display: none;
+      }
+      #connectorDisplay .qr-compact {
+        display: block;
+        font-size: 11px;
+        margin-bottom: 4px;
+        color: #4a5568;
+        font-weight: 600;
+      }
       .container {
         padding: max(6px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
       }
@@ -195,6 +206,24 @@
       font-size: 13px;
       color: #4a5568;
       font-weight: 600;
+    }
+    ol.qr-instruction {
+      text-align: left;
+      margin: 0 auto 8px auto;
+      padding-left: 20px;
+      max-width: 340px;
+      font-weight: 500;
+      line-height: 1.35;
+    }
+    ol.qr-instruction li {
+      margin: 2px 0;
+    }
+    .qr-compact {
+      display: none;
+    }
+    #connectorLink.hidden,
+    #qrStepSameDevice.hidden {
+      display: none !important;
     }
     .connector-link {
       display: inline-block;
@@ -385,16 +414,19 @@
     
     <div id="connectorDisplay" class="hidden">
       <div id="qrCode"></div>
-      <p class="qr-instruction">
-        Scan QR code with World App
-      </p>
+      <ol class="qr-instruction" id="qrSteps">
+        <li>Open the World ID app (or World App) on your phone and scan this code.</li>
+        <li id="qrStepSameDevice">If the app is on this same phone, tap the button instead.</li>
+        <li>Keep this page open until it finishes.</li>
+      </ol>
+      <p class="qr-compact">Scan with the World ID app (or World App) on your phone. Keep this page open.</p>
       <a id="connectorLink" href="#" target="_blank" class="connector-link">
-        Or tap to open on this device
+        Open World ID on this phone
       </a>
     </div>
     
     <button id="verifyButton" class="button hidden" disabled>
-      Connect World App
+      Verify with World ID
     </button>
     
     <div id="diagnostics">
@@ -479,6 +511,34 @@
     const statusEl = document.getElementById('status');
     const buttonEl = document.getElementById('verifyButton');
 
+    // Coarse, privacy-safe device context for diagnostics and layout.
+    // Only a small fixed set of class names ever leaves this function: no user agent
+    // strings, versions, screen sizes, or anything that could identify a person or device.
+    const DESKTOP_TG_PLATFORMS = ['tdesktop', 'macos', 'weba', 'webk', 'web', 'unigram'];
+    function coarseDeviceContext() {
+      let tgPlatform = 'unknown';
+      try {
+        const p = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.platform;
+        if (typeof p === 'string') {
+          if (p === 'ios') tgPlatform = 'ios';
+          else if (p === 'android' || p === 'android_x') tgPlatform = 'android';
+          else if (DESKTOP_TG_PLATFORMS.includes(p)) tgPlatform = p;
+        }
+      } catch (_) {}
+      let deviceClass = 'unknown';
+      try {
+        const ua = String(navigator.userAgent || '');
+        const touch = typeof navigator.maxTouchPoints === 'number' ? navigator.maxTouchPoints : 0;
+        if (/iPad/.test(ua) || (/Macintosh/.test(ua) && touch > 1)) deviceClass = 'tablet';
+        else if (/iPhone|iPod/.test(ua)) deviceClass = 'phone';
+        else if (/Android/.test(ua)) deviceClass = /Mobile/.test(ua) ? 'phone' : 'tablet';
+        else if (DESKTOP_TG_PLATFORMS.includes(tgPlatform)) deviceClass = 'desktop';
+        else if (/Windows|Macintosh|Linux|CrOS/.test(ua)) deviceClass = 'desktop';
+      } catch (_) {}
+      return { deviceClass, tgPlatform };
+    }
+    window.coarseDeviceContext = coarseDeviceContext;
+
     // Open Tools for Humanity link externally inside Telegram Mini Apps.
     // Prefer WebApp.openLink; fall back to the normal anchor (target=_blank).
     (function wireLearnMoreLink() {
@@ -547,7 +607,7 @@
       
       try {
         // Display ready state
-        showStatus('Ready to verify with World App', 'success');
+        showStatus('Ready to verify with World ID', 'success');
         buttonEl.classList.remove('hidden');
         buttonEl.disabled = false;
         
@@ -618,7 +678,7 @@
       } catch (error) {
         console.error('QR generation failed:', error);
         // Fallback: show clickable URL
-        container.innerHTML = `<div style="padding: 16px; background: #f7fafc; border-radius: 8px;"><a href="${text}" target="_blank" style="color: #667eea; text-decoration: none; font-size: 13px; font-weight: 600;">Open World App on this device</a></div>`;
+        container.innerHTML = `<div style="padding: 16px; background: #f7fafc; border-radius: 8px;"><a href="${text}" target="_blank" style="color: #667eea; text-decoration: none; font-size: 13px; font-weight: 600;">Open World ID on this phone</a></div>`;
       }
     }
     
@@ -662,6 +722,44 @@
     // Guard flag to prevent concurrent IDKit requests
     let verificationInProgress = false;
 
+    // Page build id stamped by the server. Telegram can keep an old copy of this
+    // page open in the background; if the server now serves a newer build, reload
+    // so people never run an outdated verification flow.
+    const UI_BUILD = '__UI_BUILD_ID__';
+    async function reloadIfStale() {
+      try {
+        if (!/^[0-9a-f]{16}$/.test(UI_BUILD)) return false;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 3000);
+        let res;
+        try {
+          res = await fetch('/api/ui-build', { cache: 'no-store', signal: controller.signal });
+        } finally {
+          clearTimeout(timer);
+        }
+        if (!res.ok) return false;
+        const data = await res.json();
+        if (data && typeof data.build === 'string' && /^[0-9a-f]{16}$/.test(data.build) && data.build !== UI_BUILD) {
+          // Reload at most once per newer build (marker kept in the URL, no storage),
+          // so a mismatch can never loop
+          const url = new URL(window.location.href);
+          if (url.searchParams.get('ub') === data.build) return false;
+          url.searchParams.set('ub', data.build);
+          showStatus('This page was updated. Reloading...', 'loading');
+          window.location.replace(url.toString());
+          return true;
+        }
+      } catch (_) {
+        // Version check is best effort; never block verification on it
+      }
+      return false;
+    }
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible' && !verificationInProgress && !window.verificationSucceeded) {
+        reloadIfStale();
+      }
+    });
+
     async function handleVerification() {
       if (!initData) {
         showError('Telegram authentication required. Please open from the bot.');
@@ -674,6 +772,10 @@
         return;
       }
       
+      if (await reloadIfStale()) {
+        return;
+      }
+
       verificationInProgress = true;
       buttonEl.disabled = true;
       showStatus('Checking enrollment status...', 'loading');
@@ -777,7 +879,7 @@
         
       } catch (error) {
         console.error('New enrollment error:', error);
-        showError('Unable to connect to World App. Please try again.');
+        showError('Unable to start World ID verification. Please try again.');
         verificationInProgress = false;
         buttonEl.disabled = false;
       }
@@ -851,7 +953,7 @@
     // Display connector (QR + link) and poll for completion
     async function displayConnectorAndPoll(request, submitEndpoint) {
       if (!request.connectorURI) {
-        showError('Failed to generate World App connection. Please try again.');
+        showError('Failed to create the World ID code. Please try again.');
         verificationInProgress = false;
         buttonEl.disabled = false;
         return;
@@ -865,9 +967,23 @@
       await generateQRCode(request.connectorURI, qrCodeEl);
       
       connectorLink.href = request.connectorURI;
+
+      // World ID runs on phones only. When Telegram itself reports a desktop or
+      // web client (reliable, unlike user agent guesses), hide the same-device
+      // button and its step so people scan the code instead.
+      const deviceContext = coarseDeviceContext();
+      const sameDeviceStep = document.getElementById('qrStepSameDevice');
+      const onDesktop = DESKTOP_TG_PLATFORMS.includes(deviceContext.tgPlatform);
+      connectorLink.classList.toggle('hidden', onDesktop);
+      if (sameDeviceStep) sameDeviceStep.classList.toggle('hidden', onDesktop);
+
+      // Track whether the same-device button was used (QR vs on-device link)
+      window.connectorLinkTapped = false;
+      connectorLink.onclick = function () { window.connectorLinkTapped = true; };
+
       connectorDisplay.classList.remove('hidden');
       
-      showStatus('Scan QR code with World App on your phone', 'success');
+      showStatus('Waiting for World ID. Keep this page open.', 'success');
       buttonEl.classList.add('hidden');
       
       // Track QR shown for better error messaging
@@ -989,6 +1105,14 @@
           }
         }
         
+        // Transport from the SDK debug report (fixed enum only, nothing else read)
+        let transport = 'unknown';
+        try {
+          const report = typeof request.getDebugReport === 'function' ? request.getDebugReport() : null;
+          const t = report && Object.getOwnPropertyDescriptor(report, 'transport');
+          if (t && (t.value === 'bridge' || t.value === 'mini_app')) transport = t.value;
+        } catch (_) {}
+
         // Send privacy-safe diagnostics to server (no ids, proofs, or payloads)
         await sendClientDiagnostics({
           event: 'poll_complete',
@@ -999,6 +1123,11 @@
           errorCode: diagnostics.errorCode,
           // HTTP status class captured from bridge errors if available
           lastStatusClass: diagnostics.lastStatusClass,
+          transport: transport,
+          deviceClass: deviceContext.deviceClass,
+          tgPlatform: deviceContext.tgPlatform,
+          entryPath: window.connectorLinkTapped ? 'link' : 'qr',
+          flow: submitEndpoint === '/api/session/verify' ? 'renewal' : 'enroll',
         });
         
       } finally {
@@ -1033,6 +1162,7 @@
         if (response.ok && data.success) {
           // SUCCESS: Clean up IDKit request and show success state
           verificationInProgress = false;
+          window.verificationSucceeded = true;
           
           // Stop/cleanup pending IDKit request
           if (window.enrollmentRequest && typeof window.enrollmentRequest.cancel === 'function') {
@@ -1161,15 +1291,27 @@
           && sessionExpiresAt >= 0
           && sessionExpiresAt <= 2147483647;
         
-        // idkit-core 4.6.0 has no hashAction export, so we cannot verify action hash
-        // Show N/A instead of fake PASS/FAIL
-        const expectedActionHash = null; // Always null - no hashAction in 4.6.0
+        // Expected action hash: IDKit encodes proof_request.action as hashToField(utf8(action)),
+        // which is what the documented hashSignal() export from @worldcoin/idkit-core/hashing
+        // returns for a plain string. Session (renewal) requests carry no action.
+        const expectedAction = session.signedChallenge && typeof session.signedChallenge.action === 'string'
+          ? session.signedChallenge.action
+          : null;
+        let expectedActionHash = null;
+        try {
+          const bundle = window.WorldIDKitBundle;
+          if (expectedAction && bundle && typeof bundle.hashSignal === 'function') {
+            expectedActionHash = String(bundle.hashSignal(expectedAction)).toLowerCase();
+          }
+        } catch (_) {
+          expectedActionHash = null;
+        }
         
         // Allowlisted SDK versions (strict primitives only)
         const allowedVersions = ['4.6.0', '4.5.0', '4.4.0', '4.3.0', '4.2.0', '4.1.0', '4.0.0'];
         
         // Allowlisted transports (strict primitives only)
-        const allowedTransports = ['bridge', 'redirect'];
+        const allowedTransports = ['bridge', 'mini_app', 'redirect'];
         
         // Extract debug report fields with descriptor-safe reads
         const reportVersion = safeGet(debugReport, 'package_version');
@@ -1247,11 +1389,16 @@
           prSignature === expectedSignature
         );
         
-        // Action hash check: N/A because hashAction is not exported in idkit-core 4.6.0
-        const actionState = {
-          text: 'N/A',
-          className: 'unknown'
-        };
+        // Action hash check: PASS/FAIL for enrollment, N/A for session renewal (no action)
+        let actionState;
+        if (!expectedAction) {
+          actionState = { text: 'N/A (renewal)', className: 'unknown' };
+        } else {
+          actionState = triState(
+            typeof prActionHash === 'string' && expectedActionHash !== null,
+            typeof prActionHash === 'string' && prActionHash.toLowerCase() === expectedActionHash
+          );
+        }
         
         // Signed timestamp checks (only if both sides safe)
         const createdAtState = triState(
@@ -1353,53 +1500,61 @@
       }
       
       // USER-FACING ERROR MESSAGES
-      let message = 'World App verification failed. Please try again.';
-      let category = 'generic';
-      
-      // Map error codes to user-friendly messages
+      // Plain-language guidance per IDKit error code.
       // Based on https://docs.world.org/world-id/idkit/error-codes.md
-      
-      // User-initiated cancellation
-      if (errorCode === 'user_rejected') {
-        message = 'Verification was cancelled. Please try again when ready.';
-        category = 'user_cancelled';
-      } else if (errorCode === 'verification_rejected') {
-        message = 'Verification was rejected by World App. Please try again.';
-        category = 'rejected';
-      } else if (errorCode === 'timeout') {
-        message = 'Verification timed out. Please try again.';
-        category = 'timeout';
+      const RETRY = 'Tap Verify with World ID to try again.';
+      const ASK_ADMIN = 'If it keeps happening, send the error code shown below to the group admin.';
+      const SETUP_PROBLEM = 'The verification service has a setup problem on our side, not yours. Please send the error code shown below to the group admin.';
+      const ERROR_GUIDANCE = {
+        user_rejected: ['user_cancelled', 'Verification was cancelled in World ID. ' + RETRY],
+        verification_rejected: ['user_cancelled', 'Verification was declined in World ID. ' + RETRY],
+        cancelled: ['user_cancelled', 'Verification was cancelled. ' + RETRY],
+        timeout: ['timeout', 'We did not hear back from World ID within 5 minutes. Tap Verify with World ID to get a new code, then scan it right away.'],
+        generic_error: ['generic', 'World ID could not complete this request. Please try these steps: update the World ID app (or World App) to the latest version; check in the app that your World ID shows as Orb verified; scan the code with the phone that has the app (or tap the button if the app is on this phone); keep this page open until it finishes. Then tap Verify with World ID to try again. ' + ASK_ADMIN],
+        credential_unavailable: ['credential', 'Your World ID does not have the Orb verified credential this group requires. Open the World ID app (or World App), check that your World ID shows as Orb verified, then try again. ' + ASK_ADMIN],
+        world_id_4_not_available: ['credential', 'Your World ID has not been upgraded to the new World ID yet. Update the World ID app (or World App), follow any prompt to upgrade your World ID, then try again. ' + ASK_ADMIN],
+        world_id_3_not_available: ['credential', 'Your app could not provide the World ID version this request asked for. ' + ASK_ADMIN],
+        feature_unavailable: ['feature', 'Your World ID app does not support this request yet. Update the World ID app (or World App) to the latest version, then try again. ' + ASK_ADMIN],
+        rp_signature_expired: ['expired', 'This verification code expired. Tap Verify with World ID to get a new code and scan it right away.'],
+        timestamp_too_old: ['timestamp', 'This verification code is too old. Tap Verify with World ID to get a new code and scan it right away.'],
+        invalid_timestamp: ['timestamp', 'This verification code was not accepted. ' + RETRY + ' ' + ASK_ADMIN],
+        timestamp_too_far_in_future: ['timestamp', 'This verification code was not accepted because of a clock difference. ' + RETRY + ' ' + ASK_ADMIN],
+        nullifier_replayed: ['replay', 'World ID says this World ID was already used for this verification. If you are already verified, you do not need to do anything; send /status to the bot to check. Each person can verify one Telegram account. If this looks wrong, contact the group admin.'],
+        duplicate_nonce: ['replay', 'This verification code was already used. Tap Verify with World ID to get a new one.'],
+        invalid_rp_signature: ['config', SETUP_PROBLEM],
+        unknown_rp: ['rp', SETUP_PROBLEM],
+        inactive_rp: ['rp', SETUP_PROBLEM],
+        invalid_rp_id_format: ['config', SETUP_PROBLEM],
+        malformed_request: ['malformed', SETUP_PROBLEM],
+        invalid_network: ['config', SETUP_PROBLEM],
+        connection_failed: ['network', 'Connection failed: World ID could not reach this page. Check that your phone has internet, keep this page open, and ' + RETRY.charAt(0).toLowerCase() + RETRY.slice(1)],
+        unexpected_response: ['network', 'Unexpected reply from World ID that this page could not read. ' + RETRY + ' If it repeats, update the World ID app (or World App) and send the error code shown below to the group admin.'],
+        max_verifications_reached: ['rate_limit', 'This World ID has reached the verification limit here. Contact the group admin.'],
+        inclusion_proof_pending: ['inclusion_proof', 'Your World ID was verified recently and is still being set up. Please wait a while, then try again.'],
+        inclusion_proof_failed: ['inclusion_proof', 'World ID could not finish a network check. Please try again in a few minutes. ' + ASK_ADMIN],
+        user_presence_failed: ['presence', 'World ID could not confirm you were there. ' + RETRY + ' Follow the prompts in the app.'],
+        failed_by_host_app: ['host_app', 'World ID approved, but this page could not finish. ' + RETRY],
+        identity_attributes_not_matched: ['identity', 'Your World ID does not meet this group\'s requirements. Contact the group admin.'],
+      };
+
+      let message;
+      let category;
+      if (typeof errorCode === 'string' && Object.prototype.hasOwnProperty.call(ERROR_GUIDANCE, errorCode)) {
+        category = ERROR_GUIDANCE[errorCode][0];
+        message = ERROR_GUIDANCE[errorCode][1];
+      } else {
+        category = 'unmapped_' + String(errorCode || 'unknown').replace(/[^a-z0-9_]/gi, '');
+        message = 'Verification failed. ' + RETRY + ' ' + ASK_ADMIN;
       }
-      
-      // Credential/identity issues
-      else if (errorCode === 'credential_unavailable') {
-        message = 'Required World ID credential is not available. Please verify your account in World App.';
-        category = 'credential';
-      } else if (errorCode === 'world_id_4_not_available') {
-        message = 'World ID 4.0 credential is not available. Please update your World App.';
-        category = 'credential';
-      } else if (errorCode === 'world_id_3_not_available') {
-        message = 'World ID 3.0 credential is not available. Please contact support.';
-        category = 'credential';
+
+      if (errorCode === 'connection_failed' && window.qrWasShown) {
+        message = 'Connection failed: World ID\'s answer was lost before it reached this page. This can happen if this page was closed or minimized while World ID was open. Keep this page open and tap Verify with World ID to try again.';
       }
-      
-      // Session/timing issues
-      else if (errorCode === 'rp_signature_expired') {
-        message = 'Verification session expired. Please request a new verification link from the bot.';
-        category = 'expired';
-      } else if (errorCode === 'timestamp_too_old' || errorCode === 'timestamp_too_far_in_future') {
-        message = 'Verification session is no longer valid. Please request a new verification link.';
-        category = 'timestamp';
-      } else if (errorCode === 'invalid_timestamp') {
-        message = 'Verification session has an invalid timestamp. Please request a new verification link.';
-        category = 'timestamp';
+      if (errorCode === 'connection_failed' && window.connectorLinkTapped) {
+        message += ' If you used the button on this phone, return to Telegram after approving in World ID.';
       }
-      
-      // Replay/duplicate issues
-      else if (errorCode === 'nullifier_replayed') {
-        message = 'This World ID was already used for this enrollment. Please contact the group admin.';
-        category = 'replay';
-        
+
+      if (errorCode === 'nullifier_replayed') {
         // Send privacy-safe diagnostic event for nullifier replay
         sendClientDiagnostics({
           event: 'nullifier_replayed',
@@ -1408,77 +1563,6 @@
         }).catch(() => {
           // Diagnostic send failed, ignore
         });
-      } else if (errorCode === 'duplicate_nonce') {
-        message = 'Verification session has already been used. Please request a new verification link.';
-        category = 'replay';
-      }
-      
-      // RP configuration issues
-      else if (errorCode === 'invalid_rp_signature') {
-        message = 'Verification configuration error. Please contact support with code: invalid_rp_signature';
-        category = 'config';
-      } else if (errorCode === 'unknown_rp' || errorCode === 'inactive_rp') {
-        message = 'Service configuration error. Please contact support with code: ' + errorCode;
-        category = 'rp';
-      } else if (errorCode === 'invalid_rp_id_format') {
-        message = 'Service configuration error. Please contact support with code: invalid_rp_id_format';
-        category = 'config';
-      }
-      
-      // Network/connection
-      else if (errorCode === 'connection_failed') {
-        // Better message if QR was shown and user may have tapped "open on this device"
-        if (window.qrWasShown) {
-          message = 'World App\'s answer was lost. This can happen if the app was minimized. Please tap "Verify with World App" again.';
-        } else {
-          message = 'Connection to World App failed. Please check your connection and try again.';
-        }
-        category = 'network';
-      } else if (errorCode === 'unexpected_response') {
-        message = 'Unexpected response from World App. Please try again.';
-        category = 'network';
-      }
-      
-      // Rate limiting
-      else if (errorCode === 'max_verifications_reached') {
-        message = 'Maximum verifications reached. Please try again later.';
-        category = 'rate_limit';
-      }
-      
-      // Technical errors
-      else if (errorCode === 'inclusion_proof_pending' || errorCode === 'inclusion_proof_failed') {
-        message = 'Verification processing error. Please try again in a moment.';
-        category = 'inclusion_proof';
-      } else if (errorCode === 'malformed_request') {
-        message = 'Verification request error. Please contact support with code: malformed_request';
-        category = 'malformed';
-      } else if (errorCode === 'invalid_network') {
-        message = 'Network configuration mismatch. Please contact support with code: invalid_network';
-        category = 'config';
-      } else if (errorCode === 'user_presence_failed') {
-        message = 'User presence check failed. Please try again.';
-        category = 'presence';
-      } else if (errorCode === 'failed_by_host_app') {
-        message = 'Verification failed during processing. Please try again.';
-        category = 'host_app';
-      } else if (errorCode === 'feature_unavailable') {
-        message = 'Requested feature is not available. Please contact support.';
-        category = 'feature';
-      } else if (errorCode === 'identity_attributes_not_matched') {
-        message = 'Identity attributes did not match requirements. Please contact support.';
-        category = 'identity';
-      } else if (errorCode === 'generic_error') {
-        message = 'An unknown error occurred. Please try again or contact support.';
-        category = 'generic';
-      } else if (errorCode === 'cancelled') {
-        message = 'Verification was cancelled. Please try again when ready.';
-        category = 'user_cancelled';
-      }
-      
-      // Unknown error code (safely log unmapped codes)
-      else {
-        category = 'unmapped_' + (errorCode || 'unknown').replace(/[^a-z0-9_]/gi, '');
-        message = 'Verification failed. Please try again or contact support with code: ' + errorCode;
       }
       
       // Privacy-safe structured error logging (no PII, no proof data)
@@ -1501,11 +1585,21 @@
     
     function formatExpiryPlainWords(timestamp) {
       const date = new Date(timestamp * 1000);
-      const days = Math.floor((date - Date.now()) / (1000 * 60 * 60 * 24));
-      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const dateStr = `${monthNames[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
-      const daysStr = days > 0 ? `${days} days` : 'less than 1 day';
-      return `Your verification is valid until ${dateStr} (${daysStr})`;
+      const dateStr = new Intl.DateTimeFormat('en-US', {
+        weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+      }).format(date);
+      const totalMinutes = Math.max(0, Math.floor((date.getTime() - Date.now()) / 60000));
+      const days = Math.floor(totalMinutes / 1440);
+      const hours = Math.floor((totalMinutes % 1440) / 60);
+      const minutes = totalMinutes % 60;
+      const unit = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+      let left;
+      if (days > 0) left = unit(days, 'day') + ', ' + unit(hours, 'hour');
+      else if (hours > 0) left = unit(hours, 'hour') + ', ' + unit(minutes, 'minute');
+      else if (minutes > 0) left = unit(minutes, 'minute');
+      else left = 'less than a minute';
+      return `Your verification is valid until ${dateStr} (${left} left)`;
     }
     
     // Send privacy-safe client diagnostics to server
@@ -1521,6 +1615,11 @@
           finalStatus: data.finalStatus || 'unknown',
           errorCode: data.errorCode || null,
           lastStatusClass: data.lastStatusClass || null,
+          transport: typeof data.transport === 'string' ? data.transport : null,
+          deviceClass: typeof data.deviceClass === 'string' ? data.deviceClass : null,
+          tgPlatform: typeof data.tgPlatform === 'string' ? data.tgPlatform : null,
+          entryPath: typeof data.entryPath === 'string' ? data.entryPath : null,
+          flow: typeof data.flow === 'string' ? data.flow : null,
           timestamp: Date.now(),
         };
         
